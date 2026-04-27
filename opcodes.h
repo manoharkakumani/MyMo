@@ -59,6 +59,11 @@ typedef enum
     OP_DELP,
     OP_USE,
     OP_SETM,
-    OP_COPY
+    OP_COPY,
+    OP_INCR_VAR, // super-instruction: globals/locals[name] += i32_delta (no stack churn)
+    OP_WILDCARD, // pushes the OBJ_WILDCARD singleton; emitted only inside case patterns for `_`
+    OP_GETARG,    // push frame->args[u8] — direct array access for function parameters
+    OP_SETARG,    // store stack-top into frame->args[u8] (for compound assignments to params)
+    OP_INVOKE_GLOBAL // fused OP_GETV+OP_CALL: look up global by name and call with N args in one dispatch
 } OpCode;
 #endif

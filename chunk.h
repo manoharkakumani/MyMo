@@ -3,6 +3,7 @@
 
 #include "common.h"
 #include "opcodes.h"
+#include "value.h"
 #include "datatypes/object.h"
 
 typedef struct chunk
@@ -12,7 +13,7 @@ typedef struct chunk
     u32 *lines;
     u32 *cols;
     u8 *code;
-    MyMoObjectArray constants;
+    ValueArray constants;
 } Chunk;
 
 Chunk *newChunk(MVM *vm);
@@ -21,6 +22,11 @@ void writeChunk(MVM *vm, Chunk *chunk, u8 byte, u32 line, u32 col);
 void freeChunk(MVM *vm, Chunk *chunk);
 void printChunk(Chunk *chunk);
 
+// Legacy emit path: stores `object` as `V_OBJ_VAL(object)` in the pool.
 int addConstant(MVM *vm, Chunk *chunk, MyMoObject *object);
+
+// Value-native emit path. Used by future steps when ints / doubles / nil /
+// bool literals are emitted as inline Values rather than heap objects.
+int addConstantV(MVM *vm, Chunk *chunk, Value v);
 
 #endif

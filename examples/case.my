@@ -40,7 +40,7 @@ case "Nine" :
         print(5)
     "six":
         print(6)
-    $:
+    _:
         print("case not found!")
 
 case "five":
@@ -68,5 +68,5 @@ case 1:
     10:
         print("fallthrough")
     fall
-    $:
+    _:
         print("case not found!")

@@ -4,3 +4,8 @@
 *.tar.*
 *.zip
 .vs/
+
+.claude/
+.claude
+*.o
+Claude.md

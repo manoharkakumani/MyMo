@@ -24,6 +24,7 @@ struct vm
     MyMoDict builtInModules;
     MyMoObject *objects;
     u32 classCall;
+    MyMoObject *wildcard;   // singleton for `_` in case-statement patterns
 };
 
 typedef enum

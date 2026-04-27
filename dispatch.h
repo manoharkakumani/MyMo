@@ -59,6 +59,11 @@ void *dispatchTable[] = {
     &&OP_DELP,
     &&OP_USE,
     &&OP_SETM,
-    &&OP_COPY    
+    &&OP_COPY,
+    &&OP_INCR_VAR,
+    &&OP_WILDCARD,
+    &&OP_GETARG,
+    &&OP_SETARG,
+    &&OP_INVOKE_GLOBAL
     };
 #endif

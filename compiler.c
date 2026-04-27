@@ -217,6 +217,10 @@ Compiler *initCompiler(MVM *vm, Parser *parser, FunctionType type)
     compiler->flags.list = 0;
     compiler->flags.tuple = 0;
     compiler->flags.multiCase = 0;
+    compiler->flags.casePattern = 0;
+    compiler->flags.casePatternDepth = 0;
+    for (int i = 0; i < 4; i++) compiler->flags.casePatternStackPos[i] = 0;
+    compiler->flags.bindingsCount = 0;
     MyMoFunction *function = newFunction(vm);
     function->type = type;
     if (type != FN_SCRIPT && type != FN_ARROWFN && type != FN_COMPILED)

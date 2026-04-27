@@ -12,7 +12,14 @@ MyMoFiber *newFiber(MVM *vm, MyMoFunction *function)
     fiber->state = FIBER_READY;
     fiber->type = FIBER_CHILD;
     fiber->parent = NULL;
-    initMyMoObjectArray(vm, &fiber->stack);
+    fiber->freeFramesHead = NULL;
+    initValueArray(vm, &fiber->stack);
+    // Pre-allocate operand stack. The dispatch-loop register `sp` always
+    // points into this buffer and never grows during execution — overflow
+    // beyond `stackCapacity` is undefined. 64K slots = 512 KiB per fiber.
+    // Real growth-on-overflow lands as part of the GC/runtime polish pass.
+    fiber->stack.capacity = 65536;
+    fiber->stack.values = ResizeArray(vm, Value, fiber->stack.values, 0, 65536);
     CallFrame *frame = New(CallFrame, 1);
     frame->function = function;
     initDict(&frame->locals);
@@ -31,8 +38,18 @@ void freeFiber(MVM *vm, MyMoFiber *fiber)
         freeDict(vm, &fiber->callFrames[i]->locals);
         free(fiber->callFrames[i]);
     }
+    // Drain the free-frame pool. While on the free list, frame->function
+    // holds the next-free pointer; the locals dict is empty (already
+    // freed by the OP_FRET that pushed it).
+    CallFrame *fp = fiber->freeFramesHead;
+    while (fp)
+    {
+        CallFrame *next = (CallFrame *)fp->function;
+        free(fp);
+        fp = next;
+    }
     FreeArray(vm, CallFrame *, fiber->callFrames, fiber->frameCapacity);
-    freeMyMoObjectArray(vm, &fiber->stack);
+    freeValueArray(vm, &fiber->stack);
     free(fiber);
 }
 

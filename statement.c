@@ -237,7 +237,7 @@ void loopStatement(Compiler *compiler)
         emitByte(compiler, OP_GETI);
         startLoop(compiler, &loop);
         compiler->loop->loopJump = emitJump(compiler, OP_ITER);
-        emitBytes(compiler, OP_SETV, name);
+        emitSetV(compiler, name);
     }
     else
     {
@@ -278,12 +278,59 @@ void loopStatement(Compiler *compiler)
     }
 }
 
+// Synthetic hidden-local name used to stash the case scrutinee so that
+// binding patterns can extract from it without touching the operand
+// stack. The leading `<` is outside the identifier alphabet, so it can
+// never collide with a user-declared name.
+static u8 caseScrutineeName(Compiler *compiler)
+{
+    static const char NAME[] = "<scrutinee>";
+    Token tok;
+    tok.token = NAME;
+    tok.length = (int)sizeof(NAME) - 1;
+    return identifierConstant(compiler, &tok);
+}
+
+// Emit the per-arm binding-extraction sequence after the OP_CJMP equal
+// branch. For each binding, walks the recorded path from the scrutinee
+// root, emitting `OP_CONST idx + OP_SUBSCR` per step. Empty path (length
+// 0) is the whole-scrutinee binding.
+static void emitBindingExtractions(Compiler *compiler)
+{
+    int n = compiler->flags.bindingsCount;
+    if (n == 0) return;
+    u8 scrutIdx = caseScrutineeName(compiler);
+    for (int i = 0; i < n; i++)
+    {
+        u8 nameIdx = compiler->flags.bindingNameIdx[i];
+        int pathLen = compiler->flags.bindingPathLen[i];
+        emitGetV(compiler, scrutIdx);  // push scrutinee root
+        for (int d = 0; d < pathLen; d++)
+        {
+            emitConstantV(compiler, V_INT_VAL((int32_t)compiler->flags.bindingPath[i][d]));
+            emitBytes(compiler, OP_SUBSCR, 0);
+        }
+        emitSetV(compiler, nameIdx);
+        emitByte(compiler, OP_POP);
+    }
+    compiler->flags.bindingsCount = 0;
+}
+
 void compileCase(Compiler *compiler, u8 code)
 {
+    // Mark the parser as inside a case-arm pattern so bare `_` identifiers
+    // emit OP_WILDCARD instead of looking up a variable named `_`. Cleared
+    // at the end of this function so non-pattern code is unaffected.
+    if (code == OP_CJMP) compiler->flags.casePattern++;
+
     if (code == OP_CJMP)
     {
         compiler->flags.multiCase++;
-        expression(compiler);
+        // PREC_PITAR rather than PREC_ASSIGNMENT so the ternary-`if` infix
+        // rule doesn't grab the guard's `if` token. Pattern syntax is
+        // structural (literals, tuples, lists, `_`, `_name`); none of
+        // those need PREC_ASSIGNMENT-level parsing.
+        parsePrecedence(compiler, PREC_PITAR);
         compiler->flags.multiCase--;
     }
     else
@@ -297,12 +344,14 @@ void compileCase(Compiler *compiler, u8 code)
         do
         {
             multiCases++;
-            expression(compiler);
+            parsePrecedence(compiler, PREC_PITAR);
         } while (matchToken(compiler, COMMA) && code == OP_CJMP);
         emitBytes(compiler, OP_MCASE, multiCases);
         compiler->flags.multiCase--;
     }
-    consumeToken(compiler, COLON, "expected ':' after expression.");
+    if (code == OP_CJMP) compiler->flags.casePattern--;
+    // Caller now consumes the COLON so it can parse an optional `if guard`
+    // clause between the pattern and the colon.
 }
 
 void cases(Compiler *compiler, size_t indent, u8 code, int FallJump)
@@ -315,19 +364,10 @@ void cases(Compiler *compiler, size_t indent, u8 code, int FallJump)
         }
         return;
     }
-    if (checkToken(compiler, DOLLAR) && code == OP_CJMP)
-    {
-        if (FallJump != -1)
-        {
-            patchJump(compiler, FallJump);
-        }
-        elseStatement(compiler);
-        if (getIndent(compiler) == indent + 4)
-            errorAtCurrent(compiler, "$ must be at the last case");
-        else
-            emitByte(compiler, OP_POP);
-        return;
-    }
+    // `$:` default-arm syntax was retired in Phase 5h. Use `_:` instead;
+    // the bare-`_` wildcard pattern matches anything and serves the same
+    // role with the rest of the pattern-match infrastructure (bindings,
+    // guards, fall-through).
     size_t c_indent = getIndent(compiler);
     compileCase(compiler, code);
     int CJump = emitJump(compiler, code);
@@ -335,6 +375,21 @@ void cases(Compiler *compiler, size_t indent, u8 code, int FallJump)
     {
         emitByte(compiler, OP_POP);
     }
+    emitBindingExtractions(compiler);
+    // Optional guard clause: `pat if expr:`. The predicate runs after
+    // bindings are extracted (so it can refer to them) and before the
+    // body. On a falsey predicate, jump to a "guard fail" landing that
+    // re-pushes the scrutinee from the hidden <scrutinee> local and
+    // jumps to where CJump miss-lands, so the next arm sees a fresh
+    // scrutinee on stack just like the legacy CJMP-miss path.
+    int GuardJump = -1;
+    if (code == OP_CJMP && matchToken(compiler, IF))
+    {
+        expression(compiler);
+        GuardJump = emitJump(compiler, OP_JIF);
+        emitByte(compiler, OP_POP);  // pop truthy bool on continuation
+    }
+    consumeToken(compiler, COLON, "expected ':' after pattern.");
     if (FallJump != -1)
     {
         patchJump(compiler, FallJump);
@@ -350,10 +405,21 @@ void cases(Compiler *compiler, size_t indent, u8 code, int FallJump)
     int FJump = -1;
     if (matchToken(compiler, FALL) && code == OP_CJMP)
     {
+        // See caseStatement() for the placeholder rationale.
+        emitByte(compiler, OP_NIL);
         FJump = emitJump(compiler, OP_JMP);
         consumeToken(compiler, NEWLINE, "expected 'Newline' after fall.");
     }
     int Jump = emitJump(compiler, OP_JMP);
+    // Guard-fail landing: pop the falsy bool, re-push scrutinee, fall
+    // through into the same code path the CJMP-miss takes (next arm).
+    if (GuardJump != -1)
+    {
+        patchJump(compiler, GuardJump);
+        emitByte(compiler, OP_POP);
+        emitGetV(compiler, caseScrutineeName(compiler));
+        // Fall through to the CJMP-miss landing below.
+    }
     patchJump(compiler, CJump);
     if (code == OP_JIF)
     {
@@ -372,6 +438,11 @@ void caseStatement(Compiler *compiler)
         expression(compiler);
         consumeToken(compiler, COLON, "expected ':' after expression.");
         code = OP_CJMP;
+        // Stash the scrutinee in a hidden local so binding patterns
+        // (`_name`) can extract from it after a successful match. OP_SETV
+        // peeks (doesn't pop), so the operand stack is unchanged for the
+        // existing case arm bytecode.
+        emitSetV(compiler, caseScrutineeName(compiler));
     }
     else
     {
@@ -390,6 +461,17 @@ void caseStatement(Compiler *compiler)
         {
             emitByte(compiler, OP_POP);
         }
+        emitBindingExtractions(compiler);
+        // Optional guard clause for the first arm. See cases() for the
+        // landing-pattern rationale.
+        int GuardJump = -1;
+        if (code == OP_CJMP && matchToken(compiler, IF))
+        {
+            expression(compiler);
+            GuardJump = emitJump(compiler, OP_JIF);
+            emitByte(compiler, OP_POP);
+        }
+        consumeToken(compiler, COLON, "expected ':' after pattern.");
         if (matchToken(compiler, NEWLINE))
         {
             block(compiler, c_indent);
@@ -401,10 +483,25 @@ void caseStatement(Compiler *compiler)
         int FJump = -1;
         if (matchToken(compiler, FALL) && code == OP_CJMP)
         {
+            // The matched OP_CJMP already popped the scrutinee. If `fall`
+            // jumps into a default arm (`$:`), that arm's terminal OP_POP
+            // would underflow. Push a NIL placeholder so the default's
+            // pop has something to consume. For fall-to-non-default
+            // branches the placeholder is harmless — those branches'
+            // OP_CJMP is skipped via the FallJump landing point, and the
+            // body runs identically with one extra slot in flight that
+            // the trailing not-equal-path OP_POP at end-of-cases consumes.
+            emitByte(compiler, OP_NIL);
             FJump = emitJump(compiler, OP_JMP);
             consumeToken(compiler, NEWLINE, "expected 'Newline' after fall.");
         }
         int Jump = emitJump(compiler, OP_JMP);
+        if (GuardJump != -1)
+        {
+            patchJump(compiler, GuardJump);
+            emitByte(compiler, OP_POP);
+            emitGetV(compiler, caseScrutineeName(compiler));
+        }
         patchJump(compiler, CJump);
         if (code == OP_JIF)
         {
@@ -647,7 +744,7 @@ void functionStatement(Compiler *compiler)
         break;
     case FN_FUNCTION:
         emitBytes(compiler, OP_FN, makeConstant(compiler, AS_OBJECT(function)));
-        emitBytes(compiler, OP_SETV, name);
+        emitSetV(compiler, name);
         emitByte(compiler, OP_POP);
         break;
     default:
@@ -684,7 +781,7 @@ void classStatement(Compiler *compiler)
         }
         if (superClasses)
         {
-            emitBytes(compiler, OP_SUPERARGS, makeConstant(compiler, NEW_INT(compiler->parser->vm, superClasses)));
+            emitBytes(compiler, OP_SUPERARGS, makeConstantV(compiler, V_INT_VAL((int32_t)superClasses)));
         }
         consumeToken(compiler, RPAR, "expected ')' after arguments.");
     }
@@ -699,7 +796,7 @@ void classStatement(Compiler *compiler)
         simpleStatement(compiler);
     }
     emitByte(compiler, OP_ENDCLASS);
-    emitBytes(compiler, OP_SETV, name);
+    emitSetV(compiler, name);
     emitByte(compiler, OP_POP);
     compiler->flags.cl_fn = false;
 }
@@ -782,7 +879,7 @@ multiFrom:
         }
         name = identifierConstant(compiler, &compiler->parser->previous);
     }
-    emitBytes(compiler, OP_SETV, name);
+    emitSetV(compiler, name);
     emitByte(compiler, OP_POP);
     if (matchToken(compiler, NEWLINE) || matchToken(compiler, END))
     {
@@ -819,7 +916,7 @@ multiUse:
         }
         noAs = 0;
         emitByte(compiler, OP_POP);
-        emitBytes(compiler, OP_SETV, identifierConstant(compiler, &compiler->parser->previous));
+        emitSetV(compiler, identifierConstant(compiler, &compiler->parser->previous));
         emitByte(compiler, OP_POP);
     }
     if (matchToken(compiler, NEWLINE) || matchToken(compiler, END))

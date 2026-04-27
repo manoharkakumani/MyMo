@@ -98,27 +98,31 @@ MyMoObject *objectDeserialize(MVM *vm, FILE *stream)
     return object;
 }
 
-void arraySerialize(MyMoObjectArray *array, FILE *stream)
+// Constant-pool serialization. The on-disk format is unchanged — each entry
+// is still serialized as a heap-object record — but the in-memory pool is now
+// a ValueArray, so each Value gets unwrapped via V_AS_OBJ before write and
+// rewrapped via V_OBJ_VAL on read. Once inline Values land in the pool
+// (steps 1.3+), this format will need a tag byte per entry; punted until
+// then so the file layout stays compatible during the migration.
+void arraySerialize(ValueArray *array, FILE *stream)
 {
     fwrite(&array->capacity, sizeof(array->capacity), 1, stream);
     fwrite(&array->count, sizeof(array->capacity), 1, stream);
     for (int i = 0; i < array->count; i++)
     {
-        objectSerialize(array->objects[i], stream);
-        // printf("%d : ", i);printObject(array->objects[i]);printf("\n");
+        objectSerialize(V_AS_OBJ(array->values[i]), stream);
     }
 }
 
-MyMoObjectArray arrayDeserialize(MVM *vm, FILE *stream)
+ValueArray arrayDeserialize(MVM *vm, FILE *stream)
 {
-    MyMoObjectArray array;
+    ValueArray array;
     fread(&array.capacity, sizeof(array.capacity), 1, stream);
     fread(&array.count, sizeof(array.count), 1, stream);
-    array.objects = New(MyMoObject *, array.capacity);
+    array.values = New(Value, array.capacity);
     for (int i = 0; i < array.count; i++)
     {
-        array.objects[i] = objectDeserialize(vm, stream);
-        // printf("%d : ", i);printObject(array.objects[i]);printf("\n");
+        array.values[i] = V_OBJ_VAL(objectDeserialize(vm, stream));
     }
     return array;
 }

@@ -32,7 +32,8 @@ typedef enum
     OBJ_INSTANCE,
     OBJ_MODULE,
     OBJ_CODE,
-    OBJ_ITER
+    OBJ_ITER,
+    OBJ_WILDCARD   // singleton sentinel for `_` in case patterns; matches anything in isEqual()
 } MyMoObjectType;
 
 typedef struct MyMoObject

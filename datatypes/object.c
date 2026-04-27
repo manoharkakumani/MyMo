@@ -129,6 +129,9 @@ void printObject(MyMoObject *object)
     case OBJ_ITER:
         printIter(AS_ITER(object));
         break;
+    case OBJ_WILDCARD:
+        printf("_");
+        break;
     default:
         printf("Unknown type %d", object->type);
         printf("%p", object);
@@ -193,8 +196,13 @@ void NIL_BOOL(MVM *vm)
 
 bool isEqual(MyMoObject *a, MyMoObject *b)
 {
-    if (a->type != b->type)
-        return 0;
+    // Wildcard sentinel matches any non-null operand. Symmetric, so case
+    // patterns can put `_` on either side and either-direction comparison
+    // (used by OP_CJMP / valuesEqual / dict findEntry — though only the
+    // case-statement path should ever see WILDCARD in practice).
+    if (a == NULL || b == NULL) return a == b;
+    if (a->type == OBJ_WILDCARD || b->type == OBJ_WILDCARD) return true;
+    if (a->type != b->type) return 0;
     switch (b->type)
     {
     case OBJ_NIL:
@@ -203,6 +211,33 @@ bool isEqual(MyMoObject *a, MyMoObject *b)
         return AS_INT(a)->value == AS_INT(b)->value;
     case OBJ_DOUBLE:
         return AS_DOUBLE(a)->value == AS_DOUBLE(b)->value;
+    case OBJ_TUPLE:
+    {
+        // Structural element-wise equality. Wildcard slots auto-match
+        // (handled recursively by the WILDCARD branch above). Length
+        // mismatch is a hard miss.
+        MyMoTuple *ta = AS_TUPLE(a);
+        MyMoTuple *tb = AS_TUPLE(b);
+        if (ta->values.count != tb->values.count) return false;
+        for (int i = 0; i < ta->values.count; i++)
+        {
+            if (!isEqual(ta->values.objects[i], tb->values.objects[i]))
+                return false;
+        }
+        return true;
+    }
+    case OBJ_LIST:
+    {
+        MyMoList *la = AS_LIST(a);
+        MyMoList *lb = AS_LIST(b);
+        if (la->values.count != lb->values.count) return false;
+        for (int i = 0; i < la->values.count; i++)
+        {
+            if (!isEqual(la->values.objects[i], lb->values.objects[i]))
+                return false;
+        }
+        return true;
+    }
     default:
         return a == b;
     }
@@ -277,12 +312,12 @@ MyMoObject *getMethod(MVM *vm, MyMoObject *a, const char *name)
         case OBJ_INSTANCE:
         {
             MyMoObject *methodName = NEW_STRING(vm, name, strlen(name));
-            MyMoObject *method = getEntry(AS_INSTANCE(a)->fields, methodName);
+            MyMoObject *method = getEntry(vm, AS_INSTANCE(a)->fields, methodName);
             if (method)
             {
                 return method;
             }
-            method = getEntry(AS_INSTANCE(a)->klass->methods, methodName);
+            method = getEntry(vm, AS_INSTANCE(a)->klass->methods, methodName);
             if (method)
             {
                 return method;
@@ -292,7 +327,7 @@ MyMoObject *getMethod(MVM *vm, MyMoObject *a, const char *name)
         case OBJ_CLASS:
         {
             MyMoObject *methodName = NEW_STRING(vm, name, strlen(name));
-            MyMoObject *method = getEntry(AS_CLASS(a)->methods, methodName);
+            MyMoObject *method = getEntry(vm, AS_CLASS(a)->methods, methodName);
             if (method)
             {
                 return method;
@@ -304,7 +339,7 @@ MyMoObject *getMethod(MVM *vm, MyMoObject *a, const char *name)
         case OBJ_DICT:
         {
             MyMoObject *methodName = NEW_STRING(vm, name, strlen(name));
-            MyMoObject *method = getEntry(vm->builtInClasses[a->type]->methods, methodName);
+            MyMoObject *method = getEntry(vm, vm->builtInClasses[a->type]->methods, methodName);
             if (method)
             {
                 return method;

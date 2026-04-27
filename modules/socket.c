@@ -1,316 +1,232 @@
-// // socket module
+// modules/socket.c — built-in `socket` module: blocking TCP/IPv4 client
+// + server primitives. POSIX-only today (Windows path stubbed out).
+//
+// Exports:
+//   socket.connect(host, port)        -> int (fd)
+//   socket.listen(host, port, backlog)-> int (fd)
+//   socket.accept(fd)                 -> int (client fd)
+//   socket.send(fd, data)             -> int (bytes sent)
+//   socket.recv(fd, max_bytes)        -> string (may be shorter; "" on EOF)
+//   socket.close(fd)                  -> nil
+//   socket.gethostname()              -> string
+//   socket.resolve(host)              -> string (first IPv4 address)
 
-// #ifndef _WIN32
-// #include <sys/socket.h>
-// #include <netinet/in.h>
-// #include <arpa/inet.h>
-// #include <netdb.h>
-// #else
-// #include <winsock2.h>
-// #include <ws2tcpip.h>
-// #endif
+#include "../include/mymo_module.h"
 
-// #include <string.h>
-// #include <unistd.h>
-// #include <fcntl.h>
-// #include <stdio.h>
-// #include <stdlib.h>
+#ifdef _WIN32
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  #pragma comment(lib, "ws2_32.lib")
+  typedef int socklen_t;
+  #define close_fd(fd) closesocket(fd)
+#else
+  #include <sys/socket.h>
+  #include <netinet/in.h>
+  #include <arpa/inet.h>
+  #include <netdb.h>
+  #include <unistd.h>
+  #define close_fd(fd) close(fd)
+#endif
 
-// #include "../datatypes/datatypes.h"
-// #include "../vm.h"
+#include <string.h>
+#include <errno.h>
 
-// #define O_NONBLOCK  0x0004
-// #define AF_INET     2
-// #define SOCK_STREAM 1
-// #define IPPROTO_TCP 6
+static int resolve_ipv4(const char *host, struct in_addr *out)
+{
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    struct addrinfo *res = NULL;
+    if (getaddrinfo(host, NULL, &hints, &res) != 0 || !res) return -1;
+    *out = ((struct sockaddr_in *)res->ai_addr)->sin_addr;
+    freeaddrinfo(res);
+    return 0;
+}
 
-// MODULE(socket);
+static MyMoObject *sock_connect(MVM *vm, uint argc, MyMoObject *argv[])
+{
+    const char *host;
+    long port;
+    if (!mymo_parse(vm, "socket.connect", argc, argv, "si", &host, &port))
+        return MYMO_ERROR;
 
-// MyMoObject *socketfn(MVM *vm, uint argc, MyMoObject *argv[]){
-//     if (argc != 3) {
-//         runtimeError(vm, "TypeError: socket.socket() takes 3 arguments (%d given).", argc);
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[0])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[0]));
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[1])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[1]));
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[2])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[2]));
-//         return NEW_EMPTY;
-//     }
-//     int domain = NUMBER_VAL(argv[0]);
-//     int type = NUMBER_VAL(argv[1]);
-//     int protocol = NUMBER_VAL(argv[2]);
-//     int sockfd = socket(domain, type, protocol);
-//     if (sockfd == -1) {
-//         runtimeError(vm, "Socket creation failed");
-//         return NEW_EMPTY;
-//     }
-//     return NEW_INT(vm, sockfd);
-// }
+    struct in_addr addr;
+    if (resolve_ipv4(host, &addr) != 0) {
+        runtimeError(vm, "socket.connect(): could not resolve '%s'", host);
+        return MYMO_ERROR;
+    }
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        runtimeError(vm, "socket.connect(): socket() failed: %s", strerror(errno));
+        return MYMO_ERROR;
+    }
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_addr   = addr;
+    sa.sin_port   = htons((uint16_t)port);
+    if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0) {
+        close_fd(fd);
+        runtimeError(vm, "socket.connect(): connect() failed: %s", strerror(errno));
+        return MYMO_ERROR;
+    }
+    return mymo_int(vm, fd);
+}
 
-// MyMoObject *bindfn(MVM *vm, uint argc, MyMoObject *argv[]){
-//     if (argc != 3) {
-//         runtimeError(vm, "TypeError: socket.bind() takes 3 arguments (%d given).", argc);
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[0])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[0]));
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_STRING(argv[1])) {
-//         runtimeError(vm, "TypeError: must be <object 'str'>, not (%s)",getType(argv[1]));
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[2])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[2]));
-//         return NEW_EMPTY;
-//     }
-//     int sockfd = NUMBER_VAL(argv[0]);
-//     char *ip = AS_CSTRING(argv[1]);
-//     int port = NUMBER_VAL(argv[2]);
-//     struct sockaddr_in address;
-//     address.sin_family = AF_INET;
-//     address.sin_addr.s_addr = inet_addr(ip);
-//     address.sin_port = htons(port);
-//     int addrlen = sizeof(address);
-//     int bind_status = bind(sockfd, (struct sockaddr *)&address, addrlen);
-//     if (bind_status == -1) {
-//         runtimeError(vm, "Bind failed");
-//         return NEW_EMPTY;
-//     }
-//     return NEW_INT(vm, bind_status);
-// }
+static MyMoObject *sock_listen(MVM *vm, uint argc, MyMoObject *argv[])
+{
+    const char *host;
+    long port, backlog;
+    if (!mymo_parse(vm, "socket.listen", argc, argv, "sii",
+                    &host, &port, &backlog))
+        return MYMO_ERROR;
 
-// MyMoObject *listenfn(MVM *vm, uint argc, MyMoObject *argv[]){
-//     if (argc != 2) {
-//         runtimeError(vm, "TypeError: socket.listen() takes 2 arguments (%d given).", argc);
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[0])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[0]));
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[1])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[1]));
-//         return NEW_EMPTY;
-//     }
-//     int sockfd = NUMBER_VAL(argv[0]);
-//     int backlog = NUMBER_VAL(argv[1]);
-//     int listen_status = listen(sockfd, backlog);
-//     if (listen_status == -1) {
-//         runtimeError(vm, "Listen failed");
-//         return NEW_EMPTY;
-//     }
-//     return NEW_INT(vm, listen_status);
-// }
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        runtimeError(vm, "socket.listen(): socket() failed: %s", strerror(errno));
+        return MYMO_ERROR;
+    }
+    int yes = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes));
 
-// MyMoObject *acceptfn(MVM *vm, uint argc, MyMoObject *argv[]){
-//     if (argc != 1) {
-//         runtimeError(vm, "TypeError: socket.accept() takes 1 argument (%d given).", argc);
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[0])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[0]));
-//         return NEW_EMPTY;
-//     }
-//     int sockfd = NUMBER_VAL(argv[0]);
-//     struct sockaddr_in address;
-//     int addrlen = sizeof(address);
-//     int new_socket = accept(sockfd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
-//     if (new_socket == -1) {
-//         runtimeError(vm, "Accept failed");
-//         return NEW_EMPTY;
-//     }
-//     return NEW_INT(vm, new_socket);
-// }
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port   = htons((uint16_t)port);
+    if (host[0] == '\0' || strcmp(host, "0.0.0.0") == 0) {
+        sa.sin_addr.s_addr = htonl(INADDR_ANY);
+    } else if (inet_pton(AF_INET, host, &sa.sin_addr) != 1) {
+        close_fd(fd);
+        runtimeError(vm, "socket.listen(): invalid bind address '%s'", host);
+        return MYMO_ERROR;
+    }
+    if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0) {
+        close_fd(fd);
+        runtimeError(vm, "socket.listen(): bind() failed: %s", strerror(errno));
+        return MYMO_ERROR;
+    }
+    if (listen(fd, (int)backlog) != 0) {
+        close_fd(fd);
+        runtimeError(vm, "socket.listen(): listen() failed: %s", strerror(errno));
+        return MYMO_ERROR;
+    }
+    return mymo_int(vm, fd);
+}
 
-// MyMoObject *connectfn(MVM *vm, uint argc, MyMoObject *argv[]){
-//     if (argc != 3) {
-//         runtimeError(vm, "TypeError: socket.connect() takes 3 arguments (%d given).", argc);
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[0])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[0]));
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_STRING(argv[1])) {
-//         runtimeError(vm, "TypeError: must be <object 'str'>, not (%s)",getType(argv[1]));
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[2])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[2]));
-//         return NEW_EMPTY;
-//     }
-//     int sockfd = NUMBER_VAL(argv[0]);
-//     char *ip = STRING_VAL(argv[1]);
-//     int port = NUMBER_VAL(argv[2]);
-//     struct sockaddr_in address;
-//     address.sin_family = AF_INET;
-//     address.sin_addr.s_addr = inet_addr(ip);
-//     address.sin_port = htons(port);
-//     int addrlen = sizeof(address);
-//     int connect_status = connect(sockfd, (struct sockaddr *)&address, addrlen);
-//     if (connect_status == -1) {
-//         runtimeError(vm, "Connect failed");
-//         return NEW_EMPTY;
-//     }
-//     return NEW_INT(vm, connect_status);
-// }
+static MyMoObject *sock_accept(MVM *vm, uint argc, MyMoObject *argv[])
+{
+    long fd;
+    if (!mymo_parse(vm, "socket.accept", argc, argv, "i", &fd))
+        return MYMO_ERROR;
+    struct sockaddr_in peer;
+    socklen_t plen = sizeof(peer);
+    int cfd = accept((int)fd, (struct sockaddr *)&peer, &plen);
+    if (cfd < 0) {
+        runtimeError(vm, "socket.accept(): %s", strerror(errno));
+        return MYMO_ERROR;
+    }
+    return mymo_int(vm, cfd);
+}
 
-// MyMoObject *sendfn(MVM *vm, uint argc, MyMoObject *argv[]){
-//     if (argc != 2) {
-//         runtimeError(vm, "TypeError: socket.send() takes 2 arguments (%d given).", argc);
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[0])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[0]));
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_STRING(argv[1])) {
-//         runtimeError(vm, "TypeError: must be <object 'str'>, not (%s)",getType(argv[1]));
-//         return NEW_EMPTY;
-//     }
-//     int sockfd = NUMBER_VAL(argv[0]);
-//     char *buffer = STRING_VAL(argv[1]);
-//     int send_status = send(sockfd, buffer, strlen(buffer), 0);
-//     if (send_status == -1) {
-//         runtimeError(vm, "Send failed");
-//         return NEW_EMPTY;
-//     }
-//     return NEW_INT(vm, send_status);
-// }
+static MyMoObject *sock_send(MVM *vm, uint argc, MyMoObject *argv[])
+{
+    long fd;
+    const char *data; int dlen;
+    if (!mymo_parse(vm, "socket.send", argc, argv, "isn", &fd, &data, &dlen))
+        return MYMO_ERROR;
+    ssize_t n = send((int)fd, data, (size_t)dlen, 0);
+    if (n < 0) {
+        runtimeError(vm, "socket.send(): %s", strerror(errno));
+        return MYMO_ERROR;
+    }
+    return mymo_int(vm, (long)n);
+}
 
-// MyMoObject *recvfn(MVM *vm, uint argc, MyMoObject *argv[]){
-//     if (argc != 2) {
-//         runtimeError(vm, "TypeError: socket.recv() takes 2 arguments (%d given).", argc);
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[0])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[0]));
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[1])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[1]));
-//         return NEW_EMPTY;
-//     }
-//     int sockfd = NUMBER_VAL(argv[0]);
-//     int buffer_size = NUMBER_VAL(argv[1]);
-//     char buffer[buffer_size];
-//     int recv_status = recv(sockfd, buffer, buffer_size, 0);
-//     if (recv_status == -1) {
-//         runtimeError(vm, "Recv failed");
-//         return NEW_EMPTY;
-//     }
-//     return NEW_STRING(vm, buffer);
-// }
+static MyMoObject *sock_recv(MVM *vm, uint argc, MyMoObject *argv[])
+{
+    long fd, max_bytes;
+    if (!mymo_parse(vm, "socket.recv", argc, argv, "ii", &fd, &max_bytes))
+        return MYMO_ERROR;
+    if (max_bytes <= 0 || max_bytes > (1 << 22)) {
+        runtimeError(vm, "socket.recv(): max_bytes must be 1..4194304");
+        return MYMO_ERROR;
+    }
+    char *buf = malloc((size_t)max_bytes);
+    if (!buf) {
+        runtimeError(vm, "socket.recv(): out of memory");
+        return MYMO_ERROR;
+    }
+    ssize_t n = recv((int)fd, buf, (size_t)max_bytes, 0);
+    if (n < 0) {
+        free(buf);
+        runtimeError(vm, "socket.recv(): %s", strerror(errno));
+        return MYMO_ERROR;
+    }
+    MyMoObject *s = mymo_strn(vm, buf, (int)n);
+    free(buf);
+    return s;
+}
 
-// MyMoObject *closefn(MVM *vm, uint argc, MyMoObject *argv[]){
-//     if (argc != 1) {
-//         runtimeError(vm, "TypeError: socket.close() takes 1 argument (%d given).", argc);
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[0])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[0]));
-//         return NEW_EMPTY;
-//     }
-//     int sockfd = NUMBER_VAL(argv[0]);
-//     int close_status = close(sockfd);
-//     if (close_status == -1) {
-//         runtimeError(vm, "Close failed");
-//         return NEW_EMPTY;
-//     }
-//     return NEW_INT(vm, close_status);
-// }
+static MyMoObject *sock_close(MVM *vm, uint argc, MyMoObject *argv[])
+{
+    long fd;
+    if (!mymo_parse(vm, "socket.close", argc, argv, "i", &fd))
+        return MYMO_ERROR;
+    close_fd((int)fd);
+    return MYMO_NIL;
+}
 
-// MyMoObject *setblockingfn(MVM *vm, uint argc, MyMoObject *argv[]){
-//     if (argc != 2) {
-//         runtimeError(vm, "TypeError: socket.setblocking() takes 2 arguments (%d given).", argc);
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[0])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[0]));
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_BOOL(argv[1])) {
-//         runtimeError(vm, "TypeError: must be <object 'bool'>, not (%s)",getType(argv[1]));
-//         return NEW_EMPTY;
-//     }
-//     int sockfd = NUMBER_VAL(argv[0]);
-//     int blocking = AS_BOOL(argv[1]);
-//     int flags = fcntl(sockfd, F_GETFL, 0);
-//     if (flags == -1) {
-//         runtimeError(vm, "Get flags failed");
-//         return NEW_EMPTY;
-//     }
-//     if (blocking) {
-//         flags &= ~O_NONBLOCK;
-//     } else {
-//         flags |= O_NONBLOCK;
-//     }
-//     int setblocking_status = fcntl(sockfd, F_SETFL, flags);
-//     if (setblocking_status == -1) {
-//         runtimeError(vm, "Set blocking failed");
-//         return NEW_EMPTY;
-//     }
-//     return NEW_INT(vm, setblocking_status);
-// }
+static MyMoObject *sock_gethostname(MVM *vm, uint argc, MyMoObject *argv[])
+{
+    if (!mymo_check_args(vm, "socket.gethostname", argc, 0)) return MYMO_ERROR;
+    char buf[256];
+    if (gethostname(buf, sizeof(buf)) != 0) {
+        runtimeError(vm, "socket.gethostname(): %s", strerror(errno));
+        return MYMO_ERROR;
+    }
+    buf[sizeof(buf) - 1] = '\0';
+    return mymo_str(vm, buf);
+}
 
-// MyMoObject *getblockingfn(MVM *vm, uint argc, MyMoObject *argv[]){
-//     if (argc != 1) {
-//         runtimeError(vm, "TypeError: socket.getblocking() takes 1 argument (%d given).", argc);
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_NUMBER(argv[0])) {
-//         runtimeError(vm, "TypeError: must be <object 'int'>, not (%s)",getType(argv[0]));
-//         return NEW_EMPTY;
-//     }
-//     int sockfd = NUMBER_VAL(argv[0]);
-//     int flags = fcntl(sockfd, F_GETFL, 0);
-//     if (flags == -1) {
-//         runtimeError(vm, "Get flags failed");
-//         return NEW_EMPTY;
-//     }
-//     if (flags & O_NONBLOCK) {
-//         return NEW_BOOL(vm, false);
-//     } else {
-//         return NEW_BOOL(vm, true);
-//     }
-// }
+static MyMoObject *sock_resolve(MVM *vm, uint argc, MyMoObject *argv[])
+{
+    const char *host;
+    if (!mymo_parse(vm, "socket.resolve", argc, argv, "s", &host))
+        return MYMO_ERROR;
+    struct in_addr addr;
+    if (resolve_ipv4(host, &addr) != 0) {
+        runtimeError(vm, "socket.resolve(): could not resolve '%s'", host);
+        return MYMO_ERROR;
+    }
+    char buf[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &addr, buf, sizeof(buf));
+    return mymo_str(vm, buf);
+}
 
-// MyMoObject *gethostnamefn(MVM *vm, uint argc, MyMoObject *argv[]){
-//     if (argc != 0) {
-//         runtimeError(vm, "TypeError: socket.gethostname() takes 0 arguments (%d given).", argc);
-//         return NEW_EMPTY;
-//     }
-//     char hostname[1024];
-//     int gethostname_status = gethostname(hostname, 1024);
-//     if (gethostname_status == -1) {
-//         runtimeError(vm, "Get hostname failed");
-//         return NEW_EMPTY;
-//     }
-//     return NEW_STRING(vm, hostname);
-// }
-
-// MyMoObject *gethostbynamefn(MVM *vm, uint argc, MyMoObject *argv[]){
-//     if (argc != 1) {
-//         runtimeError(vm, "TypeError: socket.gethostbyname() takes 1 argument (%d given).", argc);
-//         return NEW_EMPTY;
-//     }
-//     if (!IS_STRING(argv[0])) {
-//         runtimeError(vm, "TypeError: must be <object 'str'>, not (%s)",getType(argv[0]));
-//         return NEW_EMPTY;
-//     }
-//     char *hostname = STRING_VAL(argv[0]);
-//     struct hostent *host = gethostbyname(hostname);
-//     if (host == NULL) {
-//         runtimeError(vm, "Get host by name failed");
-//         return NEW_EMPTY;
-//     }
-//     return NEW_STRING(vm, host->h_name);
-// }
+MyMoObject *socketModule(MVM *vm)
+{
+#ifdef _WIN32
+    static int wsa_inited = 0;
+    if (!wsa_inited) {
+        WSADATA wsa;
+        WSAStartup(MAKEWORD(2, 2), &wsa);
+        wsa_inited = 1;
+    }
+#endif
+    static MyMoModuleFunction fns[] = {
+        {"connect",     sock_connect},
+        {"listen",      sock_listen},
+        {"accept",      sock_accept},
+        {"send",        sock_send},
+        {"recv",        sock_recv},
+        {"close",       sock_close},
+        {"gethostname", sock_gethostname},
+        {"resolve",     sock_resolve},
+    };
+    static MyMoModuleVariable vars[] = { {0, 0} };
+    static MyMoModuleDef def = {
+        "socket", fns, vars,
+        sizeof(fns) / sizeof(fns[0]), 0,
+    };
+    return defineBuiltInModule(vm, &def);
+}

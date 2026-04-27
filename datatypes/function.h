@@ -53,10 +53,17 @@ typedef struct MyMoFunction
   MyMoObject *klass;
 } MyMoFunction;
 
+// Function arg slots — covers up to 8 parameters with direct array access.
+// Keeps CallFrame small (≈100 B) so malloc/free per call stays cheap. The
+// vast majority of functions take ≤4 args; >8 spills to the locals dict.
+// Bumped opportunistically if profiling justifies the larger frame.
+#define CALLFRAME_ARGS_INLINE 8
+
 struct CallFrame {
     MyMoFunction *function;
     MyMoDict locals;
     u8 *ip;
+    Value args[CALLFRAME_ARGS_INLINE];
 };
 
 typedef struct MyMoClouser

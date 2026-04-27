@@ -19,6 +19,7 @@ void initDict(MyMoDict *dict)
     dict->count = 0;
     dict->capacity = -1;
     dict->entries = NULL;
+    dict->modifyCount = 0;
     dict->object.type = OBJ_DICT;
 }
 
@@ -54,7 +55,8 @@ Entry *findEntry(Entry *entries, int capacity, MyMoObject *key)
         Entry *entry = &entries[index];
         if (entry->key == NULL)
         {
-            if (IS_NIL(entry->value))
+            // V_NIL_VAL marker => empty bucket; anything else => tombstone.
+            if (V_IS_NIL(entry->value))
             {
                 return tombstone != NULL ? tombstone : entry;
             }
@@ -64,24 +66,35 @@ Entry *findEntry(Entry *entries, int capacity, MyMoObject *key)
                     tombstone = entry;
             }
         }
-        else if (entry->key == key && entry->key->hash == key->hash)
+        else if (entry->key == key)
         {
+            // Pointer identity implies hash equality (interned keys).
             return entry;
         }
         index = (index + 1) & capacity;
     }
 }
 
-MyMoObject *getEntry(MyMoDict *dict, MyMoObject *key)
+MyMoObject *getEntry(MVM *vm, MyMoDict *dict, MyMoObject *key)
 {
-    // printObject(key);
-    // printf("\n");
-    if (dict->count == 0)
-        return NULL;
+    if (dict->count == 0) return NULL;
     Entry *entry = findEntry(dict->entries, dict->capacity, key);
-    if (entry->key == NULL)
-        return NULL;
-    return entry->value;
+    if (entry->key == NULL) return NULL;
+    Value v = entry->value;
+    if (V_IS_OBJ(v)) return V_AS_OBJ(v);
+    // Inline value: box for legacy caller. Requires a vm; callers that pass
+    // NULL only ever store heap objects, so this branch is only reachable
+    // for vm-bearing callers in practice.
+    return valueToBoxedObject(vm, v);
+}
+
+bool getEntryV(MyMoDict *dict, MyMoObject *key, Value *out)
+{
+    if (dict->count == 0) return false;
+    Entry *entry = findEntry(dict->entries, dict->capacity, key);
+    if (entry->key == NULL) return false;
+    *out = entry->value;
+    return true;
 }
 
 void adjustCapacity(MVM *vm, MyMoDict *dict, int capacity)
@@ -90,7 +103,7 @@ void adjustCapacity(MVM *vm, MyMoDict *dict, int capacity)
     for (int i = 0; i <= capacity; i++)
     {
         entries[i].key = NULL;
-        entries[i].value = NEW_NIL;
+        entries[i].value = V_NIL_VAL;
     }
     Entry *oldEntries = dict->entries;
     int oldCapacity = dict->capacity;
@@ -102,12 +115,21 @@ void adjustCapacity(MVM *vm, MyMoDict *dict, int capacity)
         Entry *entry = &oldEntries[i];
         if (entry->key == NULL)
             continue;
-        setEntry(vm, dict, entry->key, entry->value);
+        setEntryV(vm, dict, entry->key, entry->value);
     }
     FreeArray(vm, Entry, oldEntries, oldCapacity + 1);
+    // The entry array moved — every cached entry index from before this call
+    // now points into freed memory or a different slot. Bump modifyCount to
+    // invalidate IC sites globally.
+    dict->modifyCount++;
 }
 
 bool setEntry(MVM *vm, MyMoDict *dict, MyMoObject *key, MyMoObject *value)
+{
+    return setEntryV(vm, dict, key, V_OBJ_VAL(value));
+}
+
+bool setEntryV(MVM *vm, MyMoDict *dict, MyMoObject *key, Value value)
 {
     if (dict->count + 1 > (dict->capacity + 1) * TABLE_MAX_LOAD)
     {
@@ -121,6 +143,7 @@ bool setEntry(MVM *vm, MyMoDict *dict, MyMoObject *key, MyMoObject *value)
     if (isNewKey)
     {
         dict->count++;
+        dict->modifyCount++;  // structural change: invalidate caches
     }
     return isNewKey;
 }
@@ -134,7 +157,10 @@ bool deleteEntry(MVM *vm, MyMoDict *dict, MyMoObject *key)
         return false;
     dict->count--;
     entry->key = NULL;
-    entry->value = NEW_BOOL(false);
+    // Tombstone marker (anything not V_NIL_VAL). Use V_FALSE_VAL so the
+    // probe loop stops looking once it can; any non-nil sentinel works.
+    entry->value = V_FALSE_VAL;
+    dict->modifyCount++;
     return true;
 }
 
@@ -145,7 +171,7 @@ void copyDict(MVM *vm, MyMoDict *from, MyMoDict *to)
         Entry *entry = &from->entries[i];
         if (entry->key != NULL)
         {
-            setEntry(vm, to, entry->key, entry->value);
+            setEntryV(vm, to, entry->key, entry->value);
         }
     }
 }
@@ -160,7 +186,7 @@ MyMoObject *findKey(MyMoDict *dict, u32 hash)
         Entry *entry = &dict->entries[index];
         if (entry->key == NULL)
         {
-            if (IS_NIL(entry->value))
+            if (V_IS_NIL(entry->value))
                 return NULL;
         }
         else if (entry->key->hash == hash)
@@ -181,13 +207,13 @@ void printDict(MyMoDict *dict)
         {
             printObject(entry->key);
             printf(": ");
-            if (entry->value == AS_OBJECT(dict))
+            if (V_IS_OBJ(entry->value) && V_AS_OBJ(entry->value) == AS_OBJECT(dict))
             {
                 printf("{...}");
             }
             else
             {
-                printObject(entry->value);
+                printValue(entry->value);
             }
             if (--j)
                 printf(", ");
@@ -275,6 +301,7 @@ void setPrimitive(MVM *vm, MyMoDict *dict, MyMoObject *key)
         index = (index + 1) & dict->capacity;
     }
     entry->key = key;
-    entry->value = NEW_NIL; 
+    entry->value = V_NIL_VAL;
     dict->count++;
+    dict->modifyCount++;
 }

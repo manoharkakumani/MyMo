@@ -5,6 +5,8 @@
 #include "datatypes/datatypes.h"
 #include "utils.h"
 #include "debug.h"
+#include "bytecode.h"   // IC_BYTES, IC_TAG_*
+#include "modules/modules.h"
 
 #include <math.h>
 
@@ -30,6 +32,12 @@ MVM *initVM()
     initDict(&vm->builtInModules);
     defineBuiltInClasses(vm);
     defineBuiltInFunctions(vm);
+    // Wildcard singleton — used only by case-pattern `_`. isEqual() treats
+    // any comparison involving this as a match.
+    vm->wildcard = allocateObject(vm, sizeof(MyMoObject), OBJ_WILDCARD);
+    // Register all statically-linked built-in modules. Dynamic .so/.dylib
+    // modules load lazily via OP_USE → loadBuiltInModule.
+    defineBuiltInModules(vm);
     return vm;
 }
 
@@ -98,22 +106,67 @@ bool callFunction(MVM *vm, MyMoFunction *function, int argc)
     }
     else
     {
-        if (vm->fiber->frameCapacity < vm->fiber->frameCount + 1)
+        // Off-by-one fix: callFrames is indexed up to and including
+        // frameCount (slot 0 is the script/initial frame, slot frameCount
+        // is the most recently pushed). We're about to write slot
+        // frameCount+1, so we need capacity >= frameCount+2.
+        if (vm->fiber->frameCapacity < (uint)(vm->fiber->frameCount + 2))
         {
             u32 capacity = vm->fiber->frameCapacity;
             vm->fiber->frameCapacity = ResizeCapacity(vm->fiber->frameCapacity);
+            // Make sure we actually grew enough (ResizeCapacity 0 -> 8,
+            // 8 -> 16, etc.); always re-check.
+            while (vm->fiber->frameCapacity < (uint)(vm->fiber->frameCount + 2))
+                vm->fiber->frameCapacity = ResizeCapacity(vm->fiber->frameCapacity);
             vm->fiber->callFrames = ResizeArray(vm, CallFrame *, vm->fiber->callFrames, capacity, vm->fiber->frameCapacity);
         }
-        CallFrame *frame = New(CallFrame, 1);
+        CallFrame *frame;
+        // Pool: reuse a recycled CallFrame if one is available, else malloc.
+        // Frame pool grows monotonically — frames are returned to the pool
+        // on OP_FRET, never freed individually. Pool drains in freeFiber.
+        // Recycled frames already have their locals dict in initial state
+        // (freeDict zeroes it on the OP_FRET path), so we skip initDict.
+        if (vm->fiber->freeFramesHead != NULL)
+        {
+            frame = vm->fiber->freeFramesHead;
+            // function field doubles as the free-list "next" link while
+            // the frame is parked on the pool.
+            vm->fiber->freeFramesHead = (CallFrame *)frame->function;
+        }
+        else
+        {
+            frame = New(CallFrame, 1);
+            initDict(&frame->locals);
+        }
         frame->function = function;
         frame->ip = function->chunk->code;
-        initDict(&frame->locals);
         vm->fiber->callFrames[++vm->fiber->frameCount] = frame;
         if (argc && !function->isargs)
         {
-            for (int i = argc - 1; i >= 0; i--)
+            // Fast path: small-arg-count functions (≤ CALLFRAME_ARGS_INLINE)
+            // store args directly into frame->args[] for slot-indexed access
+            // via OP_GETARG / OP_SETARG. Saves the dict insert/lookup per
+            // arg reference inside the body — the dominant cost in a tight
+            // recursion like fib.
+            //
+            // Args are popped in reverse from the operand stack (last
+            // argument is on top), so we fill args[argc-1..0].
+            if (argc <= CALLFRAME_ARGS_INLINE)
             {
-                setEntry(vm, &frame->locals, AS_OBJECT(function->argv[i]), pop(vm));
+                for (int i = argc - 1; i >= 0; i--)
+                {
+                    frame->args[i] = popV(vm);
+                }
+            }
+            else
+            {
+                // Spill to dict for >8 args (rare — unsupported by current
+                // function decls anyway; argv is sized 256 but the compiler
+                // caps at 255, so effectively always ≤ inline cap today).
+                for (int i = argc - 1; i >= 0; i--)
+                {
+                    setEntry(vm, &frame->locals, AS_OBJECT(function->argv[i]), pop(vm));
+                }
             }
         }
         return true;
@@ -128,7 +181,13 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
     case OBJ_BUILTIN_FUNCTION:
     {
         BuiltInfunction function = AS_BUILTIN_FUNCTION(callee)->function;
-        MyMoObject *result = function(vm, argc, vm->fiber->stack.objects + vm->fiber->stack.count - argc);
+        // Built-ins still take MyMoObject** (their signature migrates in a
+        // later step). All values on the stack are heap objects today, so
+        // unwrap each Value via V_AS_OBJ into a temporary argv.
+        MyMoObject *legacy_argv[256];
+        Value *vargs = vm->fiber->stack.values + vm->fiber->stack.count - argc;
+        for (u32 i = 0; i < argc; i++) legacy_argv[i] = valueToBoxedObject(vm, vargs[i]);
+        MyMoObject *result = function(vm, argc, legacy_argv);
         if (IS_EMPTY(result))
             return false;
         pop(vm);
@@ -160,7 +219,7 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
     {
         MyMoObject *newMethed = NEW_STRING(vm, "__new__", 7);
         MyMoClass *klass = AS_CLASS(callee);
-        MyMoObject *__new__ = getEntry(vm->builtInClasses[OBJ_OBJECT]->methods, newMethed);
+        MyMoObject *__new__ = getEntry(vm, vm->builtInClasses[OBJ_OBJECT]->methods, newMethed);
         BuiltInfunction function = AS_BUILTIN_FUNCTION(__new__)->function;
         push(vm, callee);
         MyMoObject *result = function(vm, 1, &callee);
@@ -169,7 +228,7 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
         if (klass->init)
         {
             vm->classCall++;
-            vm->fiber->stack.objects[vm->fiber->stack.count - argc - 1] = result;
+            vm->fiber->stack.values[vm->fiber->stack.count - argc - 1] = V_OBJ_VAL(result);
             return caller(vm, klass->init, argc + 1);
         }
         else
@@ -188,9 +247,12 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
     {
         MyMoBuiltInClass *klass = AS_BUILTIN_CLASS(callee);
         MyMoObject *newMethed = NEW_STRING(vm, "__new__", 7);
-        MyMoObject *__new__ = getEntry(klass->methods, newMethed);
+        MyMoObject *__new__ = getEntry(vm, klass->methods, newMethed);
         BuiltInfunction function = AS_BUILTIN_FUNCTION(__new__)->function;
-        MyMoObject *result = function(vm, argc, vm->fiber->stack.objects + vm->fiber->stack.count - argc);
+        MyMoObject *legacy_argv[256];
+        Value *vargs = vm->fiber->stack.values + vm->fiber->stack.count - argc;
+        for (u32 i = 0; i < argc; i++) legacy_argv[i] = valueToBoxedObject(vm, vargs[i]);
+        MyMoObject *result = function(vm, argc, legacy_argv);
         if (IS_EMPTY(result))
             return false;
         pop(vm);
@@ -200,7 +262,7 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
     case OBJ_BOUND_METHOD:
     {
         MyMoBoundMethod *bound = AS_BOUND_METHOD(callee);
-        vm->fiber->stack.objects[vm->fiber->stack.count - argc - 1] = bound->self;
+        vm->fiber->stack.values[vm->fiber->stack.count - argc - 1] = V_OBJ_VAL(bound->self);
         return caller(vm, AS_OBJECT(bound->method), argc + 1);
     }
     default:
@@ -248,11 +310,12 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
         push(vm, a);                                                                        \
         if (b != NULL)                                                                      \
             push(vm, b);                                                                    \
+        SAVE();                                                                             \
         if (!caller(vm, method, b != NULL ? 2 : 1))                                         \
         {                                                                                   \
             return RUNTIME_ERROR;                                                           \
         }                                                                                   \
-        frame = vm->fiber->callFrames[vm->fiber->frameCount];                               \
+        LOAD();                                                                             \
         DISPATCH();                                                                         \
     } while (0)
 
@@ -265,31 +328,71 @@ bool isFalsey(MyMoObject *obj)
            (IS_STRING(obj) && STRING_VAL(obj)[0] == '\0');
 }
 
+// Value-native truthiness. Handles inline ints directly; boxed objects
+// fall through to the legacy heap-object check above.
+static inline bool isFalseyV(Value v)
+{
+    if (V_IS_INT(v))    return V_AS_INT(v) == 0;
+    if (V_IS_DOUBLE(v)) return V_AS_DOUBLE(v) == 0.0;
+    if (V_IS_OBJ(v))    return isFalsey(V_AS_OBJ(v));
+    return true;  // nil / false fall here once they go inline (steps 1.4-1.5)
+}
+
 int runMVM(MVM *vm)
 {
     int agp = 0;
-    CallFrame *frame = vm->fiber->callFrames[vm->fiber->frameCount];
+    register CallFrame *frame = vm->fiber->callFrames[vm->fiber->frameCount];
+    // Phase 4: hoist `ip` and stack-top pointer into local registers. The
+    // global `vm->fiber->stack.count` and `frame->ip` lag behind these
+    // locals; SAVE() syncs them out before any external call that may
+    // inspect them, LOAD() pulls them back. Idiomatic Lua-style.
+    register u8 *ip = frame->ip;
+    register Value *sp = vm->fiber->stack.values + vm->fiber->stack.count;
 #include "dispatch.h"
-#define ReadByte() (*frame->ip++)
-#define ReadShort() (frame->ip += 2, (u16)(frame->ip[-2] << 8) | frame->ip[-1])
-#define ReadConstant() (frame->function->chunk->constants.objects[ReadByte()])
-#define ReadObject() ReadConstant()
+#define ReadByte()     (*ip++)
+#define ReadShort()    (ip += 2, (u16)(ip[-2] << 8) | ip[-1])
+#define ReadConstant() (frame->function->chunk->constants.values[ReadByte()])
+#define ReadObject()   (V_AS_OBJ(ReadConstant()))
+
+// Stack ops on the cached register `sp`. Hot paths use these.
+// `(n)` is cast to int because callers commonly pass u32/size_t/u8 — the
+// expression `-1 - (u32)n` would otherwise unsigned-wrap to a huge index.
+#define lpush(v)       (*sp++ = (v))
+#define lpushObj(o)    (*sp++ = V_OBJ_VAL(o))
+#define lpop()         (*--sp)
+#define lpeek(n)       (sp[-1 - (int)(n)])
+
+// Sync register state out to fiber/frame before calling helpers that
+// inspect them (caller, runtimeError, operations.c, getEntry/setEntry,
+// printStack, etc). LOAD pulls back afterwards. The frame pointer can
+// also change across CALL/RET, so LOAD re-reads it.
+#define SAVE() do { vm->fiber->stack.count = (int)(sp - vm->fiber->stack.values); frame->ip = ip; } while (0)
+#define LOAD() do { frame = vm->fiber->callFrames[vm->fiber->frameCount]; ip = frame->ip; sp = vm->fiber->stack.values + vm->fiber->stack.count; } while (0)
+
+// Legacy push/pop/peek calls inside dispatch handlers must use the local
+// `sp`; redefine them as macros that override the global function names.
+// The originals in stack.c remain used outside runMVM.
+#define push(vm_, obj)  (lpushObj(obj))
+#define pop(vm_)        valueToBoxedObject((vm_), lpop())
+#define peek(vm_, n)    valueToBoxedObject((vm_), lpeek(n))
+#define pushV(vm_, v)   (lpush(v))
+#define popV(vm_)       (lpop())
+#define peekV(vm_, n)   (lpeek(n))
 
 #ifdef DEBUG_STACK_TRACE
 
 #define DISPATCH()                                                                                       \
     do                                                                                                   \
     {                                                                                                    \
+        SAVE();                                                                                          \
         printStack(vm);                                                                                  \
-        disassembleInstruction(frame->function->chunk, (int)(frame->ip - frame->function->chunk->code)); \
+        disassembleInstruction(frame->function->chunk, (int)(ip - frame->function->chunk->code));        \
         goto *dispatchTable[ReadByte()];                                                                 \
     } while (0);
 
 #else
 
-#define DISPATCH() \
-                   \
-    goto *dispatchTable[ReadByte()]
+#define DISPATCH() goto *dispatchTable[ReadByte()]
 
 #endif
 
@@ -301,7 +404,9 @@ int runMVM(MVM *vm)
     }
     OP_CONST:
     {
-        push(vm, ReadConstant());
+        // First adopter of the Value-native push — ReadConstant returns a
+        // Value (still always a wrapped object pointer at this stage).
+        pushV(vm, ReadConstant());
         DISPATCH();
     }
     OP_NIL:
@@ -373,7 +478,7 @@ int runMVM(MVM *vm)
         if (IS_DICT(peek(vm, 0)))
         {
             MyMoDict *dict = AS_DICT(pop(vm));
-            MyMoObject *value = getEntry(dict, index);
+            MyMoObject *value = getEntry(vm, dict,index);
             if (!(value))
             {
                 runtimeError(vm, "KeyError: value not found ");
@@ -682,7 +787,8 @@ int runMVM(MVM *vm)
     }
     OP_DUP:
     {
-        push(vm, peek(vm, 0));
+        Value top = lpeek(0);
+        lpush(top);
         DISPATCH();
     }
     OP_POP:
@@ -692,45 +798,71 @@ int runMVM(MVM *vm)
     }
     OP_EQUAL:
     {
+        // Value-native fast path: identical NaN-boxed bits compare equal in
+        // O(1), which covers same-tagged-int, same-pointer, same nil/bool.
+        // Mismatched bits with both sides numeric coerce to double compare.
         u32 inplace = ReadByte();
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value vb = peekV(vm, 0);
+        Value va = peekV(vm, 1);
+        if (!(V_IS_OBJ(va) && IS_INSTANCE(V_AS_OBJ(va))))
         {
-            MyMoObject *method = getMethod(vm, a, inplace ? "!=" : "==");
-            if (IS_EMPTY(method))
-            {
-                push(vm, NEW_BOOL(isEqual(a, b)));
-                DISPATCH();
-            }
-            if (inplace)
-            {
-                UNUSED(ReadByte());
-            }
-            push(vm, method);
-            push(vm, a);
-            push(vm, b);
-            if (!caller(vm, method, 2))
-            {
-                return RUNTIME_ERROR;
-            }
-            frame = vm->fiber->callFrames[vm->fiber->frameCount];
+            popV(vm); popV(vm);
+            bool eq = valuesEqual(va, vb);
+            bool result = inplace ? !eq : eq;
+            push(vm, NEW_BOOL(result));
             DISPATCH();
         }
-        push(vm, NEW_BOOL(isEqual(a, b)));
+        // Slow path: instance with __eq__/__ne__ overload. Fall through to
+        // the legacy heap-object dispatch.
+        MyMoObject *b = pop(vm);
+        MyMoObject *a = pop(vm);
+        MyMoObject *method = getMethod(vm, a, inplace ? "!=" : "==");
+        if (IS_EMPTY(method))
+        {
+            push(vm, NEW_BOOL(isEqual(a, b)));
+            DISPATCH();
+        }
+        if (inplace)
+        {
+            UNUSED(ReadByte());
+        }
+        push(vm, method);
+        push(vm, a);
+        push(vm, b);
+        SAVE();
+        if (!caller(vm, method, 2))
+        {
+            return RUNTIME_ERROR;
+        }
+        LOAD();
         DISPATCH();
     }
     OP_GREATER:
     {
         u32 inplace = ReadByte();
+        Value vb = lpeek(0);
+        Value va = lpeek(1);
+        if (V_IS_INT(va) && V_IS_INT(vb))
+        {
+            int32_t a = V_AS_INT(va);
+            int32_t b = V_AS_INT(vb);
+            sp -= 2;
+            lpushObj(NEW_BOOL(a > b));
+            DISPATCH();
+        }
+        if (valueLooksLikeInt(va) && valueLooksLikeInt(vb))
+        {
+            long a = valueToLong(va);
+            long b = valueToLong(vb);
+            sp -= 2;
+            lpushObj(NEW_BOOL(a > b));
+            DISPATCH();
+        }
         MyMoObject *b = pop(vm);
         MyMoObject *a = pop(vm);
         if (IS_INSTANCE(a))
         {
-            if (inplace)
-            {
-                UNUSED(ReadByte());
-            }
+            if (inplace) UNUSED(ReadByte());
             OperatorOverLoad(a, b, inplace ? "<=" : ">");
         }
         if (!IS_NUMBER(a) || !IS_NUMBER(b))
@@ -744,15 +876,30 @@ int runMVM(MVM *vm)
     OP_LESS:
     {
         u32 inplace = ReadByte();
+        Value vb = lpeek(0);
+        Value va = lpeek(1);
+        // Hottest path: inline-int comparison.
+        if (V_IS_INT(va) && V_IS_INT(vb))
+        {
+            int32_t a = V_AS_INT(va);
+            int32_t b = V_AS_INT(vb);
+            sp -= 2;
+            lpushObj(NEW_BOOL(a < b));
+            DISPATCH();
+        }
+        if (valueLooksLikeInt(va) && valueLooksLikeInt(vb))
+        {
+            long a = valueToLong(va);
+            long b = valueToLong(vb);
+            sp -= 2;
+            lpushObj(NEW_BOOL(a < b));
+            DISPATCH();
+        }
         MyMoObject *b = pop(vm);
         MyMoObject *a = pop(vm);
         if (IS_INSTANCE(a))
         {
-            if (inplace)
-            {
-                UNUSED(ReadByte());
-            }
-
+            if (inplace) UNUSED(ReadByte());
             OperatorOverLoad(a, b, inplace ? ">=" : "<");
         }
         if (!IS_NUMBER(a) || !IS_NUMBER(b))
@@ -802,11 +949,35 @@ int runMVM(MVM *vm)
     OP_ADD:
     {
         u32 inplace = ReadByte();
+        // Hottest path: both inline ints. Compute in 64-bit so we can detect
+        // overflow and box to a heap MyMoInt for results outside int32 range
+        // (matches Python/Ruby semantics: arithmetic doesn't silently wrap).
+        Value vb = lpeek(0);
+        Value va = lpeek(1);
+        if (V_IS_INT(va) && V_IS_INT(vb))
+        {
+            long r = (long)V_AS_INT(va) + (long)V_AS_INT(vb);
+            sp -= 2;
+            if (r >= INT32_MIN && r <= INT32_MAX)
+                lpush(V_INT_VAL((int32_t)r));
+            else
+                lpushObj(NEW_INT(vm, r));
+            DISPATCH();
+        }
+        if (valueLooksLikeInt(va) && valueLooksLikeInt(vb))
+        {
+            long r = valueToLong(va) + valueToLong(vb);
+            sp -= 2;
+            if (r >= INT32_MIN && r <= INT32_MAX)
+                lpush(V_INT_VAL((int32_t)r));
+            else
+                lpushObj(NEW_INT(vm, r));
+            DISPATCH();
+        }
         MyMoObject *b = pop(vm);
         MyMoObject *a = pop(vm);
         if (IS_INSTANCE(a))
         {
-
             OperatorOverLoad(a, b, inplace ? "+=" : "+");
         }
         MyMoObject *result = addition(vm, a, b);
@@ -818,6 +989,28 @@ int runMVM(MVM *vm)
     OP_SUB:
     {
         u32 inplace = ReadByte();
+        Value vb = lpeek(0);
+        Value va = lpeek(1);
+        if (V_IS_INT(va) && V_IS_INT(vb))
+        {
+            long r = (long)V_AS_INT(va) - (long)V_AS_INT(vb);
+            sp -= 2;
+            if (r >= INT32_MIN && r <= INT32_MAX)
+                lpush(V_INT_VAL((int32_t)r));
+            else
+                lpushObj(NEW_INT(vm, r));
+            DISPATCH();
+        }
+        if (valueLooksLikeInt(va) && valueLooksLikeInt(vb))
+        {
+            long r = valueToLong(va) - valueToLong(vb);
+            sp -= 2;
+            if (r >= INT32_MIN && r <= INT32_MAX)
+                lpush(V_INT_VAL((int32_t)r));
+            else
+                lpushObj(NEW_INT(vm, r));
+            DISPATCH();
+        }
         MyMoObject *b = pop(vm);
         MyMoObject *a = pop(vm);
         if (IS_INSTANCE(a))
@@ -833,6 +1026,28 @@ int runMVM(MVM *vm)
     OP_MUL:
     {
         u32 inplace = ReadByte();
+        Value vb = lpeek(0);
+        Value va = lpeek(1);
+        if (V_IS_INT(va) && V_IS_INT(vb))
+        {
+            long r = (long)V_AS_INT(va) * (long)V_AS_INT(vb);
+            sp -= 2;
+            if (r >= INT32_MIN && r <= INT32_MAX)
+                lpush(V_INT_VAL((int32_t)r));
+            else
+                lpushObj(NEW_INT(vm, r));
+            DISPATCH();
+        }
+        if (valueLooksLikeInt(va) && valueLooksLikeInt(vb))
+        {
+            long r = valueToLong(va) * valueToLong(vb);
+            sp -= 2;
+            if (r >= INT32_MIN && r <= INT32_MAX)
+                lpush(V_INT_VAL((int32_t)r));
+            else
+                lpushObj(NEW_INT(vm, r));
+            DISPATCH();
+        }
         MyMoObject *b = pop(vm);
         MyMoObject *a = pop(vm);
         if (IS_INSTANCE(a))
@@ -975,16 +1190,16 @@ int runMVM(MVM *vm)
     OP_JIF:
     {
         u16 offset = ReadShort();
-        if (isFalsey(peek(vm, 0)))
+        if (isFalseyV(lpeek(0)))
         {
-            frame->ip += offset;
+            ip += offset;
         }
         DISPATCH();
     }
     OP_JMP:
     {
         u16 offset = ReadShort();
-        frame->ip = frame->ip + offset;
+        ip += offset;
         DISPATCH();
     }
     OP_CJMP:
@@ -993,7 +1208,7 @@ int runMVM(MVM *vm)
         MyMoObject *lhs = pop(vm);
         if (!isEqual(lhs, peek(vm, 0)))
         {
-            frame->ip += offset;
+            ip += offset;
         }
         else
         {
@@ -1026,7 +1241,7 @@ int runMVM(MVM *vm)
     OP_LOOP:
     {
         u16 offset = ReadShort();
-        frame->ip -= offset;
+        ip -= offset;
         DISPATCH();
     }
     OP_ITER:
@@ -1036,7 +1251,7 @@ int runMVM(MVM *vm)
         MyMoObject *object = nextIter(vm, iterator);
         if (IS_EMPTY(object))
         {
-            frame->ip = frame->ip + offset;
+            ip += offset;
         }
         else
         {
@@ -1068,27 +1283,76 @@ int runMVM(MVM *vm)
     OP_GETV:
     {
         MyMoObject *variable = ReadObject();
+        // Inline-cache fast path.
+        u8 *icp = ip;
+        u8 ic_tag = icp[0];
+        u16 ic_idx = (u16)icp[2] | ((u16)icp[3] << 8);
+        u32 ic_ver = (u32)icp[4] | ((u32)icp[5] << 8) | ((u32)icp[6] << 16) | ((u32)icp[7] << 24);
+        ip += IC_BYTES;
+        if (ic_tag == IC_TAG_GLOBALS)
+        {
+            MyMoDict *d = &vm->globals;
+            if (d->modifyCount == ic_ver && (int)ic_idx <= d->capacity
+                && d->entries[ic_idx].key == variable)
+            {
+                lpush(d->entries[ic_idx].value);
+                DISPATCH();
+            }
+        }
+        else if (ic_tag == IC_TAG_LOCALS)
+        {
+            MyMoDict *d = &frame->locals;
+            if (d->modifyCount == ic_ver && (int)ic_idx <= d->capacity
+                && d->entries[ic_idx].key == variable)
+            {
+                lpush(d->entries[ic_idx].value);
+                DISPATCH();
+            }
+        }
+        // ---- Slow path: full lookup chain (existing semantics) --------
         MyMoObject *value = NULL;
         if (vm->currentClass)
         {
-            value = getEntry(vm->currentClass->variables, variable);
+            value = getEntry(vm, vm->currentClass->variables, variable);
             if (value)
             {
                 push(vm, value);
                 DISPATCH();
             }
-            value = getEntry(vm->currentClass->methods, variable);
+            value = getEntry(vm, vm->currentClass->methods, variable);
             if (value)
             {
                 push(vm, value);
                 DISPATCH();
             }
         }
+        // Helper: fill the IC for this OP_GETV with (tag, dict, entry_idx).
+        // Macro parameter is `_k` (not `key`) to avoid shadowing Entry.key
+        // during text substitution — `entries[i].key` would otherwise
+        // expand into `entries[i].<arg>`.
+        #define FILL_IC(tag, d, _k)                                                       \
+            do {                                                                          \
+                Entry *_es = (d)->entries;                                                \
+                int _cap = (d)->capacity;                                                 \
+                if (_es && _cap >= 0) {                                                   \
+                    u32 _h = ((MyMoObject*)(_k))->hash & (u32)_cap;                       \
+                    while (_es[_h].key != (MyMoObject*)(_k)) _h = (_h + 1) & (u32)_cap;   \
+                    icp[0] = (tag);                                                       \
+                    icp[1] = 0;                                                           \
+                    icp[2] = (u8)(_h & 0xff);                                             \
+                    icp[3] = (u8)((_h >> 8) & 0xff);                                      \
+                    icp[4] = (u8)((d)->modifyCount & 0xff);                               \
+                    icp[5] = (u8)(((d)->modifyCount >> 8) & 0xff);                        \
+                    icp[6] = (u8)(((d)->modifyCount >> 16) & 0xff);                       \
+                    icp[7] = (u8)(((d)->modifyCount >> 24) & 0xff);                       \
+                }                                                                          \
+            } while (0)
         if ((IS_FIBER_ROOT(vm->fiber)) && vm->fiber->frameCount == 0)
         {
-            value = getEntry(&vm->globals, variable);
+            value = getEntry(vm, &vm->globals, variable);
             if (value)
             {
+                FILL_IC(IC_TAG_GLOBALS, &vm->globals, variable);
                 push(vm, value);
                 DISPATCH();
             }
@@ -1096,16 +1360,17 @@ int runMVM(MVM *vm)
         }
         else
         {
-            value = getEntry(&frame->locals, variable);
+            value = getEntry(vm, &frame->locals, variable);
             if (value)
             {
+                FILL_IC(IC_TAG_LOCALS, &frame->locals, variable);
                 push(vm, value);
                 DISPATCH();
             }
             CallFrame *parent = frame->function->frame;
             while (parent)
             {
-                value = getEntry(&parent->locals, variable);
+                value = getEntry(vm, &parent->locals, variable);
                 if (value)
                 {
                     push(vm, value);
@@ -1115,16 +1380,17 @@ int runMVM(MVM *vm)
                 parent = parent->function->frame;
             }
         }
-        value = getEntry(&vm->globals, variable);
+        value = getEntry(vm, &vm->globals, variable);
         if (value)
         {
+            FILL_IC(IC_TAG_GLOBALS, &vm->globals, variable);
             push(vm, value);
             DISPATCH();
         }
         else
         {
         builtinvars:
-            value = getEntry(&vm->builtins, variable);
+            value = getEntry(vm, &vm->builtins, variable);
             if (value)
             {
                 push(vm, value);
@@ -1137,18 +1403,53 @@ int runMVM(MVM *vm)
     OP_SETV:
     {
         MyMoObject *variable = ReadObject();
-        if (vm->currentClass)
+        u8 *icp = ip;
+        u8 ic_tag = icp[0];
+        u16 ic_idx = (u16)icp[2] | ((u16)icp[3] << 8);
+        u32 ic_ver = (u32)icp[4] | ((u32)icp[5] << 8) | ((u32)icp[6] << 16) | ((u32)icp[7] << 24);
+        ip += IC_BYTES;
+        if (!vm->currentClass)
         {
-            setEntry(vm, vm->currentClass->variables, variable, peek(vm, 0));
+            MyMoDict *target = NULL;
+            u8 hit_tag = IC_TAG_COLD;
+            if (!vm->fiber->parent && vm->fiber->frameCount == 0)
+            {
+                target = &vm->globals; hit_tag = IC_TAG_GLOBALS;
+            }
+            else
+            {
+                target = &frame->locals; hit_tag = IC_TAG_LOCALS;
+            }
+            // Cache hit: same dict shape, same key at same slot.
+            if (ic_tag == hit_tag && target->modifyCount == ic_ver
+                && (int)ic_idx <= target->capacity
+                && target->entries[ic_idx].key == variable)
+            {
+                // Direct Value-native write — no boxing of inline ints.
+                target->entries[ic_idx].value = peekV(vm, 0);
+                DISPATCH();
+            }
+            // Slow path: do the set, then refresh the cache.
+            setEntryV(vm, target, variable, peekV(vm, 0));
+            Entry *es = target->entries;
+            int cap = target->capacity;
+            if (es && cap >= 0)
+            {
+                u32 h = variable->hash & (u32)cap;
+                while (es[h].key != variable) h = (h + 1) & (u32)cap;
+                icp[0] = hit_tag;
+                icp[1] = 0;
+                icp[2] = (u8)(h & 0xff);
+                icp[3] = (u8)((h >> 8) & 0xff);
+                icp[4] = (u8)(target->modifyCount & 0xff);
+                icp[5] = (u8)((target->modifyCount >> 8) & 0xff);
+                icp[6] = (u8)((target->modifyCount >> 16) & 0xff);
+                icp[7] = (u8)((target->modifyCount >> 24) & 0xff);
+            }
+            DISPATCH();
         }
-        else if (!vm->fiber->parent && vm->fiber->frameCount == 0)
-        {
-            setEntry(vm, &vm->globals, variable, peek(vm, 0));
-        }
-        else
-        {
-            setEntry(vm, &frame->locals, variable, peek(vm, 0));
-        }
+        // Class-context path: don't cache (rare, stays as-is).
+        setEntry(vm, vm->currentClass->variables, variable, peek(vm, 0));
         DISPATCH();
     }
     OP_DELV:
@@ -1184,9 +1485,87 @@ int runMVM(MVM *vm)
     OP_CALL:
     {
         u8 argCount = ReadByte();
-        if (!caller(vm, peek(vm, argCount), argCount))
+        // Fast path: OBJ_FUNCTION call. Skips the caller()/callFunction()
+        // indirection and inlines the frame setup. Covers the dominant
+        // case for tight recursion (fib, fact, etc.). Falls back to the
+        // generic caller() for builtins, classes, methods, bound methods.
+        Value calleeV = lpeek((int)argCount);
+        if (V_IS_OBJ(calleeV))
+        {
+            MyMoObject *cobj = V_AS_OBJ(calleeV);
+            if (cobj->type == OBJ_FUNCTION)
+            {
+                MyMoFunction *function = AS_FUNCTION(cobj);
+                if (function->argc != argCount)
+                {
+                    SAVE();
+                    runtimeError(vm, "TypeError : %s() Takes %d arguments but got %d.",
+                                 function->name->value, function->argc, argCount);
+                    return RUNTIME_ERROR;
+                }
+                if (function->type == FN_SCRIPT || function->type == FN_GENERATOR
+                    || function->type == FN_GEN_METHOD || function->type == FN_MODULE)
+                {
+                    SAVE();
+                    runtimeError(vm, "TypeError : <%s '%s'> is not callable.",
+                                 function->type == FN_SCRIPT ? "Script" :
+                                 function->type == FN_MODULE ? "module" : "generator",
+                                 function->name->value);
+                    return RUNTIME_ERROR;
+                }
+                // Frame capacity check (off-by-one fix from Phase 5e).
+                if (vm->fiber->frameCapacity < (uint)(vm->fiber->frameCount + 2))
+                {
+                    SAVE();
+                    u32 capacity = vm->fiber->frameCapacity;
+                    vm->fiber->frameCapacity = ResizeCapacity(vm->fiber->frameCapacity);
+                    while (vm->fiber->frameCapacity < (uint)(vm->fiber->frameCount + 2))
+                        vm->fiber->frameCapacity = ResizeCapacity(vm->fiber->frameCapacity);
+                    vm->fiber->callFrames = ResizeArray(vm, CallFrame *, vm->fiber->callFrames, capacity, vm->fiber->frameCapacity);
+                }
+                // Pull a frame from the pool, fall back to malloc.
+                CallFrame *newFrame;
+                if (vm->fiber->freeFramesHead != NULL)
+                {
+                    newFrame = vm->fiber->freeFramesHead;
+                    vm->fiber->freeFramesHead = (CallFrame *)newFrame->function;
+                }
+                else
+                {
+                    newFrame = New(CallFrame, 1);
+                    initDict(&newFrame->locals);
+                }
+                newFrame->function = function;
+                newFrame->ip = function->chunk->code;
+                vm->fiber->callFrames[++vm->fiber->frameCount] = newFrame;
+                // Pop args from operand stack (using local sp register)
+                // directly into the new frame's slot array. No dict.
+                if (argCount && !function->isargs)
+                {
+                    if ((int)argCount <= CALLFRAME_ARGS_INLINE)
+                    {
+                        for (int i = (int)argCount - 1; i >= 0; i--)
+                            newFrame->args[i] = *--sp;
+                    }
+                    else
+                    {
+                        for (int i = (int)argCount - 1; i >= 0; i--)
+                            setEntry(vm, &newFrame->locals, AS_OBJECT(function->argv[i]), V_AS_OBJ(*--sp));
+                    }
+                }
+                // Save caller frame ip and switch.
+                frame->ip = ip;
+                frame = newFrame;
+                ip = frame->ip;
+                DISPATCH();
+            }
+        }
+        // Slow path: builtins, classes, bound methods, etc. Go through
+        // the generic dispatch with full SAVE/LOAD.
+        SAVE();
+        if (!caller(vm, V_AS_OBJ(calleeV), argCount))
             return RUNTIME_ERROR;
-        frame = vm->fiber->callFrames[vm->fiber->frameCount];
+        LOAD();
         DISPATCH();
     }
     OP_PITHRU:
@@ -1211,8 +1590,10 @@ int runMVM(MVM *vm)
             free(frame);
             vm->currentModule = vm->currentModule->parent;
             frame = vm->fiber->callFrames[--vm->fiber->frameCount];
+            ip = frame->ip;
             DISPATCH();
         }
+        SAVE();  // sync state out before returning from the run loop
         return OK;
     }
     OP_FRET:
@@ -1221,26 +1602,45 @@ int runMVM(MVM *vm)
         if (vm->classCall && frame->function->type == FN_INIT)
         {
             vm->classCall--;
-            ret = getEntry(&frame->locals, AS_OBJECT(frame->function->argv[0]));
+            // `self` is conventionally argv[0]. With slot-based arg storage
+            // it lives in frame->args[0] now (rather than the locals dict),
+            // so read it directly from there. The dict lookup remains as a
+            // fallback for the spill case (argc > CALLFRAME_ARGS_INLINE),
+            // which __init__ will basically never hit.
+            if (frame->function->argc <= CALLFRAME_ARGS_INLINE)
+                ret = V_AS_OBJ(frame->args[0]);
+            else
+                ret = getEntry(vm, &frame->locals, AS_OBJECT(frame->function->argv[0]));
         }
-        // // disassembleChunk(frame->function->chunk,"---");
         if (vm->currentClass || frame->function->type > FN_METHOD)
         {
             pop(vm);
         }
         if (vm->fiber->frameCount == 0)
         {
-            // resetStack(vm);
             vm->fiber->state = FIBER_DEAD;
+            // Sync our register state back to the dying child fiber, then
+            // pivot to the parent fiber and refresh registers.
+            SAVE();
             vm->fiber = vm->fiber->parent;
+            LOAD();
             pop(vm);
             push(vm, ret);
-            frame = vm->fiber->callFrames[vm->fiber->frameCount];
             DISPATCH();
         }
-        freeDict(vm, &frame->locals);
-        free(frame);
+        // Recycle into the fiber's frame pool instead of free()ing. Skip
+        // freeDict when the locals dict was never grown (count==0 with
+        // capacity==-1) — the common case for arg-only functions where
+        // all params live in frame->args[]. Saves a function call per
+        // OP_FRET on the hot path.
+        if (frame->locals.count > 0 || frame->locals.entries != NULL)
+            freeDict(vm, &frame->locals);
+        frame->function = (MyMoFunction *)vm->fiber->freeFramesHead;
+        vm->fiber->freeFramesHead = frame;
+        // Frame transition: re-load ip from the new (caller) frame. Stack
+        // top stays as our local sp.
         frame = vm->fiber->callFrames[--vm->fiber->frameCount];
+        ip = frame->ip;
         push(vm, ret);
         DISPATCH();
     }
@@ -1255,7 +1655,8 @@ int runMVM(MVM *vm)
     }
     OP_SUPERARGS:
     {
-        int argc = INT_VAL(ReadConstant());
+        // Compiler emits the superclass count as an inline V_INT_VAL.
+        int argc = V_AS_INT(ReadConstant());
         for (size_t i = 0; i < argc; i++)
         {
             MyMoObject *superClass = pop(vm);
@@ -1336,7 +1737,7 @@ int runMVM(MVM *vm)
         {
             MyMoInstance *instance = AS_INSTANCE(peek(vm, 0));
             MyMoObject *variable = ReadObject();
-            MyMoObject *value = getEntry(instance->fields, variable);
+            MyMoObject *value = getEntry(vm, instance->fields, variable);
             if (value)
             {
                 if (!agp)
@@ -1346,7 +1747,7 @@ int runMVM(MVM *vm)
                     agp = 0;
                 DISPATCH();
             }
-            value = getEntry(instance->klass->variables, variable);
+            value = getEntry(vm, instance->klass->variables, variable);
             if (value)
             {
                 if (!agp)
@@ -1356,7 +1757,7 @@ int runMVM(MVM *vm)
                     agp = 0;
                 DISPATCH();
             }
-            value = getEntry(instance->klass->methods, variable);
+            value = getEntry(vm, instance->klass->methods, variable);
             if (value)
             {
                 if (IS_FUNCTION(value))
@@ -1372,7 +1773,7 @@ int runMVM(MVM *vm)
                     agp = 0;
                 DISPATCH();
             }
-            value = getEntry(vm->builtInClasses[OBJ_OBJECT]->methods, variable);
+            value = getEntry(vm, vm->builtInClasses[OBJ_OBJECT]->methods, variable);
             if (value)
             {
                 pop(vm); // pop the instance
@@ -1391,7 +1792,7 @@ int runMVM(MVM *vm)
         {
             MyMoClass *klass = AS_CLASS(peek(vm, 0));
             MyMoObject *variable = ReadObject();
-            MyMoObject *value = getEntry(klass->variables, variable);
+            MyMoObject *value = getEntry(vm, klass->variables, variable);
             if (value)
             {
                 if (!agp)
@@ -1401,7 +1802,7 @@ int runMVM(MVM *vm)
                 push(vm, value);
                 DISPATCH();
             }
-            value = getEntry(klass->methods, variable);
+            value = getEntry(vm, klass->methods, variable);
             if (value)
             {
                 if (!agp)
@@ -1411,7 +1812,7 @@ int runMVM(MVM *vm)
                 push(vm, value);
                 DISPATCH();
             }
-            value = getEntry(vm->builtInClasses[OBJ_OBJECT]->methods, variable);
+            value = getEntry(vm, vm->builtInClasses[OBJ_OBJECT]->methods, variable);
             if (value)
             {
                 pop(vm); // pop the instance
@@ -1429,7 +1830,7 @@ int runMVM(MVM *vm)
         {
             MyMoModule *module = AS_MODULE(peek(vm, 0));
             MyMoObject *variable = ReadObject();
-            MyMoObject *value = getEntry(module->variables, variable);
+            MyMoObject *value = getEntry(vm, module->variables, variable);
             if (value)
             {
                 if (!agp)
@@ -1446,7 +1847,7 @@ int runMVM(MVM *vm)
         {
             MyMoBuiltInClass *klass = AS_BUILTIN_CLASS(peek(vm, 0));
             MyMoObject *variable = ReadObject();
-            MyMoObject *value = getEntry(klass->methods, variable);
+            MyMoObject *value = getEntry(vm, klass->methods, variable);
             if (value)
             {
                 if (!agp)
@@ -1463,7 +1864,7 @@ int runMVM(MVM *vm)
         {
             MyMoObject *self = pop(vm);
             MyMoObject *variable = ReadObject();
-            MyMoObject *fn = getEntry(vm->builtInClasses[type]->methods, variable);
+            MyMoObject *fn = getEntry(vm, vm->builtInClasses[type]->methods, variable);
             if (fn)
             {
                 MyMoBuiltInFunction *function = AS_BUILTIN_FUNCTION(fn);
@@ -1486,7 +1887,7 @@ int runMVM(MVM *vm)
         char *path = pathResolver(vm, modulePathUse->value);
         if (path == NULL)
         {
-            MyMoObject *module = getEntry(&vm->builtInModules, AS_OBJECT(modulePathUse));
+            MyMoObject *module = getEntry(vm, &vm->builtInModules, AS_OBJECT(modulePathUse));
             if (module)
             {
                 push(vm, module);
@@ -1524,7 +1925,7 @@ int runMVM(MVM *vm)
         {
             modulePath = newString(vm, path, strlen(path));
         }
-        MyMoObject *module = getEntry(&vm->modules, AS_OBJECT(modulePath));
+        MyMoObject *module = getEntry(vm, &vm->modules, AS_OBJECT(modulePath));
         if (module)
         {
             push(vm, module);
@@ -1545,8 +1946,9 @@ int runMVM(MVM *vm)
         free(path);
         function->name = moduleName;
         function->type = FN_MODULE;
+        SAVE();
         callFunction(vm, function, 0);
-        frame = vm->fiber->callFrames[vm->fiber->frameCount];
+        LOAD();
         setEntry(vm, &frame->locals, NEW_STRING(vm, "__name__", 8), AS_OBJECT(moduleName));
         MyMoModule *currentModule = newModule(vm, moduleName, modulePath);
         currentModule->parent = vm->currentModule;
@@ -1577,6 +1979,345 @@ int runMVM(MVM *vm)
     {
         MyMoModule *module = AS_MODULE(pop(vm));
         copyDict(vm, module->variables, (((IS_FIBER_ROOT(vm->fiber)) && vm->fiber->frameCount == 0) ? &vm->globals : &frame->locals));
+        DISPATCH();
+    }
+    OP_WILDCARD:
+    {
+        lpushObj(vm->wildcard);
+        DISPATCH();
+    }
+    OP_GETARG:
+    {
+        // Direct array index into frame->args. ~3 instructions: load slot,
+        // load Value, push. No dict probe, no IC, no name compare.
+        u8 slot = ReadByte();
+        lpush(frame->args[slot]);
+        DISPATCH();
+    }
+    OP_SETARG:
+    {
+        u8 slot = ReadByte();
+        frame->args[slot] = lpeek(0);
+        DISPATCH();
+    }
+    OP_INVOKE_GLOBAL:
+    {
+        // Fused OP_GETV + OP_CALL. Layout: opcode | name_idx u8 | IC[8] | argc u8.
+        // Pre-condition: argc args sit on the operand stack in call order.
+        // Post-condition: args consumed, return value pushed.
+        MyMoObject *variable = ReadObject();
+        u8 *icp = ip;
+        u8 ic_tag = icp[0];
+        u16 ic_idx = (u16)icp[2] | ((u16)icp[3] << 8);
+        u32 ic_ver = (u32)icp[4] | ((u32)icp[5] << 8) | ((u32)icp[6] << 16) | ((u32)icp[7] << 24);
+        ip += IC_BYTES;
+        u8 argCount = ReadByte();
+
+        // IC fast path: globals dict cache hit.
+        Value calleeV;
+        bool found = false;
+        if (ic_tag == IC_TAG_GLOBALS)
+        {
+            MyMoDict *d = &vm->globals;
+            if (d->modifyCount == ic_ver && (int)ic_idx <= d->capacity
+                && d->entries[ic_idx].key == variable)
+            {
+                calleeV = d->entries[ic_idx].value;
+                found = true;
+            }
+        }
+        else if (ic_tag == IC_TAG_LOCALS)
+        {
+            MyMoDict *d = &frame->locals;
+            if (d->modifyCount == ic_ver && (int)ic_idx <= d->capacity
+                && d->entries[ic_idx].key == variable)
+            {
+                calleeV = d->entries[ic_idx].value;
+                found = true;
+            }
+        }
+
+        // Slow path: walk the same lookup chain OP_GETV uses, fill cache.
+        if (!found)
+        {
+            MyMoObject *value = NULL;
+            u8 hitTag = IC_TAG_COLD;
+            MyMoDict *hitDict = NULL;
+            if (vm->currentClass)
+            {
+                value = getEntry(vm, vm->currentClass->variables, variable);
+                if (!value) value = getEntry(vm, vm->currentClass->methods, variable);
+            }
+            if (!value)
+            {
+                if ((IS_FIBER_ROOT(vm->fiber)) && vm->fiber->frameCount == 0)
+                {
+                    value = getEntry(vm, &vm->globals, variable);
+                    if (value) { hitTag = IC_TAG_GLOBALS; hitDict = &vm->globals; }
+                }
+                else
+                {
+                    value = getEntry(vm, &frame->locals, variable);
+                    if (value) { hitTag = IC_TAG_LOCALS; hitDict = &frame->locals; }
+                    if (!value)
+                    {
+                        CallFrame *parent = frame->function->frame;
+                        while (parent && !value)
+                        {
+                            value = getEntry(vm, &parent->locals, variable);
+                            parent = parent->function->frame;
+                        }
+                    }
+                    if (!value)
+                    {
+                        value = getEntry(vm, &vm->globals, variable);
+                        if (value) { hitTag = IC_TAG_GLOBALS; hitDict = &vm->globals; }
+                    }
+                }
+                if (!value) value = getEntry(vm, &vm->builtins, variable);
+            }
+            if (!value)
+            {
+                SAVE();
+                runtimeError(vm, "Name Error: Undefined variable '%s'.", STRING_VAL(variable));
+                return RUNTIME_ERROR;
+            }
+            calleeV = V_OBJ_VAL(value);
+            // Refresh IC if this came from a cacheable dict.
+            if (hitDict)
+            {
+                Entry *es = hitDict->entries;
+                int cap = hitDict->capacity;
+                if (es && cap >= 0)
+                {
+                    u32 h = variable->hash & (u32)cap;
+                    while (es[h].key != variable) h = (h + 1) & (u32)cap;
+                    icp[0] = hitTag;
+                    icp[1] = 0;
+                    icp[2] = (u8)(h & 0xff);
+                    icp[3] = (u8)((h >> 8) & 0xff);
+                    icp[4] = (u8)(hitDict->modifyCount & 0xff);
+                    icp[5] = (u8)((hitDict->modifyCount >> 8) & 0xff);
+                    icp[6] = (u8)((hitDict->modifyCount >> 16) & 0xff);
+                    icp[7] = (u8)((hitDict->modifyCount >> 24) & 0xff);
+                }
+            }
+        }
+
+        // Specialized dispatch by callee type — bypass caller() and the
+        // memmove for the two common cases. The args sit at the top of
+        // the stack with no callee underneath (OP_INVOKE_GLOBAL fused
+        // away the OP_GETV).
+
+        MyMoObject *cobj = V_AS_OBJ(calleeV);
+
+        // ── User function fast path ───────────────────────────────────
+        // Pop args directly into newFrame->args[], then push calleeV so
+        // OP_FRET's "pop callee" balances. Same end state as the
+        // OP_GETV+OP_CALL path but skips the memmove + caller() chain.
+        if (cobj->type == OBJ_FUNCTION)
+        {
+            MyMoFunction *function = AS_FUNCTION(cobj);
+            if (function->argc != argCount)
+            {
+                SAVE();
+                runtimeError(vm, "TypeError : %s() Takes %d arguments but got %d.",
+                             function->name->value, function->argc, argCount);
+                return RUNTIME_ERROR;
+            }
+            if (function->type == FN_SCRIPT || function->type == FN_GENERATOR
+                || function->type == FN_GEN_METHOD || function->type == FN_MODULE)
+            {
+                SAVE();
+                runtimeError(vm, "TypeError : <%s '%s'> is not callable.",
+                             function->type == FN_SCRIPT ? "Script" :
+                             function->type == FN_MODULE ? "module" : "generator",
+                             function->name->value);
+                return RUNTIME_ERROR;
+            }
+            if (vm->fiber->frameCapacity < (uint)(vm->fiber->frameCount + 2))
+            {
+                SAVE();
+                u32 capacity = vm->fiber->frameCapacity;
+                vm->fiber->frameCapacity = ResizeCapacity(vm->fiber->frameCapacity);
+                while (vm->fiber->frameCapacity < (uint)(vm->fiber->frameCount + 2))
+                    vm->fiber->frameCapacity = ResizeCapacity(vm->fiber->frameCapacity);
+                vm->fiber->callFrames = ResizeArray(vm, CallFrame *, vm->fiber->callFrames, capacity, vm->fiber->frameCapacity);
+            }
+            CallFrame *newFrame;
+            if (vm->fiber->freeFramesHead != NULL)
+            {
+                newFrame = vm->fiber->freeFramesHead;
+                vm->fiber->freeFramesHead = (CallFrame *)newFrame->function;
+            }
+            else
+            {
+                newFrame = New(CallFrame, 1);
+                initDict(&newFrame->locals);
+            }
+            newFrame->function = function;
+            newFrame->ip = function->chunk->code;
+            vm->fiber->callFrames[++vm->fiber->frameCount] = newFrame;
+            if (argCount && !function->isargs)
+            {
+                if ((int)argCount <= CALLFRAME_ARGS_INLINE)
+                {
+                    for (int i = (int)argCount - 1; i >= 0; i--)
+                        newFrame->args[i] = *--sp;
+                }
+                else
+                {
+                    for (int i = (int)argCount - 1; i >= 0; i--)
+                        setEntry(vm, &newFrame->locals, AS_OBJECT(function->argv[i]), V_AS_OBJ(*--sp));
+                }
+            }
+            // Push callee so OP_FRET's "pop callee" branch (FN_FUNCTION>FN_METHOD)
+            // has something to consume. One push, no shift, no malloc.
+            lpush(calleeV);
+            frame->ip = ip;
+            frame = newFrame;
+            ip = frame->ip;
+            DISPATCH();
+        }
+
+        // ── Builtin function/method fast path ─────────────────────────
+        // Materialize argv directly from the operand stack (no shift),
+        // call the C function, push result. The builtin pops its argc
+        // items via the legacy pop() — SAVE/LOAD syncs sp around it.
+        if (cobj->type == OBJ_BUILTIN_FUNCTION || cobj->type == OBJ_BUILTIN_METHOD)
+        {
+            BuiltInfunction fn = AS_BUILTIN_FUNCTION(cobj)->function;
+            MyMoObject *legacy_argv[256];
+            SAVE();
+            Value *vargs = vm->fiber->stack.values + vm->fiber->stack.count - argCount;
+            for (u32 i = 0; i < argCount; i++)
+                legacy_argv[i] = valueToBoxedObject(vm, vargs[i]);
+            MyMoObject *result = fn(vm, argCount, legacy_argv);
+            if (IS_EMPTY(result)) return RUNTIME_ERROR;
+            LOAD();   // builtin popped argc items via legacy pop()
+            lpushObj(result);
+            DISPATCH();
+        }
+
+        // ── Slow path for class / bound method / etc. ─────────────────
+        // Insert callee under args, fall back to caller() dispatch.
+        if (argCount > 0)
+        {
+            memmove(sp - argCount + 1, sp - argCount, argCount * sizeof(Value));
+        }
+        sp[-(int)argCount] = calleeV;
+        sp++;
+        SAVE();
+        if (!caller(vm, cobj, argCount))
+            return RUNTIME_ERROR;
+        LOAD();
+        DISPATCH();
+    }
+    OP_INCR_VAR:
+    {
+        // Super-instruction: dict[name] += delta. Replaces
+        // GETV+CONST+ADD+SETV+POP for `name += int_literal`.
+        // Layout: opcode | name_idx | IC[8] | delta[4]
+        MyMoObject *variable = ReadObject();
+        u8 *icp = ip;
+        u8 ic_tag = icp[0];
+        u16 ic_idx = (u16)icp[2] | ((u16)icp[3] << 8);
+        u32 ic_ver = (u32)icp[4] | ((u32)icp[5] << 8) | ((u32)icp[6] << 16) | ((u32)icp[7] << 24);
+        ip += IC_BYTES;
+        int32_t delta = (int32_t)((u32)ip[0] | ((u32)ip[1] << 8) | ((u32)ip[2] << 16) | ((u32)ip[3] << 24));
+        ip += 4;
+
+        // Resolve target dict (same logic as OP_SETV).
+        MyMoDict *target = NULL;
+        u8 hit_tag = IC_TAG_COLD;
+        if (!vm->currentClass)
+        {
+            if (!vm->fiber->parent && vm->fiber->frameCount == 0)
+            {
+                target = &vm->globals; hit_tag = IC_TAG_GLOBALS;
+            }
+            else
+            {
+                target = &frame->locals; hit_tag = IC_TAG_LOCALS;
+            }
+        }
+        else
+        {
+            target = vm->currentClass->variables;
+        }
+
+        // IC fast path.
+        if (target && hit_tag != IC_TAG_COLD
+            && ic_tag == hit_tag && target->modifyCount == ic_ver
+            && (int)ic_idx <= target->capacity
+            && target->entries[ic_idx].key == variable)
+        {
+            Value cur = target->entries[ic_idx].value;
+            if (V_IS_INT(cur))
+            {
+                long sum = (long)V_AS_INT(cur) + (long)delta;
+                if (sum >= INT32_MIN && sum <= INT32_MAX)
+                {
+                    Value next = V_INT_VAL((int32_t)sum);
+                    target->entries[ic_idx].value = next;
+                    lpush(next);
+                    DISPATCH();
+                }
+                // Overflow: store as heap MyMoInt and push it.
+                MyMoObject *boxed = AS_OBJECT(newInt(vm, sum));
+                target->entries[ic_idx].value = V_OBJ_VAL(boxed);
+                lpushObj(boxed);
+                DISPATCH();
+            }
+            // Cur is a heap MyMoInt or other type — fall through to slow path.
+        }
+        // Slow path: do the read/add/write through the legacy dict API.
+        Value cur;
+        bool found = getEntryV(target, variable, &cur);
+        long curLong = 0;
+        if (found && valueLooksLikeInt(cur))
+        {
+            curLong = valueToLong(cur);
+        }
+        else if (!found)
+        {
+            // Treat as 0 if uninitialized — semantically wrong (should be
+            // NameError) but matches what `0 + delta` would do for bare ints.
+            // Fall back to error path: simulate the legacy GETV failure.
+            runtimeError(vm, "Name Error: Undefined variable '%s'.", STRING_VAL(variable));
+            return RUNTIME_ERROR;
+        }
+        else
+        {
+            // Non-int target: emit a TypeError. Could fall back to the slow
+            // OP_ADD path, but += of a non-int with a literal int is rare.
+            runtimeError(vm, "TypeError: cannot += int to %s.", valueTypeName(cur));
+            return RUNTIME_ERROR;
+        }
+        long sum = curLong + (long)delta;
+        Value next;
+        if (sum >= INT32_MIN && sum <= INT32_MAX)
+            next = V_INT_VAL((int32_t)sum);
+        else
+            next = V_OBJ_VAL(AS_OBJECT(newInt(vm, sum)));
+        setEntryV(vm, target, variable, next);
+        // Refresh cache.
+        Entry *es = target->entries;
+        int cap = target->capacity;
+        if (es && cap >= 0 && hit_tag != IC_TAG_COLD)
+        {
+            u32 h = variable->hash & (u32)cap;
+            while (es[h].key != variable) h = (h + 1) & (u32)cap;
+            icp[0] = hit_tag;
+            icp[1] = 0;
+            icp[2] = (u8)(h & 0xff);
+            icp[3] = (u8)((h >> 8) & 0xff);
+            icp[4] = (u8)(target->modifyCount & 0xff);
+            icp[5] = (u8)((target->modifyCount >> 8) & 0xff);
+            icp[6] = (u8)((target->modifyCount >> 16) & 0xff);
+            icp[7] = (u8)((target->modifyCount >> 24) & 0xff);
+        }
+        lpush(next);
         DISPATCH();
     }
     }

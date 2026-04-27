@@ -2,10 +2,22 @@
 #include "bytecode.h"
 #include "error.h"
 #include "datatypes/datatypes.h"
+#include "vm.h"   // full MVM struct for currentModule check
 
 uint makeConstant(Compiler *compiler, MyMoObject *value)
 {
     int constant = addConstant(compiler->parser->vm, currentChunk(compiler), value);
+    if (constant > UINT16_MAX)
+    {
+        error(compiler, "Too many constants in one chunk.");
+        return 0;
+    }
+    return (uint)constant;
+}
+
+uint makeConstantV(Compiler *compiler, Value v)
+{
+    int constant = addConstantV(compiler->parser->vm, currentChunk(compiler), v);
     if (constant > UINT16_MAX)
     {
         error(compiler, "Too many constants in one chunk.");
@@ -22,6 +34,45 @@ uint identifierConstant(Compiler *compiler, Token *name)
 void emitConstant(Compiler *compiler, MyMoObject *value)
 {
     emitBytes(compiler, OP_CONST, makeConstant(compiler, value));
+}
+
+void emitConstantV(Compiler *compiler, Value v)
+{
+    emitBytes(compiler, OP_CONST, makeConstantV(compiler, v));
+}
+
+static void emitNameOpWithIC(Compiler *compiler, u8 op, u8 nameIdx)
+{
+    emitBytes(compiler, op, nameIdx);
+    // Reserve IC slots, all zero-initialized so dict_tag starts cold (0).
+    // Cold tag is 0xff, but for a fresh emit any tag value works because the
+    // version check immediately sees modifyCount > 0 mismatch on first hit.
+    // We initialize to 0xff explicitly to be safe.
+    emitByte(compiler, IC_TAG_COLD);
+    for (int i = 1; i < IC_BYTES; i++) emitByte(compiler, 0);
+}
+
+void emitGetV(Compiler *compiler, u8 nameIdx)
+{
+    emitNameOpWithIC(compiler, OP_GETV, nameIdx);
+}
+
+void emitSetV(Compiler *compiler, u8 nameIdx)
+{
+    emitNameOpWithIC(compiler, OP_SETV, nameIdx);
+}
+
+void emitIncrVar(Compiler *compiler, u8 nameIdx, int32_t delta)
+{
+    emitBytes(compiler, OP_INCR_VAR, nameIdx);
+    // 8 IC scratch bytes (same layout as OP_GETV/OP_SETV — first byte cold).
+    emitByte(compiler, IC_TAG_COLD);
+    for (int i = 1; i < IC_BYTES; i++) emitByte(compiler, 0);
+    // 4 bytes little-endian delta.
+    emitByte(compiler, (u8)(delta & 0xff));
+    emitByte(compiler, (u8)((delta >> 8) & 0xff));
+    emitByte(compiler, (u8)((delta >> 16) & 0xff));
+    emitByte(compiler, (u8)((delta >> 24) & 0xff));
 }
 void emitByte(Compiler *compiler, u8 byte)
 {

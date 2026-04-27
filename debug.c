@@ -1,5 +1,6 @@
 #include "common.h"
 #include "debug.h"
+#include "value.h"
 
 static int constantInstruction(const char *name, Chunk *chunk, int offset)
 {
@@ -64,9 +65,13 @@ int disassembleInstruction(Chunk *chunk, int offset)
     case OP_POP:
         return simpleInstruction("OP_POP", offset);
     case OP_GETV:
-        return constantInstruction("OP_GETV", chunk, offset);
     case OP_SETV:
-        return constantInstruction("OP_SETV", chunk, offset);
+    {
+        // OP + name_idx + 8 IC scratch bytes = 10 bytes total.
+        u8 constant = chunk->code[offset + 1];
+        printf("%-16s %4d\n", instruction == OP_GETV ? "OP_GETV" : "OP_SETV", constant);
+        return offset + 2 + 8;
+    }
     case OP_DELV:
         return constantInstruction("OP_DELV", chunk, offset);
     case OP_GETP:
@@ -132,7 +137,7 @@ int disassembleInstruction(Chunk *chunk, int offset)
         offset++;
         u8 constant = chunk->code[offset++];
         printf("%-16s %4d ", "OP_FN", constant);
-        printObject(chunk->constants.objects[constant]);
+        printValue(chunk->constants.values[constant]);
         printf("\n");
         return offset;
     }
@@ -160,6 +165,29 @@ int disassembleInstruction(Chunk *chunk, int offset)
         return simpleInstruction("OP_SETM", offset);
     case OP_COPY:
         return simpleInstruction("OP_COPY", offset);
+    case OP_INCR_VAR:
+    {
+        u8 nameIdx = chunk->code[offset + 1];
+        int32_t delta = (int32_t)((u32)chunk->code[offset + 10]
+                       | ((u32)chunk->code[offset + 11] << 8)
+                       | ((u32)chunk->code[offset + 12] << 16)
+                       | ((u32)chunk->code[offset + 13] << 24));
+        printf("%-16s %4d %+d\n", "OP_INCR_VAR", nameIdx, delta);
+        return offset + 14;  // op + name + 8 IC + 4 delta
+    }
+    case OP_WILDCARD:
+        return simpleInstruction("OP_WILDCARD", offset);
+    case OP_GETARG:
+        return byteInstruction("OP_GETARG", chunk, offset);
+    case OP_SETARG:
+        return byteInstruction("OP_SETARG", chunk, offset);
+    case OP_INVOKE_GLOBAL:
+    {
+        u8 nameIdx = chunk->code[offset + 1];
+        u8 argc = chunk->code[offset + 10];
+        printf("%-16s %4d argc=%d\n", "OP_INVOKE_GLOBAL", nameIdx, argc);
+        return offset + 11;  // op + name + 8 IC + argc
+    }
     default:
         printf("Unknown opcode %d\n", instruction);
         return offset + 1;
@@ -168,14 +196,15 @@ int disassembleInstruction(Chunk *chunk, int offset)
 
 void debugChunk(MyMoFunction *function)
 {
-    MyMoObjectArray constants = function->chunk->constants;
+    ValueArray constants = function->chunk->constants;
     for (int i = 0; i < constants.count; i++)
     {
-        if (!(IS_FUNCTION(constants.objects[i])))
+        Value v = constants.values[i];
+        if (!V_IS_OBJ(v) || !IS_FUNCTION(V_AS_OBJ(v)))
         {
             continue;
         }
-        debugChunk(AS_FUNCTION(constants.objects[i]));
+        debugChunk(AS_FUNCTION(V_AS_OBJ(v)));
     }
     printf("======== %s =========\n", function->name->value);
     printChunk(function->chunk);

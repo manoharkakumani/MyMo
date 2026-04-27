@@ -409,7 +409,9 @@ char *pathResolver(MVM *vm, char *_path)
     strcat(cachePath, "c");
     Stat file;
     Stat cachefile;
-    if (stat(path, &file) == 0 && stat(cachePath, &cachefile) == 0)
+    int havePath = (stat(path, &file) == 0);
+    int haveCache = (stat(cachePath, &cachefile) == 0);
+    if (havePath && haveCache)
     {
         if (cachefile.st_mtime < file.st_mtime)
         {
@@ -419,10 +421,21 @@ char *pathResolver(MVM *vm, char *_path)
         free(path);
         return cachePath;
     }
-    else
+    if (havePath)
     {
         free(cachePath);
         return path;
     }
+    if (haveCache)
+    {
+        free(path);
+        return cachePath;
+    }
+    // Neither source nor cache exists — let the caller fall through to
+    // the built-in / dynamic module lookup paths instead of trying to
+    // open a non-existent .my file.
+    free(cachePath);
+    free(path);
+    return NULL;
     #undef DELIMITER
 }

@@ -4,6 +4,7 @@
 #include "object.h"
 #include "function.h"
 #include "dict.h"
+#include "../value.h"
 
 #define AS_FIBER(object) ((MyMoFiber *)object)
 #define IS_FIBER(object) (object->type == OBJ_FIBER)
@@ -35,11 +36,16 @@ typedef struct fiber
     MyMoObject object;
     FiberState state;
     FiberType type;
-    MyMoObjectArray stack;
+    ValueArray stack;
     CallFrame **callFrames;
     uint frameCount;
     uint frameCapacity;
     struct fiber *parent;
+    // Free-list of recyclable CallFrame allocations. callFunction picks
+    // from here when non-empty, falling back to malloc; OP_FRET pushes
+    // the frame back instead of free()ing. Saves a malloc + free per call
+    // pair — ~30 ns each on common allocators.
+    CallFrame *freeFramesHead;
 } MyMoFiber;
 
 MyMoFiber *newFiber(MVM *vm, MyMoFunction *function);
