@@ -4,6 +4,7 @@
 // can write a typical builtin in one line of validation.
 
 #include "include/mymo_module.h"
+#include "stack.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -56,6 +57,10 @@ bool mymo_check_args(MVM *vm, const char *funcname, uint argc, uint expected)
                      funcname, expected, expected == 1 ? "" : "s", argc);
         return false;
     }
+    // The VM's builtin dispatch leaves argc items on the operand stack and
+    // expects the builtin to pop them. mymo_parse / mymo_check_args do that
+    // here so individual handlers don't have to.
+    for (uint i = 0; i < argc; i++) pop(vm);
     return true;
 }
 
@@ -215,6 +220,9 @@ bool mymo_parse(MVM *vm, const char *funcname, uint argc, MyMoObject *argv[],
     }
 
     va_end(ap);
+    // VM dispatch expects builtins to pop their argc operands. Do that
+    // centrally so individual mymo_parse-based handlers don't have to.
+    for (uint k = 0; k < argc; k++) pop(vm);
     return true;
 }
 

@@ -1,0 +1,14 @@
+# io — file read / write / append / exists / remove
+from "io" use read, write, append, exists, remove
+
+path = "/tmp/mymo_io_demo.txt"
+
+write(path, "first line\n")
+append(path, "second line\n")
+
+print("exists:", exists(path))
+print("contents:")
+print(read(path))
+
+remove(path)
+print("exists after remove:", exists(path))

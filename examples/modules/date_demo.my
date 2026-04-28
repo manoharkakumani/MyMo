@@ -1,0 +1,13 @@
+# date — break a unix-epoch into components
+from "date" use year, month, day, hour, minute, second, weekday, iso
+from "time" use now
+
+t = now()
+print("iso(now) =", iso(t))
+print("year     =", year(t))
+print("month    =", month(t))
+print("day      =", day(t))
+print("hour     =", hour(t))
+print("minute   =", minute(t))
+print("second   =", second(t))
+print("weekday  =", weekday(t))

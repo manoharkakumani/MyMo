@@ -1,0 +1,19 @@
+# json — encode / decode for the common types
+from "json" use encode, decode
+
+obj = {
+    "name": "mymo",
+    "version": 1,
+    "stable": True,
+    "tags": ["lang", "vm", Nil],
+    "meta": {"answer": 42, "ratio": 3.14},
+}
+
+s = encode(obj)
+print("encoded:", s)
+
+back = decode(s)
+print("decoded:", back)
+print("decoded.name  =", back["name"])
+print("decoded.tags  =", back["tags"])
+print("decoded.meta.answer =", back["meta"]["answer"])

@@ -175,8 +175,20 @@ int repl(MVM *vm)
     return 0;
 }
 
+extern void nodes_set_argv0(const char *path);
+
 int main(int argc, const char *argv[])
 {
+    char selfpath[10000];
+    #ifdef _WIN32
+        if (_fullpath(selfpath, argv[0], MAX_PATH))
+            nodes_set_argv0(selfpath);
+    #else
+        if (realpath(argv[0], selfpath))
+            nodes_set_argv0(selfpath);
+        else
+            nodes_set_argv0(argv[0]);
+    #endif
     MVM *vm = initVM();
     if (argc == 1)
     {

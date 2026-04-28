@@ -16,6 +16,10 @@ MODULE(random);
 MODULE(date);
 MODULE(socket);
 MODULE(http);
+MODULE(json);
+MODULE(sqlite);
+MODULE(server);
+MODULE(nodes);
 
 void defineBuiltInModules(MVM *vm);
 

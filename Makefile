@@ -20,7 +20,7 @@ WARN        := -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -Wno-unu
 COMMON      := $(CSTD) $(WARN) -fno-strict-aliasing -DNOCACHE
 RELEASE     := -O3 -DNDEBUG
 DEBUG       := -O0 -g3 -DDEBUG_PRINT_CODE -DDEBUG_STACK_TRACE
-LDFLAGS     := -lm -lcurl
+LDFLAGS     := -lm -lcurl -lsqlite3
 UNAME_S     := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
   # -ldl for dlopen, -rdynamic to expose the mymo binary's symbols
@@ -38,6 +38,7 @@ SRC_ROOT    := $(filter-out test.c, $(wildcard *.c))
 SRC_DT      := $(wildcard datatypes/*.c)
 SRC_MOD     := modules/math.c modules/time.c modules/os.c modules/io.c \
                modules/random.c modules/date.c modules/socket.c modules/http.c \
+               modules/json.c modules/sqlite.c modules/server.c modules/nodes.c \
                modules/modules.c
 SRC         := $(SRC_ROOT) $(SRC_DT) $(SRC_MOD)
 

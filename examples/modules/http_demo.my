@@ -1,0 +1,14 @@
+# http: libcurl-backed client (GET, POST, request). Hits httpbin.org
+# so you see real headers/bodies. Requires network connectivity.
+
+from "http" use get, post, request
+r = get("https://httpbin.org/get")
+
+#ok
+#
+print("GET status:", r["status"])
+
+r = post("https://httpbin.org/post", "hello=world&n=42")
+print("POST status:", r["status"])
+r = request("PUT", "https://httpbin.org/anything", '{"k":1}')
+print("PUT status:", r["status"])

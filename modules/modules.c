@@ -17,4 +17,8 @@ void defineBuiltInModules(MVM *vm)
     dateModule(vm);
     socketModule(vm);
     httpModule(vm);
+    jsonModule(vm);
+    sqliteModule(vm);
+    serverModule(vm);
+    nodesModule(vm);
 }

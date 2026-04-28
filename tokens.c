@@ -1,4 +1,5 @@
 #include "tokens.h"
+#include <string.h>
 
 Token newToken(const char *src, size_t type, size_t len, size_t col, size_t indent, size_t line)
 {
@@ -45,11 +46,42 @@ Keywords keywords[KEYWORDS] = {
     {XOR, "xor", 3},
     {YIELD, "yield", 5}};
 
-int iskeyword(const char *s, int len)
+// First char ↦ index range table for keywords[]. Built once on first
+// call. Skips the linear scan for the ~96% of identifiers whose first
+// letter has no matching keyword, and shrinks the inner loop for the
+// rest. Also fixes a latent OOB read in the previous implementation,
+// which memcmp'd `keywords[i].len` bytes of the input even when the
+// input was shorter than the keyword.
+static int kw_index_built = 0;
+static int kw_first_lo[128]; // inclusive
+static int kw_first_hi[128]; // exclusive
+
+static void build_kw_index(void)
 {
+    for (int i = 0; i < 128; i++) { kw_first_lo[i] = -1; kw_first_hi[i] = -1; }
     for (int i = 0; i < KEYWORDS; i++)
     {
-        if ((!memcmp(keywords[i].keyword, s, keywords[i].len)) && (!memcmp(s, keywords[i].keyword, len)))
+        unsigned char c = (unsigned char)keywords[i].keyword[0];
+        if (c >= 128) continue;
+        if (kw_first_lo[c] < 0) kw_first_lo[c] = i;
+        kw_first_hi[c] = i + 1;
+    }
+    kw_index_built = 1;
+}
+
+int iskeyword(const char *s, int len)
+{
+    if (!kw_index_built) build_kw_index();
+    if (len <= 0) return 0;
+    unsigned char c = (unsigned char)s[0];
+    if (c >= 128) return 0;
+    int lo = kw_first_lo[c];
+    if (lo < 0) return 0;
+    int hi = kw_first_hi[c];
+    for (int i = lo; i < hi; i++)
+    {
+        if (keywords[i].len == len &&
+            !memcmp(s, keywords[i].keyword, (size_t)len))
         {
             return keywords[i].key;
         }

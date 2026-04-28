@@ -1,17 +1,32 @@
 #include "lexer.h"
 
-void lexerAdvance(Lexer *lexer)
+// Hot path — called once per source byte. Force-inline so getToken's
+// tight loops (digits, identifiers, strings, whitespace runs) don't
+// pay a function-call hop per character.
+static inline void lexerAdvanceFast(Lexer *lexer)
 {
     lexer->currentChar = lexer->src[lexer->srcLen++];
     lexer->col++;
     lexer->len++;
 }
 
-Token lexerAdvanceToken(Lexer *lexer, Token token)
+void lexerAdvance(Lexer *lexer) { lexerAdvanceFast(lexer); }
+
+static inline Token lexerAdvanceTokenFast(Lexer *lexer, Token token)
 {
-    lexerAdvance(lexer);
+    lexerAdvanceFast(lexer);
     return token;
 }
+
+Token lexerAdvanceToken(Lexer *lexer, Token token)
+{
+    return lexerAdvanceTokenFast(lexer, token);
+}
+
+// In the rest of this file, switch the heavily-used identifiers over
+// to the inlined variants without rewriting every call site.
+#define lexerAdvance(L)              lexerAdvanceFast(L)
+#define lexerAdvanceToken(L, T)      lexerAdvanceTokenFast((L), (T))
 
 Token getToken(Lexer *lexer)
 {
@@ -79,6 +94,10 @@ Token getToken(Lexer *lexer)
         }
         else if (lexer->currentChar == '#')
         {
+            // Snapshot whether the opener sits at line-start (only
+            // leading whitespace before it). col here points at the
+            // first '#' (no advance yet for it).
+            int openFullLine = ((int)lexer->col - (int)lexer->indent) <= 1;
             lexerAdvance(lexer);
             if (lexer->currentChar == '#')
             {
@@ -104,14 +123,68 @@ Token getToken(Lexer *lexer)
                     else
                         goto comment;
                 }
+                // Block comment closed. If both the opening `##` was
+                // at line-start AND the closing `##` is at end-of-line
+                // (currentChar == '\n' with nothing else on its line
+                // after the close), eat that trailing `\n` so the
+                // parser doesn't see a stray Newline. Same reason as
+                // the single-line case below. Inline `## ... ##` (e.g.
+                // `y = ##foo## 5`) is left untouched.
+                if (openFullLine && lexer->currentChar == '\n')
+                {
+                    while (lexer->currentChar == '\n')
+                    {
+                        lexer->line++;
+                        lexer->col = 0;
+                        lexer->indent = 0;
+                        lexerAdvance(lexer);
+                    }
+                    while (lexer->currentChar == '\t')
+                    {
+                        lexer->indent += 4;
+                        lexer->col += 3;
+                        lexerAdvance(lexer);
+                    }
+                    while (lexer->currentChar == ' ')
+                    {
+                        lexer->indent++;
+                        lexerAdvance(lexer);
+                    }
+                }
             }
             else
             {
+                // Single-line `# ...`. If it sits at the start of its
+                // line, swallow the trailing `\n` so the parser
+                // doesn't see a stray Newline between two statements.
+                // Inline `code # foo` leaves the `\n` for the outer
+                // loop to emit a normal statement-terminator.
                 while (lexer->currentChar != '\n')
                 {
                     if (lexer->currentChar == '\0')
                         break;
                     lexerAdvance(lexer);
+                }
+                if (openFullLine && lexer->currentChar == '\n')
+                {
+                    while (lexer->currentChar == '\n')
+                    {
+                        lexer->line++;
+                        lexer->col = 0;
+                        lexer->indent = 0;
+                        lexerAdvance(lexer);
+                    }
+                    while (lexer->currentChar == '\t')
+                    {
+                        lexer->indent += 4;
+                        lexer->col += 3;
+                        lexerAdvance(lexer);
+                    }
+                    while (lexer->currentChar == ' ')
+                    {
+                        lexer->indent++;
+                        lexerAdvance(lexer);
+                    }
                 }
             }
         }
