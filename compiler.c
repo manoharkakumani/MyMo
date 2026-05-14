@@ -126,6 +126,7 @@ ParseRule rules[] = {
     [UPLUS] = {NULL, NULL, PREC_NONE},
     [NAME] = {variable, NULL, PREC_NONE},
     [STRING] = {string_, NULL, PREC_NONE},
+    [FSTRING] = {fstring_, NULL, PREC_NONE},
     [INT] = {integer_, NULL, PREC_NONE},
     [DOUBLE] = {double_, NULL, PREC_NONE},
     [AND] = {NULL, and_, PREC_AND},

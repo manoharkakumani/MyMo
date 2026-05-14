@@ -35,6 +35,108 @@ void string_(Compiler *compiler, bool canAssign)
     UNUSED(canAssign);
     emitConstant(compiler, (NEW_STRING(compiler->parser->vm, compiler->parser->previous.token, compiler->parser->previous.length)));
 }
+
+// f-string interpolation. Walks the FSTRING token's content,
+// splitting on `{...}` segments. Each literal piece becomes a string
+// constant; each `{expr}` re-runs the lexer+parser over the expr text
+// and emits OP_TOSTRING. Pieces are concatenated with OP_ADD. The
+// sub-parser shares the outer compiler's chunk, so all emit goes to
+// the same place — we only have to swap the parser-level lexer+
+// lookahead tokens for the duration of each interpolation.
+void fstring_(Compiler *compiler, bool canAssign)
+{
+    UNUSED(canAssign);
+    const char *content = compiler->parser->previous.token;
+    int total = (int)compiler->parser->previous.length;
+    MVM *vm = compiler->parser->vm;
+
+    int piece_count = 0;
+    int i = 0;
+    while (i < total)
+    {
+        // Scan to the next `{` (or end).
+        int seg_start = i;
+        while (i < total && content[i] != '{') i++;
+        int seg_len = i - seg_start;
+        // Emit the literal piece. Always emit even if empty so the
+        // first OP_ADD has a left operand; the compiler optimizer
+        // can later drop empty pieces.
+        if (seg_len > 0 || piece_count == 0)
+        {
+            emitConstant(compiler, NEW_STRING(vm, content + seg_start, seg_len));
+            piece_count++;
+            if (piece_count > 1) emitBytes(compiler, OP_ADD, 0);
+        }
+        if (i >= total) break;
+        // At `{`. Find matching `}` with brace depth tracking so
+        // `{ {"k":1}["k"] }` (a dict-subscript expression) works.
+        // Skip over string literals (single, double, backtick) so
+        // braces inside a nested f-string or a literal don't throw
+        // off the depth counter. Strings here can't escape `}` —
+        // that's what closes us — but they CAN contain `{` for
+        // nested f-strings like `f"{f"x={x}"}"`.
+        i++; // past `{`
+        int expr_start = i;
+        int depth = 1;
+        while (i < total && depth > 0)
+        {
+            char c = content[i];
+            if (c == '"' || c == '\'' || c == '`')
+            {
+                char quote = c;
+                i++;
+                while (i < total && content[i] != quote)
+                {
+                    if (content[i] == '\\' && i + 1 < total) i++;
+                    i++;
+                }
+                if (i < total) i++; // past closing quote
+                continue;
+            }
+            if (c == '{') depth++;
+            else if (c == '}') depth--;
+            if (depth > 0) i++;
+        }
+        if (depth != 0)
+        {
+            errorAtCurrent(compiler, "Unclosed `{` in f-string interpolation.");
+            return;
+        }
+        int expr_len = i - expr_start;
+        i++; // past `}`
+
+        // Build a null-terminated buffer for the embedded expression.
+        // We append a `\n` so the sub-lexer's NEWLINE check is
+        // satisfied at end-of-source.
+        char *buf = New(char, expr_len + 2);
+        memcpy(buf, content + expr_start, expr_len);
+        buf[expr_len] = '\n';
+        buf[expr_len + 1] = '\0';
+
+        // Swap parser state, parse the expression, restore.
+        Lexer *outerLexer = compiler->parser->lexer;
+        Token outerCurrent = compiler->parser->current;
+        Token outerPrevious = compiler->parser->previous;
+        Lexer *innerLexer = initLexer(buf);
+        compiler->parser->lexer = innerLexer;
+        compiler->parser->current = getToken(innerLexer);
+        expression(compiler);
+        freeLexer(innerLexer);
+        Free(vm, char, buf);
+        compiler->parser->lexer = outerLexer;
+        compiler->parser->current = outerCurrent;
+        compiler->parser->previous = outerPrevious;
+
+        emitByte(compiler, OP_TOSTRING);
+        piece_count++;
+        if (piece_count > 1) emitBytes(compiler, OP_ADD, 0);
+    }
+    if (piece_count == 0)
+    {
+        // Empty f-string `f""`.
+        emitConstant(compiler, NEW_STRING(vm, "", 0));
+    }
+}
 void literal(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);

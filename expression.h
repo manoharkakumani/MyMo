@@ -6,6 +6,7 @@
 void integer_(Compiler *compiler, bool canAssign);
 void double_(Compiler *compiler, bool canAssign);
 void string_(Compiler *compiler, bool canAssign);
+void fstring_(Compiler *compiler, bool canAssign);
 void unary(Compiler *compiler, bool canAssign);
 void binary(Compiler *compiler, bool canAssign);
 void grouping(Compiler *compiler, bool canAssign);

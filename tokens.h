@@ -67,6 +67,7 @@ typedef enum
     SLASH,
     STAR,
     STRING,
+    FSTRING,
     TILD,
     UMINUS, // -@
     UPLUS,  // +@

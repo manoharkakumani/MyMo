@@ -317,6 +317,105 @@ Token getToken(Lexer *lexer)
                 return newToken("Invalid identifier", ERROR, lexer->len, start, lexer->indent, lexer->line);
             return newToken(lexer->token, num_type ? DOUBLE : INT, lexer->len - 1, start, lexer->indent, lexer->line);
         }
+        else if ((lexer->currentChar == 'f' || lexer->currentChar == 'F')
+                 && (lexer->src[lexer->srcLen] == '"'
+                     || lexer->src[lexer->srcLen] == '\''
+                     || lexer->src[lexer->srcLen] == '`'))
+        {
+            // f-string literal. Skip the `f`/`F` prefix and emit an
+            // FSTRING token whose contents (excluding the quotes)
+            // are processed by the compiler's `fstring_` prefix
+            // rule. We re-use the same string-scanning logic as
+            // regular strings below for matching the closing quote
+            // and respecting escape semantics.
+            lexerAdvance(lexer);              // past `f`
+            int s = lexer->currentChar;        // quote char
+            lexerAdvance(lexer);              // past opening quote
+            // `token` must point at the FIRST content byte (the
+            // char after the opening quote). Setting it before the
+            // advance includes the quote and shifts the content.
+            lexer->token = lexer->src + lexer->srcLen - 1;
+            // Track content length explicitly: lexer->len includes
+            // the `f` + opening quote prefix, so we can't use it
+            // directly when the regular STRING branch subtracts 2.
+            int content_len = 0;
+            int brace_depth = 0;
+            // Same-quote nested f-strings like `f"{f"x={x}"}"` need
+            // the lexer to treat the closing quote as content while
+            // inside a `{...}` interpolation. We track brace depth
+            // and, when inside a brace, also skip past any string
+            // literal so its `}` (or matching quote) doesn't fool
+            // the depth counter. Brace-aware scanning is purely
+            // lexical here — the compiler's fstring_ does the
+            // semantic split.
+            while (lexer->currentChar != s || brace_depth > 0)
+            {
+                if (lexer->currentChar == '\0' || (lexer->currentChar == '\n' && s != '`'))
+                {
+                    return newToken("Unexpected EOL or EOF in f-string", ERROR, lexer->len, start, lexer->indent, lexer->line);
+                }
+                if (lexer->currentChar == '\n')
+                {
+                    lexer->line++;
+                    lexer->col = 0;
+                }
+                if (lexer->currentChar == 13)
+                {
+                    lexerAdvance(lexer);
+                    continue;
+                }
+                if (lexer->currentChar == '\t')
+                {
+                    lexer->col += 3;
+                }
+                if (lexer->currentChar == '{')
+                {
+                    brace_depth++;
+                }
+                else if (lexer->currentChar == '}')
+                {
+                    if (brace_depth > 0) brace_depth--;
+                }
+                else if (brace_depth > 0
+                         && (lexer->currentChar == '"'
+                             || lexer->currentChar == '\''
+                             || lexer->currentChar == '`'))
+                {
+                    // Skip the embedded string literal so its
+                    // contents can't perturb brace depth — handles
+                    // both `f"{ "}" }"` (literal `}` inside a
+                    // string) and same-quote nested f-strings.
+                    int inner_q = lexer->currentChar;
+                    lexerAdvance(lexer);
+                    content_len++;
+                    while (lexer->currentChar != '\0'
+                           && lexer->currentChar != inner_q)
+                    {
+                        if (lexer->currentChar == '\\'
+                            && lexer->src[lexer->srcLen] != '\0')
+                        {
+                            lexerAdvance(lexer);
+                            content_len++;
+                        }
+                        if (lexer->currentChar == '\n' && inner_q != '`')
+                        {
+                            return newToken("Unexpected EOL in embedded string", ERROR, lexer->len, start, lexer->indent, lexer->line);
+                        }
+                        lexerAdvance(lexer);
+                        content_len++;
+                    }
+                    if (lexer->currentChar == inner_q)
+                    {
+                        lexerAdvance(lexer);
+                        content_len++;
+                    }
+                    continue;
+                }
+                lexerAdvance(lexer);
+                content_len++;
+            }
+            return lexerAdvanceToken(lexer, newToken(lexer->token, FSTRING, content_len, start, lexer->indent, lexer->line));
+        }
         else if (lexer->currentChar == 39 || lexer->currentChar == '"' || lexer->currentChar == '`')
         {
             int s = lexer->currentChar;

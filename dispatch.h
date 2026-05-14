@@ -58,6 +58,7 @@ void *dispatchTable[] = {
     &&OP_GETP,
     &&OP_OGETP,
     &&OP_IS,
+    &&OP_TOSTRING,
     &&OP_DELP,
     &&OP_USE,
     &&OP_SETM,
