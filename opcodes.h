@@ -68,6 +68,13 @@ typedef enum
     OP_WILDCARD, // pushes the OBJ_WILDCARD singleton; emitted only inside case patterns for `_`
     OP_GETARG,    // push frame->args[u8] — direct array access for function parameters
     OP_SETARG,    // store stack-top into frame->args[u8] (for compound assignments to params)
-    OP_INVOKE_GLOBAL // fused OP_GETV+OP_CALL: look up global by name and call with N args in one dispatch
+    OP_INVOKE_GLOBAL, // fused OP_GETV+OP_CALL: look up global by name and call with N args in one dispatch
+    // Exception handling.
+    //   OP_TRY <s16 offset>      push handler { ip+offset, frame, sp }
+    //   OP_ENDTRY                pop the top handler (normal try-block exit)
+    //   OP_RAISE                 pop the top value and raise it as an exception
+    OP_TRY,
+    OP_ENDTRY,
+    OP_RAISE
 } OpCode;
 #endif

@@ -159,9 +159,17 @@ MyMoObject *lenfn(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "TypeError: len() takes 1 argument (%d given).", argc);
         return NEW_EMPTY;
     }
-    MyMoObject *obj = argv[0];
+    MyMoObject *obj = pop(vm);
     switch (obj->type)
     {
+    case OBJ_STRING:
+        return NEW_INT(vm, AS_STRING(obj)->length);
+    case OBJ_LIST:
+        return NEW_INT(vm, AS_LIST(obj)->values.count);
+    case OBJ_TUPLE:
+        return NEW_INT(vm, AS_TUPLE(obj)->values.count);
+    case OBJ_DICT:
+        return NEW_INT(vm, AS_DICT(obj)->count);
     default:
         runtimeError(vm, "TypeError: %s has no len()", getType(obj));
         return NEW_EMPTY;

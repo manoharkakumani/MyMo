@@ -57,44 +57,96 @@ void freeVM(MVM *vm)
     free(vm);
 }
 
+// Extract the Nth line (1-indexed) of `source` into `out` (max
+// out_cap bytes including the terminator). Returns the number of
+// bytes written, or 0 if the line doesn't exist. Used to echo the
+// offending source line under each traceback frame.
+static int extractSourceLine(const char *source, int lineNo, char *out, size_t out_cap)
+{
+    if (!source || lineNo < 1 || out_cap == 0) return 0;
+    const char *p = source;
+    int cur = 1;
+    while (*p && cur < lineNo)
+    {
+        if (*p == '\n') cur++;
+        p++;
+    }
+    if (cur != lineNo) return 0;
+    size_t n = 0;
+    while (*p && *p != '\n' && n + 1 < out_cap)
+    {
+        out[n++] = *p++;
+    }
+    out[n] = '\0';
+    return (int)n;
+}
+
 void runtimeError(MVM *vm, const char *format, ...)
 {
-    printf("Traceback (most recent call last): \n");
+    // Build the message into a single buffer so we can both stash
+    // it on the fiber (for `catch e:` to bind) and print it at the
+    // bottom of the traceback. snprintf-into-fixed-buffer cap
+    // matches the rest of the error formatting in the VM.
+    char msg[512];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(msg, sizeof(msg), format, args);
+    va_end(args);
+
+    // If a `try` handler is in flight and OP_RAISE didn't already
+    // set a concrete exception value, expose the error message as
+    // the catch-bound value. Skip the noisy traceback print in
+    // that case — the user is explicitly handling this.
+    if (vm->fiber->handlerCount > 0)
+    {
+        if (vm->fiber->exception == NULL)
+            vm->fiber->exception = AS_OBJECT(newString(vm, msg, (int)strlen(msg)));
+        return;
+    }
+
+    fprintf(stderr, "Traceback (most recent call last):\n");
     MyMoFiber *fiber = vm->fiber;
     while (fiber != NULL)
     {
         if (fiber->parent != NULL)
         {
-            printf("  while running fiber of %s \n", fiber->callFrames[0]->function->name->value);
+            fprintf(stderr, "  while running fiber of %s\n",
+                    fiber->callFrames[0]->function->name->value);
         }
         for (u32 i = 0; i <= fiber->frameCount; i++)
         {
             CallFrame *frame = fiber->callFrames[i];
             MyMoFunction *function = frame->function;
             size_t instruction = frame->ip - function->chunk->code - 1;
-            fprintf(stderr, "  [%d : %d] in ",
-                    function->chunk->lines[instruction], function->chunk->cols[instruction]);
+            int line = (int)function->chunk->lines[instruction];
+            int col  = (int)function->chunk->cols[instruction];
+            fprintf(stderr, "  [%d : %d] in ", line, col);
             if (function->type == FN_MODULE)
-            {
                 fprintf(stderr, "<module %s>\n", function->name->value);
-            }
             else
-            {
                 fprintf(stderr, "%s\n", function->name->value);
-            }
-
-            if (!fiber->parent && i == fiber->frameCount)
+            // Echo the source line plus a caret under the column.
+            // Skipped silently when source isn't available (cache
+            // load, REPL synthetic wrapping, etc.).
+            char lineBuf[512];
+            int n = extractSourceLine(function->chunk->source, line, lineBuf, sizeof(lineBuf));
+            if (n > 0)
             {
-                va_list args;
-                va_start(args, format);
-                vfprintf(stderr, format, args);
-                va_end(args);
-                fputs("\n", stderr);
+                int lead = 0;
+                while (lead < n && (lineBuf[lead] == ' ' || lineBuf[lead] == '\t'))
+                    lead++;
+                fprintf(stderr, "      %s\n", lineBuf + lead);
+                int caretCol = col - lead;
+                if (caretCol < 1) caretCol = 1;
+                fprintf(stderr, "      ");
+                for (int k = 1; k < caretCol; k++) fputc(' ', stderr);
+                fprintf(stderr, "^\n");
             }
         }
         fiber = fiber->parent;
-        // resetStack(vm);
     }
+    fputs(msg, stderr);
+    fputs("\n", stderr);
 }
 
 bool callFunction(MVM *vm, MyMoFunction *function, int argc)
@@ -293,7 +345,7 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
         else                                               \
         {                                                  \
             runtimeError(vm, "Operand must be a number."); \
-            return RUNTIME_ERROR;                          \
+            goto _runtime_error;                           \
         }                                                  \
     } while (0);
 
@@ -304,7 +356,7 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
         if (IS_EMPTY(method))                                                               \
         {                                                                                   \
             runtimeError(vm, "MethodNotFound: %s does not have method %s", getType(a), op); \
-            return RUNTIME_ERROR;                                                           \
+            goto _runtime_error;                                                            \
         }                                                                                   \
         push(vm, method);                                                                   \
         push(vm, a);                                                                        \
@@ -313,7 +365,7 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
         SAVE();                                                                             \
         if (!caller(vm, method, b != NULL ? 2 : 1))                                         \
         {                                                                                   \
-            return RUNTIME_ERROR;                                                           \
+            goto _runtime_error;                                                            \
         }                                                                                   \
         LOAD();                                                                             \
         DISPATCH();                                                                         \
@@ -373,6 +425,18 @@ int runMVM(MVM *vm)
 #define SAVE() do { vm->fiber->stack.count = (int)(sp - vm->fiber->stack.values); frame->ip = ip; } while (0)
 #define LOAD() do { frame = vm->fiber->callFrames[vm->fiber->frameCount]; ip = frame->ip; sp = vm->fiber->stack.values + vm->fiber->stack.count; } while (0)
 
+// runtimeError reads `frame->ip` to compute the source line, but
+// inside the dispatch loop `ip` is held in a register and only
+// flushed back on SAVE(). Without this every error would report
+// the location of the *last* SAVE — usually a stale offset
+// somewhere upstream of the actual error.
+//
+// Shadow the public `runtimeError` symbol with a macro for the
+// duration of runMVM so every existing call site auto-SAVEs first.
+// The `(runtimeError)` parens disable macro expansion on the call
+// inside, so we recurse into the real function.
+#define runtimeError(vm_, ...) do { SAVE(); (runtimeError)(vm_, __VA_ARGS__); } while (0)
+
 // Legacy push/pop/peek calls inside dispatch handlers must use the local
 // `sp`; redefine them as macros that override the global function names.
 // The originals in stack.c remain used outside runMVM.
@@ -405,6 +469,47 @@ int runMVM(MVM *vm)
     OP_NOP:
     {
         DISPATCH();
+    }
+    OP_TRY:
+    {
+        // Push a handler. The next 2 bytes are a u16 forward offset
+        // from the byte after the offset to the catch arm — same
+        // shape as OP_JMP / OP_JIF.
+        u16 offset = ReadShort();
+        if (vm->fiber->handlerCount >= 32)
+        {
+            runtimeError(vm, "RuntimeError: try-block nesting too deep (max 32)");
+            goto _runtime_error;
+        }
+        TryHandler *h = &vm->fiber->handlers[vm->fiber->handlerCount++];
+        h->handlerIp  = ip + offset;
+        h->frameCount = vm->fiber->frameCount;
+        // SAVE the current sp so unwinding can throw away any
+        // partial stack the try-body had pushed when it errored.
+        h->stackCount = (int)(sp - vm->fiber->stack.values);
+        DISPATCH();
+    }
+    OP_ENDTRY:
+    {
+        // Pop the topmost handler — normal exit from the try-body
+        // with no error fired.
+        if (vm->fiber->handlerCount > 0) vm->fiber->handlerCount--;
+        DISPATCH();
+    }
+    OP_RAISE:
+    {
+        // Pop the raised value, wrap it as a string error message
+        // for now (typed exceptions land later), and trigger the
+        // unwind path. We sync ip first so runtimeError reports the
+        // correct line for any traceback printed below.
+        MyMoObject *value = pop(vm);
+        SAVE();
+        // Stash the raw object on the fiber so a `catch e:` binds
+        // exactly what was raised; if it propagates past all
+        // handlers, runtimeError will print it as a message.
+        vm->fiber->exception = value;
+        runtimeError(vm, "RaiseError");
+        goto _runtime_error;
     }
     OP_CONST:
     {
@@ -472,7 +577,7 @@ int runMVM(MVM *vm)
             if (!IS_NIL(key) && !IS_BOOL(key) && !IS_INT(key) && !IS_DOUBLE(key) && !IS_STRING(key))
             {
                 runtimeError(vm, "TypeError: Dictionary keys must be immutable.");
-                return RUNTIME_ERROR;
+                goto _runtime_error;
             }
             setEntry(vm, dict, key, value);
         }
@@ -489,7 +594,7 @@ int runMVM(MVM *vm)
             if (!(value))
             {
                 runtimeError(vm, "KeyError: value not found ");
-                return RUNTIME_ERROR;
+                goto _runtime_error;
             }
             push(vm, value);
             DISPATCH();
@@ -497,7 +602,7 @@ int runMVM(MVM *vm)
         if (!IS_INT(index))
         {
             runtimeError(vm, "TypeError: Indices must be integers.");
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         int indexValue = INT_VAL(index);
         MyMoObject *object = pop(vm);
@@ -509,7 +614,7 @@ int runMVM(MVM *vm)
             if (indexValue >= string->length || -indexValue > string->length)
             {
                 runtimeError(vm, "TypeError: String index out of bounds.");
-                return RUNTIME_ERROR;
+                goto _runtime_error;
             }
             if (indexValue < 0)
             {
@@ -524,7 +629,7 @@ int runMVM(MVM *vm)
             if (indexValue >= list->values.count || -indexValue > list->values.count)
             {
                 runtimeError(vm, "TypeError: List Index out of bounds.");
-                return RUNTIME_ERROR;
+                goto _runtime_error;
             }
             if (indexValue < 0)
             {
@@ -542,7 +647,7 @@ int runMVM(MVM *vm)
             if (indexValue >= tuple->values.count || -indexValue > tuple->values.count)
             {
                 runtimeError(vm, "Tuple Index out of bounds.");
-                return RUNTIME_ERROR;
+                goto _runtime_error;
             }
             if (indexValue < 0)
             {
@@ -556,7 +661,7 @@ int runMVM(MVM *vm)
         }
         default:
             runtimeError(vm, "TypeError: Index operator cannot  applied to %s", getType(object));
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         DISPATCH();
     }
@@ -570,14 +675,14 @@ int runMVM(MVM *vm)
             if (!IS_INT(index))
             {
                 runtimeError(vm, "TypeError: Indices must be integers.");
-                return RUNTIME_ERROR;
+                goto _runtime_error;
             }
             int indexValue = INT_VAL(index);
             MyMoList *list = AS_LIST(object);
             if (indexValue >= list->values.count || -indexValue > list->values.count)
             {
                 runtimeError(vm, "TypeError: List Index out of bounds.");
-                return RUNTIME_ERROR;
+                goto _runtime_error;
             }
             if (indexValue < 0)
             {
@@ -593,7 +698,7 @@ int runMVM(MVM *vm)
             if (!IS_STRING(index) && !IS_INT(index) && !IS_BOOL(index) && !IS_NIL(index) && !IS_DOUBLE(index))
             {
                 runtimeError(vm, "TypeError: Dictionary keys must be hashable.");
-                return RUNTIME_ERROR;
+                goto _runtime_error;
             }
             setEntry(vm, dict, index, value);
             push(vm, value);
@@ -602,7 +707,7 @@ int runMVM(MVM *vm)
         else
         {
             runtimeError(vm, "TypeError: '%s' does not support item assignment.", getType(object));
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
     }
     OP_UNPACK:
@@ -627,7 +732,7 @@ int runMVM(MVM *vm)
         if ((!IS_INT(st) && !IS_NIL(st)) || (!IS_INT(ed) && !IS_NIL(ed)) || (!IS_INT(sta) && !IS_NIL(sta)))
         {
             runtimeError(vm, "TypeError: expect integer as index to slice");
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         int step = IS_NIL(st) ? 1 : AS_INT(st)->value;
         if (step < 0)
@@ -640,7 +745,7 @@ int runMVM(MVM *vm)
         if (!step)
         {
             runtimeError(vm, "TypeError: slice step cannot be zero");
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         MyMoObject *object = pop(vm);
         switch (object->type)
@@ -777,7 +882,7 @@ int runMVM(MVM *vm)
         }
         default:
             runtimeError(vm, "TypeError: can only slice on List and String but got %s", getType(object));
-            return RUNTIME_ERROR;
+            goto _runtime_error;
             break;
         }
         DISPATCH();
@@ -845,7 +950,7 @@ int runMVM(MVM *vm)
         SAVE();
         if (!caller(vm, method, 2))
         {
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         LOAD();
         DISPATCH();
@@ -889,7 +994,7 @@ int runMVM(MVM *vm)
         if (!IS_NUMBER(a) || !IS_NUMBER(b))
         {
             runtimeError(vm, "Operands must be numbers.");
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         push(vm, NEW_BOOL(NUMBER_VAL(a) > NUMBER_VAL(b)));
         DISPATCH();
@@ -934,7 +1039,7 @@ int runMVM(MVM *vm)
         if (!IS_NUMBER(a) || !IS_NUMBER(b))
         {
             runtimeError(vm, "Operands must be numbers.");
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         push(vm, NEW_BOOL(NUMBER_VAL(a) < NUMBER_VAL(b)));
         DISPATCH();
@@ -1018,9 +1123,10 @@ int runMVM(MVM *vm)
         {
             OperatorOverLoad(a, b, inplace ? "+=" : "+");
         }
+        SAVE(); // sync ip so a TypeError inside addition() has the right line
         MyMoObject *result = addition(vm, a, b);
         if (IS_EMPTY(result))
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         push(vm, result);
         DISPATCH();
     }
@@ -1062,9 +1168,10 @@ int runMVM(MVM *vm)
         {
             OperatorOverLoad(a, b, inplace ? "-=" : "-");
         }
+        SAVE();
         MyMoObject *result = subtraction(vm, a, b);
         if (IS_EMPTY(result))
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         push(vm, result);
         DISPATCH();
     }
@@ -1106,9 +1213,10 @@ int runMVM(MVM *vm)
         {
             OperatorOverLoad(a, b, inplace ? "*=" : "*");
         }
+        SAVE();
         MyMoObject *result = multiplication(vm, a, b);
         if (IS_EMPTY(result))
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         push(vm, result);
         DISPATCH();
     }
@@ -1127,7 +1235,7 @@ int runMVM(MVM *vm)
             if (b_val == 0)
             {
                 runtimeError(vm, "ZeroDivisionError: division by zero.");
-                return RUNTIME_ERROR;
+                goto _runtime_error;
             }
             long a_val = valueToLong(va);
             double r = (double)a_val / (double)b_val;
@@ -1144,7 +1252,7 @@ int runMVM(MVM *vm)
             if (bn == 0.0)
             {
                 runtimeError(vm, "ZeroDivisionError: division by zero.");
-                return RUNTIME_ERROR;
+                goto _runtime_error;
             }
             double r = valueAsNumber(va) / bn;
             sp -= 2;
@@ -1157,9 +1265,10 @@ int runMVM(MVM *vm)
         {
             OperatorOverLoad(a, b, inplace ? "/=" : "/");
         }
+        SAVE();
         MyMoObject *result = division(vm, a, b);
         if (IS_EMPTY(result))
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         push(vm, result);
         DISPATCH();
     }
@@ -1175,7 +1284,7 @@ int runMVM(MVM *vm)
         if (!IS_NUMBER(a) || !IS_NUMBER(b))
         {
             runtimeError(vm, "Operands must be numbers.");
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         double result = pow(NUMBER_VAL(a), NUMBER_VAL(b));
         // if (isInteger(result))
@@ -1200,7 +1309,7 @@ int runMVM(MVM *vm)
         if (!IS_NUMBER(a) || !IS_NUMBER(b))
         {
             runtimeError(vm, "Operands must be numbers.");
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         double result = fmod(NUMBER_VAL(a), NUMBER_VAL(b));
         // if (isInteger(result))
@@ -1249,7 +1358,7 @@ int runMVM(MVM *vm)
         if (!IS_NUMBER(a) || !IS_NUMBER(b))
         {
             runtimeError(vm, "Operands must be numbers.");
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         long int r = NUMBER_VAL(a) / NUMBER_VAL(b);
         push(vm, NEW_INT(vm, r));
@@ -1364,7 +1473,7 @@ int runMVM(MVM *vm)
         default:
         {
             runtimeError(vm, "TypeError: cannot iterate on %s.", getType(iterator));
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         }
     }
@@ -1486,7 +1595,7 @@ int runMVM(MVM *vm)
             }
         }
         runtimeError(vm, "Name Error: Undefined variable '%s'.", STRING_VAL(variable));
-        return RUNTIME_ERROR;
+        goto _runtime_error;
     }
     OP_SETV:
     {
@@ -1548,7 +1657,7 @@ int runMVM(MVM *vm)
             DISPATCH();
         }
         runtimeError(vm, "Name Error: Undefined variable '%s'.", AS_STRING(variable)->value);
-        return RUNTIME_ERROR;
+        goto _runtime_error;
     }
     OP_MET:
     {
@@ -1589,7 +1698,7 @@ int runMVM(MVM *vm)
                     SAVE();
                     runtimeError(vm, "TypeError : %s() Takes %d arguments but got %d.",
                                  function->name->value, function->argc, argCount);
-                    return RUNTIME_ERROR;
+                    goto _runtime_error;
                 }
                 if (function->type == FN_SCRIPT || function->type == FN_GENERATOR
                     || function->type == FN_GEN_METHOD || function->type == FN_MODULE)
@@ -1599,7 +1708,7 @@ int runMVM(MVM *vm)
                                  function->type == FN_SCRIPT ? "Script" :
                                  function->type == FN_MODULE ? "module" : "generator",
                                  function->name->value);
-                    return RUNTIME_ERROR;
+                    goto _runtime_error;
                 }
                 // Frame capacity check (off-by-one fix from Phase 5e).
                 if (vm->fiber->frameCapacity < (uint)(vm->fiber->frameCount + 2))
@@ -1652,7 +1761,7 @@ int runMVM(MVM *vm)
         // the generic dispatch with full SAVE/LOAD.
         SAVE();
         if (!caller(vm, V_AS_OBJ(calleeV), argCount))
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         LOAD();
         DISPATCH();
     }
@@ -1662,7 +1771,7 @@ int runMVM(MVM *vm)
         if (!(IS_FUNCTION(fn) || IS_CLASS(fn) || IS_BUILTIN_FUNCTION(fn) || IS_BUILTIN_METHOD(fn) || IS_BOUND_METHOD(fn) || IS_BUILTIN_CLASS(fn)))
         {
             runtimeError(vm, "Type Error: Cannot Pipe Through '%s'.", getType(fn));
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         MyMoObject *arg = pop(vm);
         push(vm, fn);
@@ -1837,10 +1946,10 @@ int runMVM(MVM *vm)
         else if (IS_BUILTIN_CLASS(peek(vm, 1)))
         {
             runtimeError(vm, "TypeError: can't set attributes of built-in/extension type 'object'");
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         runtimeError(vm, "TypeError: Only classes and instances have properties.");
-        return RUNTIME_ERROR;
+        goto _runtime_error;
     }
     OP_AGETP:
     {
@@ -1899,12 +2008,12 @@ int runMVM(MVM *vm)
                 if (agp)
                 {
                     runtimeError(vm, "TypeError: can't set attributes of built-in/extension type 'object'");
-                    return RUNTIME_ERROR;
+                    goto _runtime_error;
                 }
                 DISPATCH();
             }
             runtimeError(vm, "Undefined property '%s'.", STRING_VAL(variable));
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         case OBJ_CLASS:
         {
@@ -1942,7 +2051,7 @@ int runMVM(MVM *vm)
                 DISPATCH();
             }
             runtimeError(vm, "Undefined property '%s'.", STRING_VAL(variable));
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         case OBJ_MODULE:
         {
@@ -1959,7 +2068,7 @@ int runMVM(MVM *vm)
                 DISPATCH();
             }
             runtimeError(vm, "AttributeError: module '%s' has no attribute '%s'.", module->name->value, STRING_VAL(variable));
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         case OBJ_BUILTIN_CLASS:
         {
@@ -1976,7 +2085,7 @@ int runMVM(MVM *vm)
                 DISPATCH();
             }
             runtimeError(vm, "AttributeError: built-in/extension type '%s' has no attribute '%s'.", klass->name->value, STRING_VAL(variable));
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         case OBJ_DICT:
         {
@@ -2017,7 +2126,7 @@ int runMVM(MVM *vm)
                 }
             }
             runtimeError(vm, "KeyError: dict has no key '%s'.", STRING_VAL(variable));
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         default:
         {
@@ -2038,7 +2147,7 @@ int runMVM(MVM *vm)
                 DISPATCH();
             }
             runtimeError(vm, "AttributeError: %s has no attribute '%s'.", getType(self), STRING_VAL(variable));
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         }
     }
@@ -2156,7 +2265,7 @@ int runMVM(MVM *vm)
         if (listObj->type != OBJ_LIST)
         {
             runtimeError(vm, "OP_LAPPEND: expected list under value, got %s.", getType(listObj));
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         writeMyMoObjectArray(vm, &AS_LIST(listObj)->values, valueToBoxedObject(vm, v));
         DISPATCH();
@@ -2244,7 +2353,7 @@ int runMVM(MVM *vm)
             if (IS_EMPTY(module))
             {
                 runtimeError(vm, "Module '%s' not found.", modulePathUse->value);
-                return RUNTIME_ERROR;
+                goto _runtime_error;
             }
             push(vm, module);
             if (AS_BOOL(isUse)->value)
@@ -2284,7 +2393,7 @@ int runMVM(MVM *vm)
         {
             runtimeError(vm, "Syntax error in module '%s'.", path);
             free(path);
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         free(path);
         function->name = moduleName;
@@ -2423,7 +2532,7 @@ int runMVM(MVM *vm)
             {
                 SAVE();
                 runtimeError(vm, "Name Error: Undefined variable '%s'.", STRING_VAL(variable));
-                return RUNTIME_ERROR;
+                goto _runtime_error;
             }
             calleeV = V_OBJ_VAL(value);
             // Refresh IC if this came from a cacheable dict.
@@ -2466,7 +2575,7 @@ int runMVM(MVM *vm)
                 SAVE();
                 runtimeError(vm, "TypeError : %s() Takes %d arguments but got %d.",
                              function->name->value, function->argc, argCount);
-                return RUNTIME_ERROR;
+                goto _runtime_error;
             }
             if (function->type == FN_SCRIPT || function->type == FN_GENERATOR
                 || function->type == FN_GEN_METHOD || function->type == FN_MODULE)
@@ -2476,7 +2585,7 @@ int runMVM(MVM *vm)
                              function->type == FN_SCRIPT ? "Script" :
                              function->type == FN_MODULE ? "module" : "generator",
                              function->name->value);
-                return RUNTIME_ERROR;
+                goto _runtime_error;
             }
             if (vm->fiber->frameCapacity < (uint)(vm->fiber->frameCount + 2))
             {
@@ -2555,7 +2664,7 @@ int runMVM(MVM *vm)
             for (u32 i = 0; i < argCount; i++)
                 legacy_argv[i] = valueToBoxedObject(vm, vargs[i]);
             MyMoObject *result = fn(vm, argCount, legacy_argv);
-            if (IS_EMPTY(result)) return RUNTIME_ERROR;
+            if (IS_EMPTY(result)) goto _runtime_error;
             LOAD();   // builtin popped argc items via legacy pop()
             if (cobj->type == OBJ_BUILTIN_METHOD)
             {
@@ -2577,7 +2686,7 @@ int runMVM(MVM *vm)
         sp++;
         SAVE();
         if (!caller(vm, cobj, argCount))
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         LOAD();
         DISPATCH();
     }
@@ -2653,14 +2762,14 @@ int runMVM(MVM *vm)
             // NameError) but matches what `0 + delta` would do for bare ints.
             // Fall back to error path: simulate the legacy GETV failure.
             runtimeError(vm, "Name Error: Undefined variable '%s'.", STRING_VAL(variable));
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         else
         {
             // Non-int target: emit a TypeError. Could fall back to the slow
             // OP_ADD path, but += of a non-int with a literal int is rare.
             runtimeError(vm, "TypeError: cannot += int to %s.", valueTypeName(cur));
-            return RUNTIME_ERROR;
+            goto _runtime_error;
         }
         long sum = curLong + (long)delta;
         Value next;
@@ -2690,6 +2799,43 @@ int runMVM(MVM *vm)
     }
     }
 
+_runtime_error:
+    // Every per-handler error path inside the dispatch loop jumps
+    // here. If there's an active `try` handler, unwind the fiber's
+    // frames + operand stack to the saved state, push the raised
+    // exception value (the message string, or whatever
+    // OP_RAISE put on the fiber), and resume dispatching at the
+    // catch arm. Otherwise propagate up to interpreter().
+    if (vm->fiber->handlerCount > 0)
+    {
+        TryHandler h = vm->fiber->handlers[--vm->fiber->handlerCount];
+        // Drop any frames pushed since the try-block started.
+        while (vm->fiber->frameCount > h.frameCount)
+        {
+            CallFrame *dead = vm->fiber->callFrames[vm->fiber->frameCount--];
+            if (dead->function->type != FN_MODULE)
+            {
+                if (dead->locals.count > 0 || dead->locals.entries != NULL)
+                    freeDict(vm, &dead->locals);
+                dead->function = (MyMoFunction *)vm->fiber->freeFramesHead;
+                vm->fiber->freeFramesHead = dead;
+            }
+        }
+        vm->fiber->stack.count = h.stackCount;
+        frame = vm->fiber->callFrames[vm->fiber->frameCount];
+        frame->ip = h.handlerIp;
+        // Re-load `ip` and `sp` from the unwound state. The catch
+        // body opens with OP_SETV bound-name (compiler emits this)
+        // so push the exception value first; if no value is in
+        // flight (rare; only when a slow-path runtimeError fires
+        // without OP_RAISE), use a Nil placeholder.
+        MyMoObject *exc = vm->fiber->exception;
+        vm->fiber->exception = NULL;
+        ip = frame->ip;
+        sp = vm->fiber->stack.values + vm->fiber->stack.count;
+        lpushObj(exc ? exc : NEW_NIL);
+        DISPATCH();
+    }
 #undef ReadByte
 #undef ReadConstant
 #undef DISPATCH

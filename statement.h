@@ -21,6 +21,8 @@ void ifStatement(Compiler *compiler);
 void elseStatement(Compiler *compiler);
 void loopStatement(Compiler *compiler);
 void startLoop(Compiler *compiler, Loop *loop);
+void tryStatement(Compiler *compiler);
+void raiseStatement(Compiler *compiler);
 
 void breakStatement(Compiler *compiler);
 void continueStatement(Compiler *compiler);

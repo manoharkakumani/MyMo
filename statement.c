@@ -213,6 +213,78 @@ void elseStatement(Compiler *compiler)
     }
 }
 
+// try:
+//     <body>
+// catch <name>:
+//     <handler>
+//
+// Compiles to:
+//     OP_TRY <catch_offset>
+//     <body bytecode>
+//     OP_ENDTRY
+//     OP_JMP <end>
+//   catch_label:
+//     OP_SETV name    ; the unwinder pushed the exception value
+//     OP_POP          ; SETV leaves the value on stack; discard
+//     <handler bytecode>
+//   end:
+void tryStatement(Compiler *compiler)
+{
+    size_t indent = getIndent(compiler);
+    advanceToken(compiler); // consume `try`
+    consumeToken(compiler, COLON, "expected ':' after try");
+    int tryJump = emitJump(compiler, OP_TRY);
+    if (matchToken(compiler, NEWLINE))
+        block(compiler, indent);
+    else
+        simpleStatement(compiler);
+    emitByte(compiler, OP_ENDTRY);
+    int afterCatch = emitJump(compiler, OP_JMP);
+    patchJump(compiler, tryJump);
+    // The catch arm. Optional `<name>` binding before the colon.
+    if (!matchToken(compiler, CATCH))
+    {
+        // No `catch` follows — equivalent to `catch _:` (discard
+        // the exception). Still need to consume the pushed value
+        // so the operand stack stays balanced.
+        emitByte(compiler, OP_POP);
+        patchJump(compiler, afterCatch);
+        return;
+    }
+    if (matchToken(compiler, NAME))
+    {
+        u32 nameIdx = identifierConstant(compiler, &compiler->parser->previous);
+        emitSetV(compiler, nameIdx);
+    }
+    emitByte(compiler, OP_POP);
+    consumeToken(compiler, COLON, "expected ':' after catch [name]");
+    if (matchToken(compiler, NEWLINE))
+        block(compiler, indent);
+    else
+        simpleStatement(compiler);
+    patchJump(compiler, afterCatch);
+}
+
+// raise <expr>:
+//     push the value, emit OP_RAISE which runtimeError-routes it
+//     to the nearest active OP_TRY handler.
+void raiseStatement(Compiler *compiler)
+{
+    advanceToken(compiler); // consume `raise`
+    if (checkToken(compiler, NEWLINE) || checkToken(compiler, END))
+    {
+        // Bare `raise` re-raises the current exception. Emit a
+        // string sentinel for now since we don't yet have access
+        // to the in-flight value via the language.
+        emitConstant(compiler, NEW_STRING(compiler->parser->vm, "RaiseError", 10));
+    }
+    else
+    {
+        expression(compiler);
+    }
+    emitByte(compiler, OP_RAISE);
+}
+
 void startLoop(Compiler *compiler, Loop *loop)
 {
     loop->loopStart = currentChunk(compiler)->count;
@@ -537,6 +609,10 @@ void simpleStatement(Compiler *compiler)
     else if (matchToken(compiler, CONTINUE))
     {
         continueStatement(compiler);
+    }
+    else if (checkToken(compiler, RAISE))
+    {
+        raiseStatement(compiler);
     }
     else
     {
@@ -958,6 +1034,8 @@ void statement(Compiler *compiler)
         flowStatement(compiler);
     else if (checkToken(compiler, CLASS) || checkToken(compiler, FN))
         compoundStatement(compiler);
+    else if (checkToken(compiler, TRY))
+        tryStatement(compiler);
     else if (checkToken(compiler, USE) || checkToken(compiler, FROM))
     {
         moduleStatement(compiler);

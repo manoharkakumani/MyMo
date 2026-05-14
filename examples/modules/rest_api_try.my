@@ -1,0 +1,119 @@
+# rest_api_try: the same /todos REST API as rest_api.my, but using
+# try/catch + the new dict methods instead of the older hand-rolled
+# guards. Compare to rest_api.my for the before/after.
+#
+# Try it:
+#   ./mymo examples/modules/rest_api_try.my
+#   curl -s http://127.0.0.1:8080/todos
+#   curl -s -X POST -d '{"title":"buy milk"}' http://127.0.0.1:8080/todos
+#   curl -s -X POST -d 'not json'             http://127.0.0.1:8080/todos
+#   curl -s -X PUT  -d '{"done":true}'        http://127.0.0.1:8080/todos/1
+#   curl -s -X DELETE                         http://127.0.0.1:8080/todos/2
+from "server" use listen, accept, respond, respond_json
+from "json" use encode, decode
+
+db = {"todos": {}, "next_id": 1}
+
+fn err(cfd, status, msg):
+    respond_json(cfd, status, encode({"error": msg}))
+
+# Safe JSON parse. The old code had a `looks_like_json_obj` heuristic
+# because json.decode raised on garbage and tore down the server.
+# With try/catch, the error is just a 400.
+fn parse_body(body):
+    try:
+        return decode(body)
+    catch e:
+        return Nil
+
+fn extract_id(path):
+    n = len(path)
+    if n <= 7:
+        return ""
+    rest = ""
+    i = 7
+    while i < n:
+        rest = rest + path[i]
+        i = i + 1
+    return rest
+
+fn is_item_path(path):
+    if len(path) < 8:
+        return False
+    p = ""
+    i = 0
+    while i < 7:
+        p = p + path[i]
+        i = i + 1
+    return p == "/todos/"
+
+fn handle_list(cfd):
+    items = []
+    for k in db["todos"]:
+        items.append(db["todos"][k])
+    respond_json(cfd, 200, encode(items))
+
+fn handle_create(cfd, req):
+    body = parse_body(req["body"])
+    if body == Nil:
+        return err(cfd, 400, "invalid JSON body")
+    id_int = db["next_id"]
+    db["next_id"] = id_int + 1
+    body["id"] = id_int
+    db["todos"][str(id_int)] = body
+    respond_json(cfd, 201, encode(body))
+
+fn handle_one(cfd, req, id):
+    existing = db["todos"].get(id)
+    if existing == Nil:
+        return err(cfd, 404, "todo not found")
+    method = req["method"]
+    if method == "GET":
+        return respond_json(cfd, 200, encode(existing))
+    if method == "PUT":
+        patch = parse_body(req["body"])
+        if patch == Nil:
+            return err(cfd, 400, "invalid JSON body")
+        for k in patch:
+            existing[k] = patch[k]
+        db["todos"][id] = existing
+        return respond_json(cfd, 200, encode(existing))
+    if method == "DELETE":
+        db["todos"].delete(id)
+        return respond(cfd, 204, "")
+    err(cfd, 405, "method not allowed on /todos/<id>")
+
+fn handle(req):
+    method = req["method"]
+    path = req["path"]
+    cfd = req["client_fd"]
+    if path == "/":
+        return respond(cfd, 200, "MyMo REST demo (try/catch). Try /todos\n")
+    if path == "/todos":
+        if method == "GET":
+            return handle_list(cfd)
+        if method == "POST":
+            return handle_create(cfd, req)
+        return err(cfd, 405, "method not allowed on /todos")
+    if is_item_path(path):
+        return handle_one(cfd, req, extract_id(path))
+    err(cfd, 404, "route not found")
+
+# Main loop. Any per-request runtime error gets caught + reported
+# as a 500 instead of crashing the whole server.
+srv = listen("127.0.0.1", 8080, 16)
+print("listening on http://127.0.0.1:8080 (try/catch edition)")
+while True:
+    req = accept(srv)
+    if req != Nil:
+        print(req["method"], req["path"])
+        try:
+            handle(req)
+        catch e:
+            print("  handler error:", e)
+            try:
+                respond_json(req["client_fd"], 500, encode({"error": e}))
+            catch:
+                # response already sent or socket closed — nothing
+                # more to do; just keep serving.
+                print("  (could not deliver 500)")

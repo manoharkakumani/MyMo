@@ -259,6 +259,37 @@ MyMoFunction *compile(MVM *vm, const char *src, const char *path, CompileType ty
     if (function)
     {
         function->name = newString(vm, path, strlen(path));
+        // Stash the source on every function chunk under this
+        // compilation unit so runtimeError can echo the offending
+        // line for nested call frames too. Walk the constant pool
+        // recursively; nested `fn` bodies show up as
+        // MyMoFunction-typed constants.
+        if (src)
+        {
+            char *shared = strdup(src);
+            function->chunk->source = strdup(shared);
+            // Workqueue: avoid recursion in case of deep nesting.
+            MyMoFunction *stack[64];
+            int sp = 0;
+            stack[sp++] = function;
+            while (sp > 0)
+            {
+                MyMoFunction *f = stack[--sp];
+                if (f->chunk->source == NULL)
+                    f->chunk->source = strdup(shared);
+                for (int ci = 0; ci < f->chunk->constants.count; ci++)
+                {
+                    Value v = f->chunk->constants.values[ci];
+                    if (V_IS_OBJ(v))
+                    {
+                        MyMoObject *o = V_AS_OBJ(v);
+                        if (o && o->type == OBJ_FUNCTION && sp < 64)
+                            stack[sp++] = (MyMoFunction *)o;
+                    }
+                }
+            }
+            free(shared);
+        }
 #ifdef NOCACHE
 #else
         if (path && type != COMPILE_REPL)

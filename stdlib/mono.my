@@ -118,12 +118,35 @@ text = (req, status, body) => respond(req["client_fd"], status, body)
 json = (req, status, value) => respond_json(req["client_fd"], status, encode(value))
 
 # --- main loop --------------------------------------------------------
+# Body decoding now uses try/catch instead of the __is_jsonish
+# heuristic — anything json.decode chokes on becomes Nil cleanly.
+fn __decode_body(body):
+    if body == Nil:
+        return Nil
+    if body.__len__() == 0:
+        return Nil
+    try:
+        return decode(body)
+    catch:
+        return Nil
+
+# Per-handler error trap. Any runtime error raised inside the
+# user-supplied handler turns into a 500 response. Without this
+# every untreated KeyError / NameError / explicit raise would
+# tear down the whole server.
+fn __dispatch_handler(handler, req):
+    try:
+        handler(req)
+    catch e:
+        try:
+            body = encode({"error": "internal server error", "detail": e})
+            respond_json(req["client_fd"], 500, body)
+        catch:
+            print("mono: could not deliver 500:", e)
+
 fn __handle(req):
     req_segs = __split_path(req["path"])
-    if __is_jsonish(req["body"]):
-        req["json"] = decode(req["body"])
-    else:
-        req["json"] = Nil
+    req["json"] = __decode_body(req["body"])
     routes = __state["routes"]
     n = routes.__len__()
     i = 0
@@ -133,12 +156,12 @@ fn __handle(req):
             bindings = __match(r["segs"], req_segs)
             if bindings != Nil:
                 req["params"] = bindings
-                r["handler"](req)
+                __dispatch_handler(r["handler"], req)
                 return Nil
         i = i + 1
     nf = __state["not_found"]
     if nf != Nil:
-        nf(req)
+        __dispatch_handler(nf, req)
     else:
         body = encode({"error": "not found", "path": req["path"]})
         respond_json(req["client_fd"], 404, body)

@@ -14,6 +14,10 @@ typedef struct chunk
     u32 *cols;
     u8 *code;
     ValueArray constants;
+    // Original source text, kept so runtimeError can show the
+    // offending line in context. NULL when not available (e.g. .myc
+    // cache load). Owned by the chunk; freed in freeChunk.
+    char *source;
 } Chunk;
 
 Chunk *newChunk(MVM *vm);

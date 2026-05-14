@@ -19,6 +19,7 @@ void initChunk(MVM *vm, Chunk *chunk)
     chunk->code = NULL;
     chunk->lines = NULL;
     chunk->cols = NULL;
+    chunk->source = NULL;
     initValueArray(vm, &chunk->constants);
 }
 
@@ -44,6 +45,7 @@ void freeChunk(MVM *vm, Chunk *chunk)
     FreeArray(vm, u32, chunk->lines, chunk->capacity);
     FreeArray(vm, u32, chunk->cols, chunk->capacity);
     freeValueArray(vm, &chunk->constants);
+    free(chunk->source);
     free(chunk);
 }
 

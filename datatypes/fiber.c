@@ -13,6 +13,8 @@ MyMoFiber *newFiber(MVM *vm, MyMoFunction *function)
     fiber->type = FIBER_CHILD;
     fiber->parent = NULL;
     fiber->freeFramesHead = NULL;
+    fiber->handlerCount = 0;
+    fiber->exception = NULL;
     initValueArray(vm, &fiber->stack);
     // Pre-allocate operand stack. The dispatch-loop register `sp` always
     // points into this buffer and never grows during execution — overflow

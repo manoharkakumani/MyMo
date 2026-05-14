@@ -1,5 +1,7 @@
-# mono_demo: the /todos REST API driven by the tiny in-tree `mono`
-# framework (examples/modules/mono.my).
+# mono_demo: the /todos REST API driven by the in-tree `mono`
+# framework. Now uses try/catch + dict methods for clean handler
+# error recovery — any unexpected runtime error returns 500
+# instead of taking down the server.
 #
 # Try it:
 #   ./mymo examples/modules/mono_demo.my
@@ -8,10 +10,8 @@
 #   curl -s http://127.0.0.1:8080/todos/1
 #   curl -s -X PUT -d '{"done":true}' http://127.0.0.1:8080/todos/1
 #   curl -s -X DELETE http://127.0.0.1:8080/todos/2
-
-#from "mono" use get, post, put, delete, start, text, json, not_found
-
-use "mono" as app
+#   curl -s -X POST -d 'not json'    http://127.0.0.1:8080/todos
+from "mono" use get, post, put, delete, start, text, json, not_found
 
 # All app state lives in a dict so handlers (closures) can mutate it
 # without shadowing the outer binding.
@@ -67,14 +67,21 @@ fn delete_todo(req):
     app_state["todos"].delete(id)
     text(req, 204, "")
 
+# A demo handler that intentionally raises, to show that the
+# framework's try/catch wrapper around each handler turns it into
+# a 500 response instead of a server crash.
+fn boom(req):
+    raise "intentional handler error"
+
 fn nf(req):
     json(req, 404, {"error": "route not found", "path": req["path"]})
 
-app.get("/",             home)
-app.get("/todos",        list_todos)
-app.post("/todos",       create_todo)
-app.get("/todos/:id",    show_todo)
-app.put("/todos/:id",    update_todo)
-app.delete("/todos/:id", delete_todo)
-app.not_found(nf)
-app.start("127.0.0.1", 8080)
+get("/",              home)
+get("/todos",         list_todos)
+post("/todos",        create_todo)
+get("/todos/:id",     show_todo)
+put("/todos/:id",     update_todo)
+delete("/todos/:id",  delete_todo)
+get("/boom",          boom)
+not_found(nf)
+start("127.0.0.1", 8080)

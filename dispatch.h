@@ -68,6 +68,9 @@ void *dispatchTable[] = {
     &&OP_WILDCARD,
     &&OP_GETARG,
     &&OP_SETARG,
-    &&OP_INVOKE_GLOBAL
+    &&OP_INVOKE_GLOBAL,
+    &&OP_TRY,
+    &&OP_ENDTRY,
+    &&OP_RAISE
     };
 #endif

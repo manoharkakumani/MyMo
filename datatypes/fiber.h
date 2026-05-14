@@ -31,6 +31,15 @@ typedef enum
     FIBER_CHILD
 } FiberType;
 
+// One entry on the try/catch handler stack. Recorded by OP_TRY when
+// a `try:` block starts executing, consulted by runtimeError when an
+// exception fires so it can unwind to the matching `catch:` arm.
+typedef struct {
+    u8 *handlerIp;       // bytecode address of the catch arm
+    uint frameCount;     // value to restore vm->fiber->frameCount to
+    int  stackCount;     // value to restore vm->fiber->stack.count to
+} TryHandler;
+
 typedef struct fiber
 {
     MyMoObject object;
@@ -46,6 +55,16 @@ typedef struct fiber
     // the frame back instead of free()ing. Saves a malloc + free per call
     // pair — ~30 ns each on common allocators.
     CallFrame *freeFramesHead;
+    // Try/catch handler stack. `handlers[handlerCount-1]` is the
+    // innermost active handler. OP_TRY pushes, OP_ENDTRY pops,
+    // runtimeError consults to unwind. Bounded depth to keep the
+    // fiber struct compact — most programs nest <8 deep.
+    TryHandler handlers[32];
+    int handlerCount;
+    // The currently-in-flight exception value (NULL when no error
+    // is being propagated). Set by raise / runtimeError, read by
+    // the catch arm via OP_GETV on the bound name.
+    MyMoObject *exception;
 } MyMoFiber;
 
 MyMoFiber *newFiber(MVM *vm, MyMoFunction *function);
