@@ -1,0 +1,153 @@
+# mono: a tiny Hono.js-style web framework in pure MyMo, built on
+# the `server` and `json` built-in modules.
+#
+# Drop this file next to your script and `from "mono" use ...`.
+# (MyMo's pathResolver looks for module files relative to the
+# running script, so colocation works without any install step.)
+#
+# Quick start:
+#   from "mono" use get, post, start, text, json
+#   get("/",          req => text(req, 200, "hello"))
+#   get("/todos/:id", req => json(req, 200, {"id": req["params"]["id"]}))
+#   start("127.0.0.1", 8080)
+#
+# - Any `:name` segment binds the matching request segment into
+#   `req["params"][name]`.
+# - JSON request bodies are auto-decoded into `req["json"]`
+#   (Nil if the body doesn't look like JSON).
+# - Multi-statement handlers should be written with `fn name(req):`
+#   blocks and registered by name — multi-line arrow-functions
+#   don't parse inside a function-call argument in MyMo today.
+from "server" use listen, accept, respond, respond_json
+from "json" use encode, decode
+
+# Mutable state goes in a dict so handlers (closures) can mutate it
+# without shadowing the outer binding.
+__state = {"routes": [], "not_found": Nil}
+
+# --- internal helpers -------------------------------------------------
+__slen = s => s.__len__()
+
+# Map of valid JSON-body first-characters. Used as a cheap pre-filter
+# so we don't hand obviously-non-JSON bytes to json.decode (which
+# raises a runtime error on garbage and would tear down the server).
+__json_starts = {"{":1, "[":1, '"':1, "t":1, "f":1, "n":1, "-":1,
+                 "0":1, "1":1, "2":1, "3":1, "4":1,
+                 "5":1, "6":1, "7":1, "8":1, "9":1}
+
+__has_key = (d, k) =>
+    for kk in d:
+        if kk == k:
+            return True
+    return False
+
+__is_jsonish = body =>
+    if body == Nil:
+        return False
+    if __slen(body) < 1:
+        return False
+    return __has_key(__json_starts, body[0])
+
+# Split "/a/b/:c" → ["a", "b", ":c"]. Bare "/" → [].
+fn __split_path(path):
+    out = []
+    n = __slen(path)
+    if n == 0:
+        return out
+    cur = ""
+    i = 0
+    if path[0] == "/":
+        i = 1
+    while i < n:
+        c = path[i]
+        if c == "/":
+            if __slen(cur) > 0:
+                out.append(cur)
+                cur = ""
+        else:
+            cur = cur + c
+        i = i + 1
+    if __slen(cur) > 0:
+        out.append(cur)
+    return out
+
+# Match route segments against request segments. Returns a dict of
+# `:name` bindings on success, Nil on mismatch.
+fn __match(route_segs, req_segs):
+    if route_segs.__len__() != req_segs.__len__():
+        return Nil
+    bindings = {}
+    n = route_segs.__len__()
+    i = 0
+    while i < n:
+        rseg = route_segs[i]
+        if rseg.__len__() > 0 and rseg[0] == ":":
+            # Strip the leading ":" to get the param name.
+            name = ""
+            j = 1
+            m = rseg.__len__()
+            while j < m:
+                name = name + rseg[j]
+                j = j + 1
+            bindings[name] = req_segs[i]
+        else:
+            if rseg != req_segs[i]:
+                return Nil
+        i = i + 1
+    return bindings
+
+# --- public route registration ---------------------------------------
+fn route(method, path, handler):
+    segs = __split_path(path)
+    __state["routes"].append({"method": method, "segs": segs, "handler": handler})
+    return Nil
+
+get    = (path, handler) => route("GET",    path, handler)
+post   = (path, handler) => route("POST",   path, handler)
+put    = (path, handler) => route("PUT",    path, handler)
+delete = (path, handler) => route("DELETE", path, handler)
+patch  = (path, handler) => route("PATCH",  path, handler)
+
+# Override the 404 handler. `handler` receives the request dict.
+fn not_found(handler):
+    __state["not_found"] = handler
+    return Nil
+
+# --- response helpers (call from inside a handler) -------------------
+text = (req, status, body) => respond(req["client_fd"], status, body)
+json = (req, status, value) => respond_json(req["client_fd"], status, encode(value))
+
+# --- main loop --------------------------------------------------------
+fn __handle(req):
+    req_segs = __split_path(req["path"])
+    if __is_jsonish(req["body"]):
+        req["json"] = decode(req["body"])
+    else:
+        req["json"] = Nil
+    routes = __state["routes"]
+    n = routes.__len__()
+    i = 0
+    while i < n:
+        r = routes[i]
+        if r["method"] == req["method"]:
+            bindings = __match(r["segs"], req_segs)
+            if bindings != Nil:
+                req["params"] = bindings
+                r["handler"](req)
+                return Nil
+        i = i + 1
+    nf = __state["not_found"]
+    if nf != Nil:
+        nf(req)
+    else:
+        body = encode({"error": "not found", "path": req["path"]})
+        respond_json(req["client_fd"], 404, body)
+    return Nil
+
+fn start(host, port):
+    srv = listen(host, port, 16)
+    print("mono listening on http://" + host + ":" + str(port))
+    while True:
+        req = accept(srv)
+        if req != Nil:
+            __handle(req)

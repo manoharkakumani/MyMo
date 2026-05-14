@@ -837,6 +837,9 @@ endSS:
     return;
 }
 
+// Forward declaration — defined below.
+static void listComprehension(Compiler *compiler, const char *exprText, int exprLen);
+
 void list(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);
@@ -854,7 +857,41 @@ void list(Compiler *compiler, bool canAssign)
     }
     if (!checkToken(compiler, RSQB))
     {
-        do
+        skipNewLines(compiler);
+        // Capture the source text of the first expression so we can
+        // re-emit it inside the comprehension's loop body. Token
+        // pointers reference lexer->src directly; the slice is
+        // (start, end_of_last_token).
+        const char *exprStart = compiler->parser->current.token;
+        int savedChunkCount = compiler->function->chunk->count;
+        expression(compiler);
+        // Use the START of the NEXT token as the end-of-expr cursor.
+        // Going through parser->previous.token + length would
+        // truncate when the expression ends in a string token —
+        // STRING tokens point at the content (between quotes), so
+        // token+length lands AT the closing quote, not after it,
+        // and we'd lose the closing `"`.
+        const char *exprEnd = compiler->parser->current.token;
+        skipNewLines(compiler);
+        if (checkToken(compiler, FOR))
+        {
+            // Discard the bytecode we just emitted for the first
+            // expression — it'll be re-emitted inside the loop body
+            // via a sub-parser. The constants it added remain in
+            // the pool but they're harmless (just unreachable).
+            compiler->function->chunk->count = savedChunkCount;
+            int exprLen = (int)(exprEnd - exprStart);
+            listComprehension(compiler, exprStart, exprLen);
+            if (trackPos) compiler->flags.casePatternDepth--;
+            compiler->flags.list--;
+            compiler->flags.dontSetVar--;
+            return;
+        }
+        count++;
+        if (trackPos && compiler->flags.casePatternDepth >= 1
+            && compiler->flags.casePatternDepth <= 4)
+            compiler->flags.casePatternStackPos[compiler->flags.casePatternDepth - 1]++;
+        while (matchToken(compiler, COMMA))
         {
             skipNewLines(compiler);
             if (checkToken(compiler, RSQB))
@@ -867,13 +904,137 @@ void list(Compiler *compiler, bool canAssign)
             if (trackPos && compiler->flags.casePatternDepth >= 1
                 && compiler->flags.casePatternDepth <= 4)
                 compiler->flags.casePatternStackPos[compiler->flags.casePatternDepth - 1]++;
-        } while (matchToken(compiler, COMMA));
+        }
     }
     consumeToken(compiler, RSQB, "Expected closing ']'");
     emitBytes(compiler, OP_LIST, count);
     if (trackPos) compiler->flags.casePatternDepth--;
     compiler->flags.list--;
     compiler->flags.dontSetVar--;
+}
+
+// List comprehension: `[EXPR for VAR in ITER (if COND)?]`.
+// Already at the `for` token. Caller has captured EXPR's source text
+// for re-emission and rewound chunk->count. Builds bytecode for:
+//
+//   __lc_result = []
+//   for VAR in ITER:
+//       if COND:
+//           __lc_result.append(EXPR)
+//   __lc_result  // leaves on stack as the expression's value
+//
+// VAR is a real local (uses whatever slot logic OP_SETV resolves);
+// __lc_result is a hidden local with a name outside the identifier
+// alphabet so it can never collide with user code.
+static void listComprehension(Compiler *compiler, const char *exprText, int exprLen)
+{
+    MVM *vm = compiler->parser->vm;
+    // Hidden-local name for the accumulator. `<` is not an identifier
+    // start char in MyMo, so this can never collide with user code.
+    // Nested comprehensions need distinct names, so we suffix with a
+    // monotonically increasing counter.
+    static int lc_counter = 0;
+    char lcBuf[32];
+    int lcLen = snprintf(lcBuf, sizeof(lcBuf), "<lc_result_%d>", lc_counter++);
+    Token lcTok;
+    lcTok.token = lcBuf;
+    lcTok.length = lcLen;
+    u32 lcName = identifierConstant(compiler, &lcTok);
+
+    // result = []
+    emitBytes(compiler, OP_LIST, 0);
+    emitSetV(compiler, lcName);
+    emitByte(compiler, OP_POP);
+
+    // Consume `for VAR in`.
+    consumeToken(compiler, FOR, "expected 'for' in list comprehension");
+    consumeToken(compiler, NAME, "expected an iterator name");
+    u32 varName = identifierConstant(compiler, &compiler->parser->previous);
+    consumeToken(compiler, IN, "expected 'in' after iterator name");
+
+    // Iterable expression. Use a precedence above PREC_ASSIGNMENT
+    // so a trailing `if cond` (the filter clause) is left for us
+    // to consume — otherwise IF's ternary infix rule would try to
+    // parse `iter if cond else <expected>` and demand an `else`.
+    parsePrecedence(compiler, PREC_OR);
+    emitByte(compiler, OP_GETI);
+    Loop loop;
+    startLoop(compiler, &loop);
+    compiler->loop->loopJump = emitJump(compiler, OP_ITER);
+    emitSetV(compiler, varName);
+    emitByte(compiler, OP_POP);
+
+    // Optional `if COND` filter.
+    int condJump = -1;
+    if (matchToken(compiler, IF))
+    {
+        expression(compiler);
+        condJump = emitJump(compiler, OP_JIF);
+        emitByte(compiler, OP_POP); // pop the condition's True
+    }
+
+    // result.append(EXPR) — OP_GETP now allocates a fresh bound
+    // method per lookup, so nested comprehensions no longer alias
+    // the same `self`.
+    emitGetV(compiler, lcName);
+    Token appendTok;
+    appendTok.token = "append";
+    appendTok.length = 6;
+    u32 appendName = identifierConstant(compiler, &appendTok);
+    emitBytes(compiler, OP_GETP, appendName);
+
+    // Sub-parse the saved expression text — same swap-and-restore
+    // pattern as f-string interpolations. The new lexer reads from
+    // a heap buffer terminated by `\n` so it produces a clean
+    // NEWLINE after the expression.
+    char *buf = New(char, exprLen + 2);
+    memcpy(buf, exprText, exprLen);
+    buf[exprLen] = '\n';
+    buf[exprLen + 1] = '\0';
+    Lexer *outerLexer = compiler->parser->lexer;
+    Token outerCurrent = compiler->parser->current;
+    Token outerPrevious = compiler->parser->previous;
+    Lexer *innerLexer = initLexer(buf);
+    compiler->parser->lexer = innerLexer;
+    compiler->parser->current = getToken(innerLexer);
+    expression(compiler);
+    freeLexer(innerLexer);
+    Free(vm, char, buf);
+    compiler->parser->lexer = outerLexer;
+    compiler->parser->current = outerCurrent;
+    compiler->parser->previous = outerPrevious;
+
+    emitBytes(compiler, OP_CALL, 1);
+    emitByte(compiler, OP_POP); // discard append's return value
+
+    if (condJump >= 0)
+    {
+        int afterAppend = emitJump(compiler, OP_JMP);
+        patchJump(compiler, condJump);
+        emitByte(compiler, OP_POP); // pop the condition's False
+        patchJump(compiler, afterAppend);
+    }
+
+    emitLoop(compiler, compiler->loop->loopStart);
+    int Jump = emitJump(compiler, OP_JMP);
+    compiler->loop = loop.enclosing;
+    patchJump(compiler, loop.loopJump);
+    emitByte(compiler, OP_POP); // pop the iterator
+    patchJump(compiler, Jump);
+    int breaksCount = loop.breaksCount;
+    while (breaksCount)
+    {
+        breaksCount--;
+        patchJump(compiler, loop.breakJumps[breaksCount]);
+    }
+    if (loop.breaksCapacity)
+    {
+        FreeArray(compiler->parser->vm, int, loop.breakJumps, loop.breaksCapacity);
+    }
+
+    // Push the accumulated result as the expression's value.
+    emitGetV(compiler, lcName);
+    consumeToken(compiler, RSQB, "Expected closing ']' after comprehension");
 }
 
 void dictionary(Compiler *compiler, bool canAssign)

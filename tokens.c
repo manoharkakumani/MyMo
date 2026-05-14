@@ -15,7 +15,7 @@ Token newToken(const char *src, size_t type, size_t len, size_t col, size_t inde
 Keywords keywords[KEYWORDS] = {
     {AND, "and", 3},
     {AS, "as", 2},
-    {BREAK, "break", 4},
+    {BREAK, "break", 5},
     {CASE, "case", 4},
     {CLASS, "class", 5},
     {COND, "cond", 4},

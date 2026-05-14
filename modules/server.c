@@ -31,6 +31,7 @@
   #include <netinet/in.h>
   #include <arpa/inet.h>
   #include <unistd.h>
+  #include <fcntl.h>
   #define close_fd(fd) close(fd)
 #endif
 
@@ -117,6 +118,23 @@ static MyMoObject *srv_accept(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "server.accept(): %s", strerror(errno));
         return MYMO_ERROR;
     }
+
+#ifndef _WIN32
+    // On BSD (macOS, FreeBSD) accepted sockets INHERIT the O_NONBLOCK
+    // flag from the listening socket; on Linux they don't. When the
+    // user puts the listen fd in non-blocking mode for a runloop-driven
+    // accept loop, we still want the header-read below to block
+    // briefly while the client sends — otherwise recv() races the
+    // TCP handshake and returns EAGAIN, making accept() report a
+    // bogus "transport error" (Nil) for every well-formed client.
+    // Clear O_NONBLOCK on the accepted fd to normalize the two
+    // platforms and decouple per-connection blocking from the listen
+    // fd's mode. Callers that explicitly want a non-blocking client
+    // fd can call runloop.nonblock(req["client_fd"]) themselves.
+    int flags = fcntl(cfd, F_GETFL, 0);
+    if (flags >= 0 && (flags & O_NONBLOCK))
+        fcntl(cfd, F_SETFL, flags & ~O_NONBLOCK);
+#endif
 
     char buf[16384];
     ssize_t n = read_headers(cfd, buf, sizeof(buf) - 1);

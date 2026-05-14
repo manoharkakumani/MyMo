@@ -22,6 +22,20 @@ RELEASE     := -O3 -DNDEBUG
 DEBUG       := -O0 -g3 -DDEBUG_PRINT_CODE -DDEBUG_STACK_TRACE
 LDFLAGS     := -lm -lcurl -lsqlite3
 UNAME_S     := $(shell uname -s)
+# Line-editing / history / tab-completion for the REPL. macOS ships
+# libedit (BSD-licensed, readline-compatible). Linux distros usually
+# have GNU readline. Both expose the same `readline()` / `add_history()`
+# API, so main.c is platform-agnostic. If you don't have either, omit
+# -DHAVE_READLINE and the REPL falls back to fgets.
+ifeq ($(UNAME_S),Darwin)
+  LDFLAGS += -ledit
+  COMMON  += -DHAVE_READLINE
+else
+  ifeq ($(shell pkg-config --exists readline && echo yes),yes)
+    LDFLAGS += $(shell pkg-config --libs readline)
+    COMMON  += -DHAVE_READLINE $(shell pkg-config --cflags readline)
+  endif
+endif
 ifeq ($(UNAME_S),Linux)
   # -ldl for dlopen, -rdynamic to expose the mymo binary's symbols
   # (newInt, defineBuiltInModule, runtimeError, ...) to extension
@@ -39,6 +53,7 @@ SRC_DT      := $(wildcard datatypes/*.c)
 SRC_MOD     := modules/math.c modules/time.c modules/os.c modules/io.c \
                modules/random.c modules/date.c modules/socket.c modules/http.c \
                modules/json.c modules/sqlite.c modules/server.c modules/nodes.c \
+               modules/runloop.c \
                modules/modules.c
 SRC         := $(SRC_ROOT) $(SRC_DT) $(SRC_MOD)
 
@@ -48,7 +63,24 @@ OBJ_DBG     := $(SRC:.c=.do)
 BIN         := mymo
 BIN_DEBUG   := mymo-debug
 
-.PHONY: all debug test bench clean ext-hello ext-strings ext-mymath ext-all
+.PHONY: all debug test bench clean ext-hello ext-strings ext-mymath ext-all stdlib
+
+# Embedded MyMo-source stdlib modules. Every .my file in stdlib/
+# becomes importable via `from "name" use ...` from any script.
+# scripts/gen_stdlib.sh slurps stdlib/*.my into a single header
+# (modules/stdlib_src.h) at build time — drop a new file in stdlib/
+# and rebuild; no other edits required.
+STDLIB_SRCS := $(wildcard stdlib/*.my)
+
+modules/stdlib_src.h: $(STDLIB_SRCS) scripts/gen_stdlib.sh
+	@scripts/gen_stdlib.sh $@ stdlib
+
+stdlib: modules/stdlib_src.h
+
+# utils.c is the only consumer of the embedded sources, so depend
+# on the generated header there (both release + debug objects).
+utils.o: modules/stdlib_src.h
+utils.do: modules/stdlib_src.h
 
 EXT_DYLIB := $(if $(filter Darwin,$(UNAME_S)),dylib,$(if $(filter Linux,$(UNAME_S)),so,dll))
 

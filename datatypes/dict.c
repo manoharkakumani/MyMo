@@ -279,6 +279,159 @@ MyMoDouble *findDouble(MyMoDict *dict, double value, int length, u32 hash)
     }
 }
 
+// ─── Built-in dict methods ──────────────────────────────────────────
+// All methods read the receiver via peek(argc) — the dispatch loop
+// has placed the bound-method object under the args, with its `self`
+// pointer set to the dict instance. (See OP_GETP in vm.c which now
+// allocates a fresh bound copy per lookup, so concurrent method
+// references don't alias `self`.)
+
+#include "../include/mymo_module.h"
+#include "list.h"
+
+static MyMoDict *dictSelf(MVM *vm, const char *fn, int self_idx)
+{
+    MyMoBuiltInFunction *function = AS_BUILTIN_FUNCTION(peek(vm, self_idx));
+    if (function->self == NULL)
+    {
+        runtimeError(vm, "TypeError: %s() can only be applied on a dict", fn);
+        return NULL;
+    }
+    return AS_DICT(function->self);
+}
+
+MyMoObject *dictGetMethod(MVM *vm, uint argc, MyMoObject *args[])
+{
+    if (argc < 1 || argc > 2)
+    {
+        runtimeError(vm, "TypeError: get() takes 1 or 2 arguments (%d given)", argc);
+        return NEW_EMPTY;
+    }
+    MyMoDict *dict = dictSelf(vm, "get", (int)argc);
+    if (!dict) return NEW_EMPTY;
+    // Pop args in reverse: default (if present) then key.
+    MyMoObject *def = (argc == 2) ? pop(vm) : NEW_NIL;
+    MyMoObject *key = pop(vm);
+    MyMoObject *value = getEntry(vm, dict, key);
+    return value ? value : def;
+}
+
+MyMoObject *dictPutMethod(MVM *vm, uint argc, MyMoObject *args[])
+{
+    if (argc != 2)
+    {
+        runtimeError(vm, "TypeError: put() takes exactly 2 arguments (%d given)", argc);
+        return NEW_EMPTY;
+    }
+    MyMoDict *dict = dictSelf(vm, "put", 2);
+    if (!dict) return NEW_EMPTY;
+    MyMoObject *value = pop(vm);
+    MyMoObject *key = pop(vm);
+    setEntry(vm, dict, key, value);
+    return value;
+}
+
+MyMoObject *dictHasMethod(MVM *vm, uint argc, MyMoObject *args[])
+{
+    if (argc != 1)
+    {
+        runtimeError(vm, "TypeError: has() takes exactly 1 argument (%d given)", argc);
+        return NEW_EMPTY;
+    }
+    MyMoDict *dict = dictSelf(vm, "has", 1);
+    if (!dict) return NEW_EMPTY;
+    MyMoObject *key = pop(vm);
+    return NEW_BOOL(getEntry(vm, dict, key) != NULL);
+}
+
+MyMoObject *dictDeleteMethod(MVM *vm, uint argc, MyMoObject *args[])
+{
+    if (argc != 1)
+    {
+        runtimeError(vm, "TypeError: delete() takes exactly 1 argument (%d given)", argc);
+        return NEW_EMPTY;
+    }
+    MyMoDict *dict = dictSelf(vm, "delete", 1);
+    if (!dict) return NEW_EMPTY;
+    MyMoObject *key = pop(vm);
+    bool existed = deleteEntry(vm, dict, key);
+    return NEW_BOOL(existed);
+}
+
+MyMoObject *dictKeysMethod(MVM *vm, uint argc, MyMoObject *args[])
+{
+    if (argc != 0)
+    {
+        runtimeError(vm, "TypeError: keys() takes 0 arguments (%d given)", argc);
+        return NEW_EMPTY;
+    }
+    MyMoDict *dict = dictSelf(vm, "keys", 0);
+    if (!dict) return NEW_EMPTY;
+    MyMoList *out = newList(vm);
+    for (int i = 0; i <= dict->capacity; i++)
+    {
+        Entry *e = &dict->entries[i];
+        if (e->key != NULL)
+            writeMyMoObjectArray(vm, &out->values, e->key);
+    }
+    return AS_OBJECT(out);
+}
+
+MyMoObject *dictValuesMethod(MVM *vm, uint argc, MyMoObject *args[])
+{
+    if (argc != 0)
+    {
+        runtimeError(vm, "TypeError: values() takes 0 arguments (%d given)", argc);
+        return NEW_EMPTY;
+    }
+    MyMoDict *dict = dictSelf(vm, "values", 0);
+    if (!dict) return NEW_EMPTY;
+    MyMoList *out = newList(vm);
+    for (int i = 0; i <= dict->capacity; i++)
+    {
+        Entry *e = &dict->entries[i];
+        if (e->key != NULL)
+        {
+            MyMoObject *v = V_IS_OBJ(e->value) ? V_AS_OBJ(e->value)
+                                               : valueToBoxedObject(vm, e->value);
+            writeMyMoObjectArray(vm, &out->values, v);
+        }
+    }
+    return AS_OBJECT(out);
+}
+
+MyMoObject *dictLenMethod(MVM *vm, uint argc, MyMoObject *args[])
+{
+    if (argc != 0)
+    {
+        runtimeError(vm, "TypeError: __len__() takes 0 arguments (%d given)", argc);
+        return NEW_EMPTY;
+    }
+    MyMoDict *dict = dictSelf(vm, "__len__", 0);
+    if (!dict) return NEW_EMPTY;
+    return NEW_INT(vm, dict->count);
+}
+
+void defineDictMethods(MVM *vm)
+{
+    defineMethod(vm, OBJ_DICT, "get",     dictGetMethod);
+    defineMethod(vm, OBJ_DICT, "put",     dictPutMethod);
+    defineMethod(vm, OBJ_DICT, "has",     dictHasMethod);
+    defineMethod(vm, OBJ_DICT, "delete",  dictDeleteMethod);
+    defineMethod(vm, OBJ_DICT, "keys",    dictKeysMethod);
+    defineMethod(vm, OBJ_DICT, "values",  dictValuesMethod);
+    defineMethod(vm, OBJ_DICT, "__len__", dictLenMethod);
+}
+
+void defineDictClass(MVM *vm)
+{
+    MyMoString *name = newString(vm, "dict", 4);
+    MyMoBuiltInClass *dictClass = newBuiltInClass(vm, name);
+    vm->builtInClasses[OBJ_DICT] = dictClass;
+    defineDictMethods(vm);
+    setEntry(vm, &vm->builtins, AS_OBJECT(name), AS_OBJECT(dictClass));
+}
+
 void setPrimitive(MVM *vm, MyMoDict *dict, MyMoObject *key)
 {
     if (dict->count + 1 > (dict->capacity + 1) * TABLE_MAX_LOAD)

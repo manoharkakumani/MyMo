@@ -57,6 +57,8 @@ bool setEntryV(MVM *vm, MyMoDict *dict, MyMoObject *key, Value value);
 
 void setPrimitive(MVM *vm, MyMoDict *dict, MyMoObject *key);
 
+void defineDictClass(MVM *vm);
+
 MyMoString *findString(MyMoDict *dict, const char *chars, int length, u32 hash);
 
 MyMoInt *findInt(MyMoDict *dict, long value, int length, u32 hash);

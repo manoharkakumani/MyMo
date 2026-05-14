@@ -5,6 +5,7 @@
 #include "./datatypes/datatypes.h"
 #include <time.h>
 #include "cache.h"
+#include "modules/stdlib_src.h"
 #include <sys/stat.h>
 
 //platform dependent
@@ -293,6 +294,21 @@ void defineBuiltInFunctions(MVM *vm)
 
 MyMoFunction *runFile(MVM *vm, char *path)
 {
+    // Embedded standard-library modules live in the binary, not on
+    // disk. They use a synthetic path of the form `@stdlib:NAME`
+    // that pathResolver hands back when no real file is found.
+    // Compile directly from the embedded source.
+    if (strncmp(path, "@stdlib:", 8) == 0)
+    {
+        const char *name = path + 8;
+        const char *src = stdlib_source_lookup(name);
+        if (src == NULL)
+        {
+            runtimeError(vm, "Module Error: unknown stdlib module '%s'.", name);
+            exit(74);
+        }
+        return compile(vm, src, path, COMPILE_SCRIPT);
+    }
     MyMoFunction *function;
     FILE *file = fopen(path, "rb");
     if (file == NULL)
@@ -398,6 +414,20 @@ char *pathResolver(MVM *vm, char *_path)
         }
         else
         {
+            // No file on disk — fall through to the embedded
+            // stdlib lookup at the bottom. Used to early-return
+            // NULL which made `from "mono" use ...` fail in the
+            // REPL (where vm->currentModule is NULL).
+            free(path);
+            if (stdlib_source_lookup(_path) != NULL)
+            {
+                size_t nameLen = strlen(_path);
+                char *synth = New(char, nameLen + 9);
+                memcpy(synth, "@stdlib:", 8);
+                memcpy(synth + 8, _path, nameLen);
+                synth[nameLen + 8] = '\0';
+                return synth;
+            }
             return NULL;
         }
     }
@@ -431,11 +461,22 @@ char *pathResolver(MVM *vm, char *_path)
         free(path);
         return cachePath;
     }
-    // Neither source nor cache exists — let the caller fall through to
-    // the built-in / dynamic module lookup paths instead of trying to
-    // open a non-existent .my file.
+    // Neither source nor cache exists — check the embedded stdlib
+    // table before giving up. If the name matches, return a
+    // synthetic @stdlib: path that runFile recognizes; this lets
+    // built-in MyMo-source modules (e.g. `mono`) be imported with
+    // the same `from "name" use ...` syntax as user files.
     free(cachePath);
     free(path);
+    if (stdlib_source_lookup(_path) != NULL)
+    {
+        size_t nameLen = strlen(_path);
+        char *synth = New(char, nameLen + 9);
+        memcpy(synth, "@stdlib:", 8);
+        memcpy(synth + 8, _path, nameLen);
+        synth[nameLen + 8] = '\0';
+        return synth;
+    }
     return NULL;
     #undef DELIMITER
 }

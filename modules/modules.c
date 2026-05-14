@@ -21,4 +21,5 @@ void defineBuiltInModules(MVM *vm)
     sqliteModule(vm);
     serverModule(vm);
     nodesModule(vm);
+    runloopModule(vm);
 }

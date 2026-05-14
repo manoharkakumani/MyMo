@@ -1,0 +1,31 @@
+# nbio_multi: a non-blocking server listening on TWO ports and
+# routing whichever connects first. Demonstrates runloop.select
+# for multiplexing across multiple file descriptors.
+# In two shells:
+#   curl http://127.0.0.1:18301/a
+#   curl http://127.0.0.1:18302/b
+from "runloop" use select, nonblock
+from "server" use listen, accept, respond
+a = listen("127.0.0.1", 18301, 4)
+b = listen("127.0.0.1", 18302, 4)
+nonblock(a)
+nonblock(b)
+print("listening on :18301 and :18302")
+fds = [a, b]
+labels = ["A", "B"]
+served = 0
+done = False
+while done == False:
+    idx = select(fds, 200)
+    if idx == -1:
+        print("idle 200ms")
+    else:
+        which = labels[idx]
+        req = accept(fds[idx])
+        if req != Nil:
+            print(which, "served", req["path"])
+            respond(req["client_fd"], 200, "hello from " + which + "\n")
+            served = served + 1
+    if served >= 2:
+        print("served both — exiting")
+        done = True

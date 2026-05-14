@@ -1355,7 +1355,7 @@ int runMVM(MVM *vm)
         case OBJ_STRING:
         case OBJ_LIST:
         case OBJ_TUPLE:
-            // case OBJ_DICT:
+        case OBJ_DICT:
             // case OBJ_INSTANCE: TODO
             {
                 push(vm, AS_OBJECT(newIter(vm, iterator)));
@@ -1673,9 +1673,17 @@ int runMVM(MVM *vm)
     {
         if (vm->currentModule && vm->currentModule->parent)
         {
+            // Copy the module's top-level names into both the module
+            // object's `variables` (so callers can read them as
+            // `mod.name`) and leave them in `frame->locals` — any
+            // function the module exported via OP_FN captured this
+            // exact `frame` for closure-style state lookup. Freeing
+            // the locals here would dangle those captures.
+            //
+            // Keeping the frame alive (no free, no freeDict) leaks
+            // exactly one CallFrame per imported module. Negligible
+            // — modules don't churn — and worth the simplicity.
             copyDict(vm, &frame->locals, vm->currentModule->variables);
-            freeDict(vm, &frame->locals);
-            free(frame);
             vm->currentModule = vm->currentModule->parent;
             frame = vm->fiber->callFrames[--vm->fiber->frameCount];
             ip = frame->ip;
@@ -1716,15 +1724,25 @@ int runMVM(MVM *vm)
             push(vm, ret);
             DISPATCH();
         }
-        // Recycle into the fiber's frame pool instead of free()ing. Skip
-        // freeDict when the locals dict was never grown (count==0 with
-        // capacity==-1) — the common case for arg-only functions where
-        // all params live in frame->args[]. Saves a function call per
-        // OP_FRET on the hot path.
-        if (frame->locals.count > 0 || frame->locals.entries != NULL)
-            freeDict(vm, &frame->locals);
-        frame->function = (MyMoFunction *)vm->fiber->freeFramesHead;
-        vm->fiber->freeFramesHead = frame;
+        // Module frames must survive their own OP_FRET: any function
+        // defined inside the module (via OP_FN) captured `frame` for
+        // closure-style lookup of module-level state through
+        // function->frame->locals. Recycling the frame would free
+        // those locals and clobber frame->function (it's repurposed
+        // as the pool's next-link), so later calls to exported
+        // functions would crash. Leak one CallFrame per module.
+        if (frame->function->type != FN_MODULE)
+        {
+            // Recycle into the fiber's frame pool instead of free()ing.
+            // Skip freeDict when the locals dict was never grown
+            // (count==0 with capacity==-1) — the common case for
+            // arg-only functions where all params live in frame->args[].
+            // Saves a function call per OP_FRET on the hot path.
+            if (frame->locals.count > 0 || frame->locals.entries != NULL)
+                freeDict(vm, &frame->locals);
+            frame->function = (MyMoFunction *)vm->fiber->freeFramesHead;
+            vm->fiber->freeFramesHead = frame;
+        }
         // Frame transition: re-load ip from the new (caller) frame. Stack
         // top stays as our local sp.
         frame = vm->fiber->callFrames[--vm->fiber->frameCount];
@@ -1984,10 +2002,16 @@ int runMVM(MVM *vm)
                 MyMoObject *fn = getEntry(vm, vm->builtInClasses[OBJ_DICT]->methods, variable);
                 if (fn)
                 {
-                    MyMoObject *self = pop(vm); // pop the dict
-                    MyMoBuiltInFunction *function = AS_BUILTIN_FUNCTION(fn);
-                    function->self = self;
-                    push(vm, fn);
+                    // Allocate a fresh bound copy so two concurrent
+                    // method-references (e.g. nested comprehensions)
+                    // don't share — and overwrite — the same `self`
+                    // field on the class's template method object.
+                    MyMoObject *self = pop(vm);
+                    MyMoBuiltInFunction *tmpl = AS_BUILTIN_FUNCTION(fn);
+                    MyMoBuiltInFunction *bound = newBuiltInFunction(
+                        vm, tmpl->name, tmpl->function, fn->type);
+                    bound->self = self;
+                    push(vm, AS_OBJECT(bound));
                     if (agp) agp = 0;
                     DISPATCH();
                 }
@@ -2002,9 +2026,15 @@ int runMVM(MVM *vm)
             MyMoObject *fn = getEntry(vm, vm->builtInClasses[type]->methods, variable);
             if (fn)
             {
-                MyMoBuiltInFunction *function = AS_BUILTIN_FUNCTION(fn);
-                function->self = self;
-                push(vm, fn);
+                // Allocate a fresh bound copy (see the OBJ_DICT case
+                // above for the rationale — sharing a single
+                // MyMoBuiltInFunction across receivers aliases the
+                // `self` field at the last writer).
+                MyMoBuiltInFunction *tmpl = AS_BUILTIN_FUNCTION(fn);
+                MyMoBuiltInFunction *bound = newBuiltInFunction(
+                    vm, tmpl->name, tmpl->function, fn->type);
+                bound->self = self;
+                push(vm, AS_OBJECT(bound));
                 DISPATCH();
             }
             runtimeError(vm, "AttributeError: %s has no attribute '%s'.", getType(self), STRING_VAL(variable));
@@ -2033,11 +2063,38 @@ int runMVM(MVM *vm)
         }
         if (recv->type == OBJ_DICT)
         {
+            // Mirror OP_GETP's dict lookup chain: key first, then
+            // built-in method fallback (with a fresh bound copy so
+            // `self` aliasing doesn't bite). Difference from plain
+            // `.` is that a final miss returns Nil instead of
+            // raising. Matters for chains like `dict?.get(...)` —
+            // the `?.` shouldn't suppress method dispatch, only
+            // suppress the "missing" error.
             MyMoDict *dict = AS_DICT(recv);
             MyMoObject *variable = ReadObject();
             MyMoObject *value = getEntry(vm, dict, variable);
-            pop(vm); // drop receiver
-            push(vm, value ? value : NEW_NIL);
+            if (value)
+            {
+                pop(vm);
+                push(vm, value);
+                DISPATCH();
+            }
+            if (vm->builtInClasses[OBJ_DICT])
+            {
+                MyMoObject *fn = getEntry(vm, vm->builtInClasses[OBJ_DICT]->methods, variable);
+                if (fn)
+                {
+                    MyMoObject *self = pop(vm);
+                    MyMoBuiltInFunction *tmpl = AS_BUILTIN_FUNCTION(fn);
+                    MyMoBuiltInFunction *bound = newBuiltInFunction(
+                        vm, tmpl->name, tmpl->function, fn->type);
+                    bound->self = self;
+                    push(vm, AS_OBJECT(bound));
+                    DISPATCH();
+                }
+            }
+            pop(vm);
+            push(vm, NEW_NIL);
             DISPATCH();
         }
         goto OP_GETP;
@@ -2083,6 +2140,25 @@ int runMVM(MVM *vm)
         }
         if (inplace) result = !result;
         push(vm, NEW_BOOL(result));
+        DISPATCH();
+    }
+    OP_LAPPEND:
+    {
+        // Stack-in:  [..., list, value]
+        // Stack-out: [..., list]   (value appended; list stays on top)
+        // Bypasses OP_GETP "append" because the built-in method dispatch
+        // shares a single MyMoBuiltInFunction object across all receivers
+        // and rebinds `self` on every lookup — nested list comprehensions
+        // would all alias the same bound method, last writer wins. Direct
+        // append avoids that whole hazard.
+        Value v = popV(vm);
+        MyMoObject *listObj = V_AS_OBJ(lpeek(0));
+        if (listObj->type != OBJ_LIST)
+        {
+            runtimeError(vm, "OP_LAPPEND: expected list under value, got %s.", getType(listObj));
+            return RUNTIME_ERROR;
+        }
+        writeMyMoObjectArray(vm, &AS_LIST(listObj)->values, valueToBoxedObject(vm, v));
         DISPATCH();
     }
     OP_TOSTRING:
@@ -2455,6 +2531,25 @@ int runMVM(MVM *vm)
         {
             BuiltInfunction fn = AS_BUILTIN_FUNCTION(cobj)->function;
             MyMoObject *legacy_argv[256];
+            // Insert callee UNDER the args so any peek(argc) inside
+            // the builtin (used by methods to find their `self`)
+            // finds the right object. Without this insert, calling a
+            // bound method indirectly via a local — e.g.
+            //   a = xs.append
+            //   a(3)
+            // — would route through OP_INVOKE_GLOBAL's fused path
+            // and the builtin would peek past the args into stale
+            // stack memory, reading self=NULL.
+            if (cobj->type == OBJ_BUILTIN_METHOD && argCount > 0)
+            {
+                memmove(sp - argCount + 1, sp - argCount, argCount * sizeof(Value));
+                sp[-(int)argCount] = V_OBJ_VAL(cobj);
+                sp++;
+            }
+            else if (cobj->type == OBJ_BUILTIN_METHOD)
+            {
+                *sp++ = V_OBJ_VAL(cobj);
+            }
             SAVE();
             Value *vargs = vm->fiber->stack.values + vm->fiber->stack.count - argCount;
             for (u32 i = 0; i < argCount; i++)
@@ -2462,6 +2557,12 @@ int runMVM(MVM *vm)
             MyMoObject *result = fn(vm, argCount, legacy_argv);
             if (IS_EMPTY(result)) return RUNTIME_ERROR;
             LOAD();   // builtin popped argc items via legacy pop()
+            if (cobj->type == OBJ_BUILTIN_METHOD)
+            {
+                // Pop the callee we inserted (still on the stack
+                // since the builtin only pops `argc` items).
+                sp--;
+            }
             lpushObj(result);
             DISPATCH();
         }

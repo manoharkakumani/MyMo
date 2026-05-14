@@ -1,0 +1,33 @@
+# runloop: non-blocking I/O primitives. Three demos.
+# 1. readable timeout: poll an idle listen socket, expect False.
+# 2. select: multiplex two listen sockets, return whichever fires first.
+# 3. nonblock: flip a fd to O_NONBLOCK so accept/recv return
+#    immediately when the kernel queue is empty.
+from "runloop" use readable, writable, select, nonblock
+from "socket" use listen, close
+print("--- demo 1: timeout ---")
+srv = listen("127.0.0.1", 19400, 4)
+nonblock(srv)
+hot = readable(srv, 50)
+print("polled 50ms, ready =", hot)
+close(srv)
+print("--- demo 2: multi-fd select ---")
+a = listen("127.0.0.1", 19401, 4)
+b = listen("127.0.0.1", 19402, 4)
+nonblock(a)
+nonblock(b)
+idx = select([a, b], 50)
+print("ready idx (=-1 means none):", idx)
+close(a)
+close(b)
+print("--- demo 3: nested poll loop ---")
+srv = listen("127.0.0.1", 19403, 4)
+nonblock(srv)
+ticks = 0
+while ticks < 3:
+    if readable(srv, 20):
+        ticks = 99
+    else:
+        ticks = ticks + 1
+print("idle ticks:", ticks)
+close(srv)

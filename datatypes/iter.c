@@ -44,6 +44,16 @@ MyMoObject *nextIter(MVM *vm, MyMoIter *object)
   }
   case OBJ_DICT:
   {
+    // Walk the entry table; skip empty (key==NULL) slots. Yields
+    // keys in insertion order via the entries[] index, matching
+    // for-in semantics over a list of keys. Stops at the first
+    // slot >= capacity.
+    MyMoDict *dict = AS_DICT(iterator);
+    while (object->index < dict->capacity)
+    {
+      Entry *e = &dict->entries[object->index++];
+      if (e->key != NULL) return e->key;
+    }
     return NEW_EMPTY;
   }
   default:

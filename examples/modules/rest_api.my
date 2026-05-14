@@ -1,0 +1,146 @@
+# rest_api: a minimal REST API for an in-memory `todos` resource,
+# implemented directly on the `server` + `json` modules.
+#
+# Routes:
+#   GET    /todos        list all
+#   GET    /todos/<id>   fetch one
+#   POST   /todos        create     (body: {"title": "..."})
+#   PUT    /todos/<id>   update     (body: any patch keys to merge)
+#   DELETE /todos/<id>   delete
+#   GET    /             usage banner
+#
+# Try it once the server is up:
+#   curl -s http://127.0.0.1:8080/todos
+#   curl -s -X POST  -d '{"title":"buy milk"}'     http://127.0.0.1:8080/todos
+#   curl -s -X POST  -d '{"title":"write report"}' http://127.0.0.1:8080/todos
+#   curl -s          http://127.0.0.1:8080/todos
+#   curl -s          http://127.0.0.1:8080/todos/1
+#   curl -s -X PUT   -d '{"done":true}'            http://127.0.0.1:8080/todos/1
+#   curl -s -X DELETE                              http://127.0.0.1:8080/todos/2
+from "server" use listen, accept, respond, respond_json
+from "json" use encode, decode
+
+# --- helpers ----------------------------------------------------------
+# MyMo has no global len() builtin, just .__len__() on the receiver.
+slen = s => s.__len__()
+
+# Extract the id from "/todos/<id>". Returns "" if the path doesn't
+# have anything after the prefix.
+extract_id = path =>
+    n = slen(path)
+    if n <= 7:
+        return ""
+    rest = ""
+    i = 7
+    while i < n:
+        rest = rest + path[i]
+        i = i + 1
+    return rest
+
+# Check whether `path` starts with `/todos/`.
+is_item_path = path =>
+    if slen(path) < 8:
+        return False
+    p = ""
+    i = 0
+    while i < 7:
+        p = p + path[i]
+        i = i + 1
+    return p == "/todos/"
+
+err = (cfd, status, msg) =>
+    respond_json(cfd, status, encode({"error": msg}))
+
+# Light pre-validation. json.decode() raises a runtime error on
+# garbage input which would tear down the server in a single-fiber
+# loop; we can't try/catch that yet, so guard against the obvious
+# cases (empty body, non-object) before handing it to the parser.
+looks_like_json_obj = body =>
+    if body == Nil:
+        return False
+    n = slen(body)
+    if n < 2:
+        return False
+    return body[0] == "{"
+
+# --- storage ----------------------------------------------------------
+# Wrapping mutable state in a dict so arrow-function handlers can
+# update it (closure scope only captures dict by reference; assigning
+# to a bare global from inside a closure shadows it instead).
+db = {"todos": {}, "next_id": 1}
+
+# --- handlers ---------------------------------------------------------
+handle = req =>
+    method = req["method"]
+    path = req["path"]
+    cfd = req["client_fd"]
+
+    if path == "/":
+        respond(cfd, 200, "MyMo REST demo. Try /todos\n")
+        return Nil
+
+    if path == "/todos":
+        if method == "GET":
+            items = []
+            for k in db["todos"]:
+                v = db["todos"][k]
+                if v != Nil:
+                    items.append(v)
+            respond_json(cfd, 200, encode(items))
+            return Nil
+        if method == "POST":
+            if looks_like_json_obj(req["body"]) == False:
+                err(cfd, 400, "invalid JSON body")
+                return Nil
+            body = decode(req["body"])
+            id_int = db["next_id"]
+            db["next_id"] = id_int + 1
+            body["id"] = id_int
+            db["todos"][str(id_int)] = body
+            respond_json(cfd, 201, encode(body))
+            return Nil
+        err(cfd, 405, "method not allowed on /todos")
+        return Nil
+
+    if is_item_path(path):
+        id = extract_id(path)
+        # `dict.get(k)` returns Nil for missing keys instead of
+        # raising — cleaner than the old hand-rolled membership loop.
+        existing = db["todos"].get(id)
+        if existing == Nil:
+            err(cfd, 404, "todo not found")
+            return Nil
+        if method == "GET":
+            respond_json(cfd, 200, encode(existing))
+            return Nil
+        if method == "PUT":
+            if looks_like_json_obj(req["body"]) == False:
+                err(cfd, 400, "invalid JSON body")
+                return Nil
+            patch = decode(req["body"])
+            for k in patch:
+                existing[k] = patch[k]
+            db["todos"][id] = existing
+            respond_json(cfd, 200, encode(existing))
+            return Nil
+        if method == "DELETE":
+            # `dict.delete(k)` removes the key entirely (returns True
+            # if it existed). The list endpoint above no longer sees it.
+            db["todos"].delete(id)
+            respond(cfd, 204, "")
+            return Nil
+        err(cfd, 405, "method not allowed on /todos/<id>")
+        return Nil
+
+    err(cfd, 404, "route not found")
+    return Nil
+
+# --- main loop --------------------------------------------------------
+srv = listen("127.0.0.1", 8080, 16)
+print("listening on http://127.0.0.1:8080")
+print("ctrl-c to stop")
+while True:
+    req = accept(srv)
+    if req != Nil:
+        print(req["method"], req["path"])
+        handle(req)

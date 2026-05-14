@@ -59,6 +59,7 @@ typedef enum
     OP_OGETP, // optional-chain get property: nil-safe `?.`
     OP_IS,    // identity / inline-bit-pattern comparison
     OP_TOSTRING, // pop any value, push its MyMoString representation
+    OP_LAPPEND,  // pop a value, append it to the list one below; leaves the list on top (for list comprehensions)
     OP_DELP,
     OP_USE,
     OP_SETM,

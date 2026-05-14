@@ -20,6 +20,7 @@ MODULE(json);
 MODULE(sqlite);
 MODULE(server);
 MODULE(nodes);
+MODULE(runloop);
 
 void defineBuiltInModules(MVM *vm);
 

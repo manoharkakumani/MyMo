@@ -11,7 +11,7 @@ void defineBuiltInClasses(MVM *vm)
     defineListClass(vm);
     defineFiberClass(vm);
     // defineTupleClass(vm);
-    // defineDictClass(vm);
+    defineDictClass(vm);
     // defineFunctionClass(vm);
     // defineClassClass(vm);
     // defineModuleClass(vm);

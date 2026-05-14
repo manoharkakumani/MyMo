@@ -1,0 +1,80 @@
+# mono_demo: the /todos REST API driven by the tiny in-tree `mono`
+# framework (examples/modules/mono.my).
+#
+# Try it:
+#   ./mymo examples/modules/mono_demo.my
+#   curl -s -X POST -d '{"title":"buy milk"}' http://127.0.0.1:8080/todos
+#   curl -s http://127.0.0.1:8080/todos
+#   curl -s http://127.0.0.1:8080/todos/1
+#   curl -s -X PUT -d '{"done":true}' http://127.0.0.1:8080/todos/1
+#   curl -s -X DELETE http://127.0.0.1:8080/todos/2
+
+#from "mono" use get, post, put, delete, start, text, json, not_found
+
+use "mono" as app
+
+# All app state lives in a dict so handlers (closures) can mutate it
+# without shadowing the outer binding.
+app_state = {"todos": {}, "next_id": 1}
+
+fn home(req):
+    text(req, 200, "MyMo + mono. Try /todos\n")
+
+fn list_todos(req):
+    items = []
+    for k in app_state["todos"]:
+        items.append(app_state["todos"][k])
+    json(req, 200, items)
+
+fn create_todo(req):
+    body = req["json"]
+    if body == Nil:
+        json(req, 400, {"error": "invalid JSON body"})
+        return Nil
+    id_int = app_state["next_id"]
+    app_state["next_id"] = id_int + 1
+    body["id"] = id_int
+    app_state["todos"][str(id_int)] = body
+    json(req, 201, body)
+
+fn show_todo(req):
+    existing = app_state["todos"].get(req["params"]["id"])
+    if existing == Nil:
+        json(req, 404, {"error": "todo not found"})
+        return Nil
+    json(req, 200, existing)
+
+fn update_todo(req):
+    id = req["params"]["id"]
+    existing = app_state["todos"].get(id)
+    if existing == Nil:
+        json(req, 404, {"error": "todo not found"})
+        return Nil
+    patch = req["json"]
+    if patch == Nil:
+        json(req, 400, {"error": "invalid JSON body"})
+        return Nil
+    for k in patch:
+        existing[k] = patch[k]
+    app_state["todos"][id] = existing
+    json(req, 200, existing)
+
+fn delete_todo(req):
+    id = req["params"]["id"]
+    if app_state["todos"].has(id) == False:
+        json(req, 404, {"error": "todo not found"})
+        return Nil
+    app_state["todos"].delete(id)
+    text(req, 204, "")
+
+fn nf(req):
+    json(req, 404, {"error": "route not found", "path": req["path"]})
+
+app.get("/",             home)
+app.get("/todos",        list_todos)
+app.post("/todos",       create_todo)
+app.get("/todos/:id",    show_todo)
+app.put("/todos/:id",    update_todo)
+app.delete("/todos/:id", delete_todo)
+app.not_found(nf)
+app.start("127.0.0.1", 8080)

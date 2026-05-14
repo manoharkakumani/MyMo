@@ -1,0 +1,24 @@
+# nbio_server: a non-blocking HTTP server using runloop primitives.
+# Polls the listen socket every 100ms instead of blocking in accept().
+# Exits after either serving one request or 50 idle ticks (~5s).
+# In another shell:
+#   curl http://127.0.0.1:18282/hello
+from "runloop" use readable, nonblock
+from "server" use listen, accept, respond
+srv = listen("127.0.0.1", 18282, 16)
+nonblock(srv)
+print("listening on http://127.0.0.1:18282 (non-blocking)")
+idle = 0
+done = False
+while done == False:
+    if readable(srv, 100):
+        req = accept(srv)
+        if req != Nil:
+            print("served:", req["method"], req["path"])
+            respond(req["client_fd"], 200, "hello from non-blocking MyMo\n")
+            done = True
+    else:
+        idle = idle + 1
+        if idle >= 50:
+            print("idle timeout — exiting")
+            done = True

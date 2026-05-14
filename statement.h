@@ -20,6 +20,7 @@ void block(Compiler *compiler, size_t indent);
 void ifStatement(Compiler *compiler);
 void elseStatement(Compiler *compiler);
 void loopStatement(Compiler *compiler);
+void startLoop(Compiler *compiler, Loop *loop);
 
 void breakStatement(Compiler *compiler);
 void continueStatement(Compiler *compiler);
