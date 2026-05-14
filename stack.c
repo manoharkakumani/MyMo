@@ -29,14 +29,15 @@ Value peekV(MVM *vm, int position)
 //
 // Once every caller has migrated (step 1.7), this whole section deletes.
 
+// Delegate to the canonical boxing helper in value.c, which knows
+// how to map every inline tag (int, double, nil, true, false) back
+// to a heap object. The older stack-local copy only handled int and
+// fell through to a `V_AS_OBJ` of a non-object, which yields a
+// poison pointer for inline doubles/nil/bool — that crashed
+// math.ceil() / floor() / etc. after Phase 1.4 made doubles inline.
 static MyMoObject *boxValueAsObject(MVM *vm, Value v)
 {
-    if (V_IS_OBJ(v)) return V_AS_OBJ(v);
-    if (V_IS_INT(v)) return AS_OBJECT(newInt(vm, V_AS_INT(v)));
-    // Doubles, nil, true, false are still heap-allocated today, so they
-    // cannot reach this branch as inline values. After steps 1.4 / 1.5 this
-    // helper grows the matching cases.
-    return V_AS_OBJ(v);
+    return valueToBoxedObject(vm, v);
 }
 
 void push(MVM *vm, MyMoObject *object)

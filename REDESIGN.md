@@ -115,11 +115,47 @@ green):
   (slot-based locals) since the bottleneck is dict-storage of variables.
   Diff: ~200 lines across `vm.c`, `value.[hc]`, `stack.c`, `expression.c`,
   `statement.c`, `bytecode.[hc]`, `Makefile`.
-- [ ] **1.4** NaN-box doubles. Same pattern as ints for the `OBJ_DOUBLE`
-  legacy path.
-- [ ] **1.5** NaN-box `nil`/`true`/`false`. Replace every `NIL_VAL` /
-  `BOOL_VAL` / `IS_NIL` / `IS_BOOL` site that currently expects a
-  `MyMoObject*`. Delete `MyMoNil`, `MyMoBool` heap allocations entirely.
+- [x] **1.4** NaN-box doubles. Double literals now emit inline via
+  `V_DOUBLE_VAL` instead of allocating a heap `MyMoDouble`. The
+  arithmetic OPs (`OP_ADD/SUB/MUL/DIV/LESS/GREATER`) grew an
+  inline-number fast path between the int and slow legacy paths that
+  handles any mix of inline/heap ints and inline/heap doubles via
+  `valueLooksLikeNumber` + `valueAsNumber`, producing an inline
+  `V_DOUBLE_VAL` result. `OP_DIV` keeps the two-tier shape (int/int
+  with integer-valued result stays int) and grew an explicit
+  zero-denominator guard. `valueToBoxedObject` now boxes inline
+  doubles to heap `MyMoDouble` for cold-path callers (subscript,
+  dict keys, built-in argv). `MyMoDouble`'s struct definition moved
+  to `value.h` so `valueAsNumber` can read the heap field directly,
+  mirroring the `MyMoInt` setup. Build green, 18/18 tests, double
+  microbench ~0.51s for 1M iterations. Diff: ~80 lines across
+  `expression.c`, `vm.c`, `value.[hc]`, `datatypes/double.h`.
+  Drive-by: fixed a pre-existing `!=` bug where OP_EQUAL inverted on
+  `inplace==1` and the compiler-emitted OP_NOT inverted again, so
+  `1 != 1` returned True. Now OP_EQUAL always pushes raw equality
+  and OP_NOT does the single inversion.
+- [x] **1.5 (partial)** NaN-box `nil`/`true`/`false` on the producer
+  side. `OP_NIL`/`OP_TRUE`/`OP_FALSE` now push inline `V_NIL_VAL` /
+  `V_TRUE_VAL` / `V_FALSE_VAL` instead of the heap singletons.
+  `valueToBoxedObject` maps the inline tags back to the existing
+  `NilObject` / `TrueBool` / `FalseBool` heap singletons for the
+  ~97 legacy `pop(vm) → MyMoObject*` consumers (dict storage,
+  built-in argv, module returns), so no consumer needs to change
+  immediately. `isFalseyV` gained explicit inline-nil/true/false
+  cases (was falling through to "any non-int non-double is falsey",
+  which broke ternary `True ? a : b`). `valuesEqual` gained
+  inline-vs-heap cross-form branches so `x == Nil` and
+  `mod.fn() == True` work when one side is inline and the other is
+  the boxed singleton. Build green, 18/18 tests, bench within noise.
+  Diff: ~70 lines across `vm.c` and `value.[hc]`. Full deletion of
+  `MyMoNil`/`MyMoBool` is a separate sweep across the remaining
+  ~97 call sites; deferred to a dedicated cleanup pass that doesn't
+  risk subtle regressions in cold paths, same as the `MyMoInt`
+  deletion in 1.6 partial.
+- [ ] **1.5b** Delete `MyMoNil` / `MyMoBool` entirely. Sweep the
+  ~97 sites using `NEW_BOOL` / `NEW_NIL` / `IS_BOOL` / `IS_NIL` /
+  `BOOL_VAL` / `AS_BOOL`. Most are slow paths (operator overload,
+  cache I/O, module helpers) that should switch to inline forms.
 - [x] **1.6 (partial)** Arithmetic OPs (OP_ADD/SUB/MUL/LESS/GREATER) all
   produce inline V_INT_VAL results — heap-int fallback removed from the
   hot path. Hottest path is `V_IS_INT(va) && V_IS_INT(vb)` — three

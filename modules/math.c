@@ -17,8 +17,11 @@ MyMoObject *floorfn(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "TypeError: must be <object 'int'> or <object 'double'>, not (%s)",getType(argv[0]));
         return NEW_EMPTY;
     }
-
-    return(NEW_INT(vm, floor(NUMBER_VAL(pop(vm)))));
+    // NUMBER_VAL is a macro that expands its argument three times,
+    // so `NUMBER_VAL(pop(vm))` used to pop three values off the
+    // stack and segfault. Pop once into a local, then read it.
+    MyMoObject *object = pop(vm);
+    return NEW_INT(vm, floor(NUMBER_VAL(object)));
 }
 
 MyMoObject *ceilfn(MVM *vm, uint argc, MyMoObject *argv[]) 

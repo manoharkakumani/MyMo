@@ -59,6 +59,7 @@ typedef enum
     PITHRU,
     PLUS,
     QMARK,
+    QDOT,
     RBRACE,
     RPAR,
     RSQB,

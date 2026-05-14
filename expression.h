@@ -12,6 +12,8 @@ void grouping(Compiler *compiler, bool canAssign);
 void literal(Compiler *compiler, bool canAssign);
 void variable(Compiler *compiler, bool canAssign);
 void dot(Compiler *compiler, bool canAssign);
+void optDot(Compiler *compiler, bool canAssign);
+void isOp(Compiler *compiler, bool canAssign);
 void expression(Compiler *compiler);
 void call(Compiler *compiler, bool canAssign);
 void subScript(Compiler *compiler, bool canAssign);

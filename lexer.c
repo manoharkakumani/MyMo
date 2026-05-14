@@ -1,5 +1,33 @@
 #include "lexer.h"
 
+// Branchless ASCII classifiers used in the lexer's per-character
+// tight loops. Each compiles to a few register ops with no function
+// call, no locale lookup, and no global state (vs. <ctype.h>'s
+// `isalpha`/`isdigit`/etc. which go through a locale-keyed table).
+// The lexer only cares about ASCII anyway — non-ASCII bytes inside
+// identifiers / numbers are an error.
+static inline int ascii_isdigit(int c)  { return (unsigned)(c - '0') < 10; }
+static inline int ascii_isupper(int c)  { return (unsigned)(c - 'A') < 26; }
+static inline int ascii_islower(int c)  { return (unsigned)(c - 'a') < 26; }
+static inline int ascii_isalpha(int c)  { return ascii_isupper(c) || ascii_islower(c); }
+static inline int ascii_isalnum(int c)  { return ascii_isdigit(c) || ascii_isalpha(c); }
+static inline int ascii_isxdigit(int c) {
+    return ascii_isdigit(c)
+        || (unsigned)(c - 'a') < 6
+        || (unsigned)(c - 'A') < 6;
+}
+// MyMo treats `\n` and `\r` as statement-terminator newlines (handled
+// in their own branches before this is queried), so the "is whitespace
+// to skip" predicate here is just space/tab — keeps the hot loop a
+// 2-byte compare instead of <ctype.h>'s 6-class lookup.
+static inline int ascii_iswhite(int c)  { return c == ' ' || c == '\t'; }
+
+#define isspace(c)  ascii_iswhite(c)
+#define isdigit(c)  ascii_isdigit(c)
+#define isalpha(c)  ascii_isalpha(c)
+#define isalnum(c)  ascii_isalnum(c)
+#define isxdigit(c) ascii_isxdigit(c)
+
 // Hot path — called once per source byte. Force-inline so getToken's
 // tight loops (digits, identifiers, strings, whitespace runs) don't
 // pay a function-call hop per character.
@@ -60,11 +88,20 @@ Token getToken(Lexer *lexer)
             lexer->indent = 0;
             lexerAdvance(lexer);
         newline:
-            while (lexer->currentChar == '\n')
+            // Skip any run of bare `\r` and `\n`. Files with CRLF
+            // endings have `\r\n` between every line; a blank line is
+            // `\r\n\r\n`, so we need to absorb the `\r` here too or
+            // the second `\n` survives as a stray NEWLINE token and
+            // breaks function-body termination. (Used to be hidden
+            // by the catch-all `isspace`-based skip below.)
+            while (lexer->currentChar == '\n' || lexer->currentChar == 13)
             {
-                lexer->line++;
-                lexer->col = 0;
-                lexer->indent = 0;
+                if (lexer->currentChar == '\n')
+                {
+                    lexer->line++;
+                    lexer->col = 0;
+                    lexer->indent = 0;
+                }
                 lexerAdvance(lexer);
             }
             while (lexer->currentChar == '\t')
@@ -556,7 +593,15 @@ Token getToken(Lexer *lexer)
         }
         else if (lexer->currentChar == '?')
         {
-            return lexerAdvanceToken(lexer, newToken(lexer->token, QMARK, lexer->len, start, lexer->indent, lexer->line));
+            // `?.` (no space) is optional chaining; emit QDOT and
+            // consume both characters. Bare `?` stays as the ternary
+            // operator QMARK.
+            lexerAdvance(lexer);
+            if (lexer->currentChar == '.')
+            {
+                return lexerAdvanceToken(lexer, newToken(lexer->token, QDOT, lexer->len, start, lexer->indent, lexer->line));
+            }
+            return newToken(lexer->token, QMARK, lexer->len - 1, start, lexer->indent, lexer->line);
         }
         else if (lexer->currentChar == '.')
         {

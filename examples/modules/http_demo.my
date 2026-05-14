@@ -6,7 +6,7 @@ r = get("https://httpbin.org/get")
 
 #ok
 #
-print("GET status:", r["status"])
+print("GET status:", r.status)
 
 r = post("https://httpbin.org/post", "hello=world&n=42")
 print("POST status:", r["status"])

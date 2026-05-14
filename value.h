@@ -133,6 +133,47 @@ static inline long valueToLong(Value v) {
     return ((MyMoInt *)V_AS_OBJ(v))->value;
 }
 
+// Mirror of the int helpers for doubles. During the 1.4 migration,
+// doubles exist in two forms: inline V_DOUBLE_VAL (fast) and heap
+// MyMoDouble (legacy, still produced by some module return paths).
+typedef struct MyMoDouble MyMoDouble;
+struct MyMoDouble {
+    MyMoObject object;
+    double value;
+    int length;
+};
+
+static inline bool valueLooksLikeDouble(Value v) {
+    if (V_IS_DOUBLE(v)) return true;
+    if (V_IS_OBJ(v)) {
+        MyMoObject *o = V_AS_OBJ(v);
+        return o && o->type == OBJ_DOUBLE;
+    }
+    return false;
+}
+
+static inline double valueToDouble(Value v) {
+    if (V_IS_DOUBLE(v)) return V_AS_DOUBLE(v);
+    return ((MyMoDouble *)V_AS_OBJ(v))->value;
+}
+
+// True for either int or double, inline or heap. Use this when an
+// arithmetic op or comparison should accept "any number".
+static inline bool valueLooksLikeNumber(Value v) {
+    return valueLooksLikeInt(v) || valueLooksLikeDouble(v);
+}
+
+// Coerce any number (inline/heap, int/double) to a double. The slow
+// path of arithmetic ops uses this once both operands are confirmed
+// numeric.
+static inline double valueAsNumber(Value v) {
+    if (V_IS_INT(v))    return (double)V_AS_INT(v);
+    if (V_IS_DOUBLE(v)) return V_AS_DOUBLE(v);
+    MyMoObject *o = V_AS_OBJ(v);
+    if (o->type == OBJ_INT)    return (double)((MyMoInt *)o)->value;
+    return ((MyMoDouble *)o)->value;
+}
+
 // Allocates a MyMoInt for inline ints; legacy boxing helper.
 MyMoObject *valueToBoxedObject(MVM *vm, Value v);
 

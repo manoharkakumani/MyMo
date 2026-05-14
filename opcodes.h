@@ -56,6 +56,8 @@ typedef enum
     OP_SETP,
     OP_AGETP, // for assign property
     OP_GETP,
+    OP_OGETP, // optional-chain get property: nil-safe `?.`
+    OP_IS,    // identity / inline-bit-pattern comparison
     OP_DELP,
     OP_USE,
     OP_SETM,

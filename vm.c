@@ -328,14 +328,18 @@ bool isFalsey(MyMoObject *obj)
            (IS_STRING(obj) && STRING_VAL(obj)[0] == '\0');
 }
 
-// Value-native truthiness. Handles inline ints directly; boxed objects
-// fall through to the legacy heap-object check above.
+// Value-native truthiness. Handles inline ints, doubles, nil/true/
+// false directly; boxed objects fall through to the legacy heap-
+// object check above.
 static inline bool isFalseyV(Value v)
 {
+    if (V_IS_NIL(v))    return true;
+    if (V_IS_TRUE(v))   return false;
+    if (V_IS_FALSE(v))  return true;
     if (V_IS_INT(v))    return V_AS_INT(v) == 0;
     if (V_IS_DOUBLE(v)) return V_AS_DOUBLE(v) == 0.0;
     if (V_IS_OBJ(v))    return isFalsey(V_AS_OBJ(v));
-    return true;  // nil / false fall here once they go inline (steps 1.4-1.5)
+    return true;
 }
 
 int runMVM(MVM *vm)
@@ -411,17 +415,20 @@ int runMVM(MVM *vm)
     }
     OP_NIL:
     {
-        push(vm, NEW_NIL);
+        // Inline NaN-boxed singleton. Legacy consumers that pop a
+        // MyMoObject* go through valueToBoxedObject, which maps the
+        // inline tag back to the existing NilObject heap singleton.
+        pushV(vm, V_NIL_VAL);
         DISPATCH();
     }
     OP_TRUE:
     {
-        push(vm, NEW_BOOL(true));
+        pushV(vm, V_TRUE_VAL);
         DISPATCH();
     }
     OP_FALSE:
     {
-        push(vm, NEW_BOOL(false));
+        pushV(vm, V_FALSE_VAL);
         DISPATCH();
     }
     OP_LIST:
@@ -801,15 +808,21 @@ int runMVM(MVM *vm)
         // Value-native fast path: identical NaN-boxed bits compare equal in
         // O(1), which covers same-tagged-int, same-pointer, same nil/bool.
         // Mismatched bits with both sides numeric coerce to double compare.
+        // The `inplace` byte is consumed but not interpreted as a negation:
+        // the compiler emits an explicit OP_NOT after OP_EQUAL for `!=`,
+        // so we always push the equality result here and let OP_NOT
+        // handle the inversion. (Earlier code inverted on inplace==1 and
+        // then OP_NOT inverted again, which made `!=` return true on
+        // equal operands — pre-existing bug.)
         u32 inplace = ReadByte();
+        UNUSED(inplace);
         Value vb = peekV(vm, 0);
         Value va = peekV(vm, 1);
         if (!(V_IS_OBJ(va) && IS_INSTANCE(V_AS_OBJ(va))))
         {
             popV(vm); popV(vm);
             bool eq = valuesEqual(va, vb);
-            bool result = inplace ? !eq : eq;
-            push(vm, NEW_BOOL(result));
+            push(vm, NEW_BOOL(eq));
             DISPATCH();
         }
         // Slow path: instance with __eq__/__ne__ overload. Fall through to
@@ -858,6 +871,14 @@ int runMVM(MVM *vm)
             lpushObj(NEW_BOOL(a > b));
             DISPATCH();
         }
+        if (valueLooksLikeNumber(va) && valueLooksLikeNumber(vb))
+        {
+            double a = valueAsNumber(va);
+            double b = valueAsNumber(vb);
+            sp -= 2;
+            lpushObj(NEW_BOOL(a > b));
+            DISPATCH();
+        }
         MyMoObject *b = pop(vm);
         MyMoObject *a = pop(vm);
         if (IS_INSTANCE(a))
@@ -891,6 +912,14 @@ int runMVM(MVM *vm)
         {
             long a = valueToLong(va);
             long b = valueToLong(vb);
+            sp -= 2;
+            lpushObj(NEW_BOOL(a < b));
+            DISPATCH();
+        }
+        if (valueLooksLikeNumber(va) && valueLooksLikeNumber(vb))
+        {
+            double a = valueAsNumber(va);
+            double b = valueAsNumber(vb);
             sp -= 2;
             lpushObj(NEW_BOOL(a < b));
             DISPATCH();
@@ -974,6 +1003,15 @@ int runMVM(MVM *vm)
                 lpushObj(NEW_INT(vm, r));
             DISPATCH();
         }
+        // Inline-double fast path. Takes any mix of int/double on either
+        // side (inline or heap) and produces an inline V_DOUBLE_VAL.
+        if (valueLooksLikeNumber(va) && valueLooksLikeNumber(vb))
+        {
+            double r = valueAsNumber(va) + valueAsNumber(vb);
+            sp -= 2;
+            lpush(V_DOUBLE_VAL(r));
+            DISPATCH();
+        }
         MyMoObject *b = pop(vm);
         MyMoObject *a = pop(vm);
         if (IS_INSTANCE(a))
@@ -1009,6 +1047,13 @@ int runMVM(MVM *vm)
                 lpush(V_INT_VAL((int32_t)r));
             else
                 lpushObj(NEW_INT(vm, r));
+            DISPATCH();
+        }
+        if (valueLooksLikeNumber(va) && valueLooksLikeNumber(vb))
+        {
+            double r = valueAsNumber(va) - valueAsNumber(vb);
+            sp -= 2;
+            lpush(V_DOUBLE_VAL(r));
             DISPATCH();
         }
         MyMoObject *b = pop(vm);
@@ -1048,6 +1093,13 @@ int runMVM(MVM *vm)
                 lpushObj(NEW_INT(vm, r));
             DISPATCH();
         }
+        if (valueLooksLikeNumber(va) && valueLooksLikeNumber(vb))
+        {
+            double r = valueAsNumber(va) * valueAsNumber(vb);
+            sp -= 2;
+            lpush(V_DOUBLE_VAL(r));
+            DISPATCH();
+        }
         MyMoObject *b = pop(vm);
         MyMoObject *a = pop(vm);
         if (IS_INSTANCE(a))
@@ -1063,6 +1115,42 @@ int runMVM(MVM *vm)
     OP_DIV:
     {
         u32 inplace = ReadByte();
+        Value vb = lpeek(0);
+        Value va = lpeek(1);
+        // MyMo's `/` returns int when both operands are int and the
+        // result is integer-valued; otherwise it returns double
+        // (mirrors operations.c::division). Two fast paths preserve
+        // that, both with an explicit zero-denominator guard.
+        if (valueLooksLikeInt(va) && valueLooksLikeInt(vb))
+        {
+            long b_val = valueToLong(vb);
+            if (b_val == 0)
+            {
+                runtimeError(vm, "ZeroDivisionError: division by zero.");
+                return RUNTIME_ERROR;
+            }
+            long a_val = valueToLong(va);
+            double r = (double)a_val / (double)b_val;
+            sp -= 2;
+            if (r == (long)r && r >= INT32_MIN && r <= INT32_MAX)
+                lpush(V_INT_VAL((int32_t)r));
+            else
+                lpush(V_DOUBLE_VAL(r));
+            DISPATCH();
+        }
+        if (valueLooksLikeNumber(va) && valueLooksLikeNumber(vb))
+        {
+            double bn = valueAsNumber(vb);
+            if (bn == 0.0)
+            {
+                runtimeError(vm, "ZeroDivisionError: division by zero.");
+                return RUNTIME_ERROR;
+            }
+            double r = valueAsNumber(va) / bn;
+            sp -= 2;
+            lpush(V_DOUBLE_VAL(r));
+            DISPATCH();
+        }
         MyMoObject *b = pop(vm);
         MyMoObject *a = pop(vm);
         if (IS_INSTANCE(a))
@@ -1716,6 +1804,18 @@ int runMVM(MVM *vm)
             push(vm, value);
             DISPATCH();
         }
+        else if (IS_DICT(peek(vm, 1)))
+        {
+            // JS-style dot-write: `d.status = v` is sugar for
+            // `d["status"] = v`. The property name is already a
+            // string in the constant pool.
+            MyMoDict *dict = AS_DICT(peek(vm, 1));
+            setEntry(vm, dict, ReadObject(), peek(vm, 0));
+            MyMoObject *value = pop(vm);
+            pop(vm);
+            push(vm, value);
+            DISPATCH();
+        }
         else if (IS_BUILTIN_CLASS(peek(vm, 1)))
         {
             runtimeError(vm, "TypeError: can't set attributes of built-in/extension type 'object'");
@@ -1860,6 +1960,41 @@ int runMVM(MVM *vm)
             runtimeError(vm, "AttributeError: built-in/extension type '%s' has no attribute '%s'.", klass->name->value, STRING_VAL(variable));
             return RUNTIME_ERROR;
         }
+        case OBJ_DICT:
+        {
+            // JS-style dot-read: `r.status` is sugar for `r["status"]`.
+            // If a built-in dict class is registered, fall through to
+            // its method table when no such key exists; otherwise
+            // just error out cleanly (dict methods aren't currently
+            // registered in vm->builtInClasses[OBJ_DICT]).
+            MyMoDict *dict = AS_DICT(peek(vm, 0));
+            MyMoObject *variable = ReadObject();
+            MyMoObject *value = getEntry(vm, dict, variable);
+            if (value)
+            {
+                if (!agp)
+                    pop(vm); // pop the dict
+                push(vm, value);
+                if (agp)
+                    agp = 0;
+                DISPATCH();
+            }
+            if (vm->builtInClasses[OBJ_DICT])
+            {
+                MyMoObject *fn = getEntry(vm, vm->builtInClasses[OBJ_DICT]->methods, variable);
+                if (fn)
+                {
+                    MyMoObject *self = pop(vm); // pop the dict
+                    MyMoBuiltInFunction *function = AS_BUILTIN_FUNCTION(fn);
+                    function->self = self;
+                    push(vm, fn);
+                    if (agp) agp = 0;
+                    DISPATCH();
+                }
+            }
+            runtimeError(vm, "KeyError: dict has no key '%s'.", STRING_VAL(variable));
+            return RUNTIME_ERROR;
+        }
         default:
         {
             MyMoObject *self = pop(vm);
@@ -1876,6 +2011,79 @@ int runMVM(MVM *vm)
             return RUNTIME_ERROR;
         }
         }
+    }
+    OP_OGETP:
+    {
+        // Optional chain `r?.prop`. Short-circuits to Nil in the two
+        // cases where a normal `.` would explode for ergonomic use:
+        //   1. receiver is Nil (classic JS `obj?.x` when obj is null)
+        //   2. receiver is a dict and the key is missing (so users
+        //      can chain through optional fields in JSON-shaped data
+        //      without first guarding every step)
+        // For instances / classes / modules / etc. it falls back to
+        // the regular OP_GETP path — `?.` is not a blanket "make all
+        // errors disappear" operator.
+        MyMoObject *recv = peek(vm, 0);
+        if (IS_NIL(recv))
+        {
+            ReadObject(); // skip property name
+            pop(vm);      // drop the Nil receiver
+            push(vm, NEW_NIL);
+            DISPATCH();
+        }
+        if (recv->type == OBJ_DICT)
+        {
+            MyMoDict *dict = AS_DICT(recv);
+            MyMoObject *variable = ReadObject();
+            MyMoObject *value = getEntry(vm, dict, variable);
+            pop(vm); // drop receiver
+            push(vm, value ? value : NEW_NIL);
+            DISPATCH();
+        }
+        goto OP_GETP;
+    }
+    OP_IS:
+    {
+        // Python-style `is`: identity for objects, inline-tag
+        // equality otherwise. Bit-pattern equality covers the inline
+        // singletons (V_NIL_VAL, V_TRUE_VAL, V_FALSE_VAL, V_INT_VAL,
+        // V_DOUBLE_VAL) and same-pointer object identity in one
+        // check. Cross-form (inline tag vs boxed singleton) needs
+        // explicit handling for nil and bool because the language
+        // freely round-trips them through dict storage as heap
+        // singletons — same mechanism the `==` operator uses via
+        // valuesEqual's valueIsNilAny / valueIsBoolAny branches.
+        // After step 1.5b deletes MyMoNil / MyMoBool the cross-form
+        // branches become dead.
+        u32 inplace = ReadByte();
+        Value vb = popV(vm);
+        Value va = popV(vm);
+        bool result = (va == vb);
+        if (!result)
+        {
+            bool a_nil = V_IS_NIL(va)
+                || (V_IS_OBJ(va) && V_AS_OBJ(va) && V_AS_OBJ(va)->type == OBJ_NIL);
+            bool b_nil = V_IS_NIL(vb)
+                || (V_IS_OBJ(vb) && V_AS_OBJ(vb) && V_AS_OBJ(vb)->type == OBJ_NIL);
+            if (a_nil && b_nil) { result = true; }
+            else
+            {
+                int ab = V_IS_TRUE(va)  ? 1
+                       : V_IS_FALSE(va) ? 0
+                       : (V_IS_OBJ(va) && V_AS_OBJ(va) && V_AS_OBJ(va)->type == OBJ_BOOL)
+                             ? (((MyMoBool *)V_AS_OBJ(va))->value ? 1 : 0)
+                             : -1;
+                int bb = V_IS_TRUE(vb)  ? 1
+                       : V_IS_FALSE(vb) ? 0
+                       : (V_IS_OBJ(vb) && V_AS_OBJ(vb) && V_AS_OBJ(vb)->type == OBJ_BOOL)
+                             ? (((MyMoBool *)V_AS_OBJ(vb))->value ? 1 : 0)
+                             : -1;
+                if (ab >= 0 && ab == bb) result = true;
+            }
+        }
+        if (inplace) result = !result;
+        push(vm, NEW_BOOL(result));
+        DISPATCH();
     }
     OP_DELP:
         DISPATCH();

@@ -24,7 +24,10 @@ void integer_(Compiler *compiler, bool canAssign)
 void double_(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);
-    emitConstant(compiler, (NEW_DOUBLE(compiler->parser->vm, strtod(compiler->parser->previous.token, NULL))));
+    // Doubles are stored directly in the NaN-boxed Value (any non-QNaN
+    // bit pattern). Skip the heap MyMoDouble entirely for literals.
+    double d = strtod(compiler->parser->previous.token, NULL);
+    emitConstantV(compiler, V_DOUBLE_VAL(d));
 }
 
 void string_(Compiler *compiler, bool canAssign)
@@ -59,6 +62,7 @@ void unary(Compiler *compiler, bool canAssign)
     switch (operatorType)
     {
     case EXCMARK:
+    case NOT:
         emitByte(compiler, OP_NOT);
         break;
     case MINUS:
@@ -87,6 +91,12 @@ void binary(Compiler *compiler, bool canAssign)
         break;
     case DEQUAL:
         emitBytes(compiler, OP_EQUAL, inplace);
+        break;
+    case IS:
+        // Handled in isOp() below — never emitted here because the
+        // parse rule for IS uses a custom infix that peeks `not`
+        // BEFORE parsing the RHS (so `is not Nil` doesn't get parsed
+        // as `is (not Nil)`).
         break;
     case GREATER:
         emitBytes(compiler, OP_GREATER, inplace);
@@ -287,6 +297,18 @@ bool assign(Compiler *compiler, bool canAssign, u8 set, u8 get, u8 name)
     return false;
 }
 
+// Infix `is` (with optional `not`). Peeks the next token for `not`
+// before parsing the RHS so that `is not Nil` reads as a single
+// identity check, not `is (not Nil)`. The VM's OP_IS handler takes a
+// one-byte negation flag and produces the final bool directly.
+void isOp(Compiler *compiler, bool canAssign)
+{
+    UNUSED(canAssign);
+    int negate = matchToken(compiler, NOT) ? 1 : 0;
+    parsePrecedence(compiler, (Precedence)(PREC_EQUALITY + 1));
+    emitBytes(compiler, OP_IS, (u32)negate);
+}
+
 void dot(Compiler *compiler, bool canAssign)
 {
     consumeToken(compiler, NAME, "Expect property name after '.'.");
@@ -295,6 +317,17 @@ void dot(Compiler *compiler, bool canAssign)
     {
         emitBytes(compiler, OP_GETP, name);
     }
+}
+
+// JS-style optional chaining: `r?.prop`. If the receiver is Nil, the
+// whole access short-circuits to Nil; otherwise it behaves like `.`.
+// Assignment is intentionally not supported (`r?.x = 1` would be a
+// silent no-op when r is Nil, which is usually a bug).
+void optDot(Compiler *compiler, bool canAssign)
+{
+    consumeToken(compiler, NAME, "Expect property name after '?.'.");
+    u32 name = identifierConstant(compiler, &compiler->parser->previous);
+    emitBytes(compiler, OP_OGETP, name);
 }
 
 // Resolve an identifier to a function-arg slot if we're inside a function
