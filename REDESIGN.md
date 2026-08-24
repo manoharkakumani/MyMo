@@ -152,10 +152,26 @@ green):
   ~97 call sites; deferred to a dedicated cleanup pass that doesn't
   risk subtle regressions in cold paths, same as the `MyMoInt`
   deletion in 1.6 partial.
-- [ ] **1.5b** Delete `MyMoNil` / `MyMoBool` entirely. Sweep the
-  ~97 sites using `NEW_BOOL` / `NEW_NIL` / `IS_BOOL` / `IS_NIL` /
-  `BOOL_VAL` / `AS_BOOL`. Most are slow paths (operator overload,
-  cache I/O, module helpers) that should switch to inline forms.
+- [~] **1.5b (partial)** VM hot-path Nil/Bool producers migrated to
+  inline. `OP_NOT`, `OP_EQUAL` (fast + slow paths), `OP_GREATER`
+  (all 4 paths), `OP_LESS` (all 4 paths), `OP_QGETP` (2 sites),
+  `OP_IS`, and the try/catch handler fallback now push `V_BOOL_VAL`
+  / `V_NIL_VAL` directly instead of `NEW_BOOL` / `NEW_NIL`. 15 sites
+  in `vm.c`. Consumers either already understand inline tags
+  (`isFalseyV` in OP_JIF, `valuesEqual` cross-form branches) or
+  round-trip through `valueToBoxedObject` → heap singleton (legacy
+  `pop()` → `MyMoObject *`), so no semantic change. 19/19 tests
+  green; bench within noise.
+- [ ] **1.5b (rest)** Builtin functions returning `NEW_BOOL` /
+  `NEW_NIL` (e.g. `dict.has_key`, `dict.pop`, `fiber.alive`, the
+  operator-overload fallback in `operations.c`) still produce heap
+  singletons. Migrate by changing the builtin signature from
+  `MyMoObject *fn(...)` to `Value fn(...)` and pushing inline. That
+  shifts the entire C-API surface and is its own diff.
+- [ ] **1.5b (final)** Delete `MyMoNil` / `MyMoBool` structs and the
+  `NilObject` / `TrueBool` / `FalseBool` global singletons. Drop the
+  cross-form branches in `valuesEqual` (`valueIsNilAny`,
+  `valueIsBoolAny`) and `OP_IS`. ~36 remaining cold-path sites.
 - [x] **1.6 (partial)** Arithmetic OPs (OP_ADD/SUB/MUL/LESS/GREATER) all
   produce inline V_INT_VAL results — heap-int fallback removed from the
   hot path. Hottest path is `V_IS_INT(va) && V_IS_INT(vb)` — three

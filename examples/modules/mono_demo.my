@@ -76,7 +76,7 @@ fn boom(req):
 fn nf(req):
     json(req, 404, {"error": "route not found", "path": req["path"]})
 
-get("/",              home)
+get("/",              req => text(req, 200, "MyMo + mono. Try /todos\n"))
 get("/todos",         list_todos)
 post("/todos",        create_todo)
 get("/todos/:id",     show_todo)

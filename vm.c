@@ -894,7 +894,7 @@ int runMVM(MVM *vm)
         {
             OperatorOverLoad(a, NULL, "!");
         }
-        push(vm, NEW_BOOL(isFalsey(a)));
+        pushV(vm, V_BOOL_VAL(isFalsey(a)));
         DISPATCH();
     }
     OP_DUP:
@@ -927,7 +927,7 @@ int runMVM(MVM *vm)
         {
             popV(vm); popV(vm);
             bool eq = valuesEqual(va, vb);
-            push(vm, NEW_BOOL(eq));
+            pushV(vm, V_BOOL_VAL(eq));
             DISPATCH();
         }
         // Slow path: instance with __eq__/__ne__ overload. Fall through to
@@ -937,7 +937,7 @@ int runMVM(MVM *vm)
         MyMoObject *method = getMethod(vm, a, inplace ? "!=" : "==");
         if (IS_EMPTY(method))
         {
-            push(vm, NEW_BOOL(isEqual(a, b)));
+            pushV(vm, V_BOOL_VAL(isEqual(a, b)));
             DISPATCH();
         }
         if (inplace)
@@ -965,7 +965,7 @@ int runMVM(MVM *vm)
             int32_t a = V_AS_INT(va);
             int32_t b = V_AS_INT(vb);
             sp -= 2;
-            lpushObj(NEW_BOOL(a > b));
+            lpush(V_BOOL_VAL(a > b));
             DISPATCH();
         }
         if (valueLooksLikeInt(va) && valueLooksLikeInt(vb))
@@ -973,7 +973,7 @@ int runMVM(MVM *vm)
             long a = valueToLong(va);
             long b = valueToLong(vb);
             sp -= 2;
-            lpushObj(NEW_BOOL(a > b));
+            lpush(V_BOOL_VAL(a > b));
             DISPATCH();
         }
         if (valueLooksLikeNumber(va) && valueLooksLikeNumber(vb))
@@ -981,7 +981,7 @@ int runMVM(MVM *vm)
             double a = valueAsNumber(va);
             double b = valueAsNumber(vb);
             sp -= 2;
-            lpushObj(NEW_BOOL(a > b));
+            lpush(V_BOOL_VAL(a > b));
             DISPATCH();
         }
         MyMoObject *b = pop(vm);
@@ -996,7 +996,7 @@ int runMVM(MVM *vm)
             runtimeError(vm, "Operands must be numbers.");
             goto _runtime_error;
         }
-        push(vm, NEW_BOOL(NUMBER_VAL(a) > NUMBER_VAL(b)));
+        pushV(vm, V_BOOL_VAL(NUMBER_VAL(a) > NUMBER_VAL(b)));
         DISPATCH();
     }
     OP_LESS:
@@ -1010,7 +1010,7 @@ int runMVM(MVM *vm)
             int32_t a = V_AS_INT(va);
             int32_t b = V_AS_INT(vb);
             sp -= 2;
-            lpushObj(NEW_BOOL(a < b));
+            lpush(V_BOOL_VAL(a < b));
             DISPATCH();
         }
         if (valueLooksLikeInt(va) && valueLooksLikeInt(vb))
@@ -1018,7 +1018,7 @@ int runMVM(MVM *vm)
             long a = valueToLong(va);
             long b = valueToLong(vb);
             sp -= 2;
-            lpushObj(NEW_BOOL(a < b));
+            lpush(V_BOOL_VAL(a < b));
             DISPATCH();
         }
         if (valueLooksLikeNumber(va) && valueLooksLikeNumber(vb))
@@ -1026,7 +1026,7 @@ int runMVM(MVM *vm)
             double a = valueAsNumber(va);
             double b = valueAsNumber(vb);
             sp -= 2;
-            lpushObj(NEW_BOOL(a < b));
+            lpush(V_BOOL_VAL(a < b));
             DISPATCH();
         }
         MyMoObject *b = pop(vm);
@@ -1041,7 +1041,7 @@ int runMVM(MVM *vm)
             runtimeError(vm, "Operands must be numbers.");
             goto _runtime_error;
         }
-        push(vm, NEW_BOOL(NUMBER_VAL(a) < NUMBER_VAL(b)));
+        pushV(vm, V_BOOL_VAL(NUMBER_VAL(a) < NUMBER_VAL(b)));
         DISPATCH();
     }
     OP_BAND:
@@ -2167,7 +2167,7 @@ int runMVM(MVM *vm)
         {
             ReadObject(); // skip property name
             pop(vm);      // drop the Nil receiver
-            push(vm, NEW_NIL);
+            pushV(vm, V_NIL_VAL);
             DISPATCH();
         }
         if (recv->type == OBJ_DICT)
@@ -2203,7 +2203,7 @@ int runMVM(MVM *vm)
                 }
             }
             pop(vm);
-            push(vm, NEW_NIL);
+            pushV(vm, V_NIL_VAL);
             DISPATCH();
         }
         goto OP_GETP;
@@ -2248,7 +2248,7 @@ int runMVM(MVM *vm)
             }
         }
         if (inplace) result = !result;
-        push(vm, NEW_BOOL(result));
+        pushV(vm, V_BOOL_VAL(result));
         DISPATCH();
     }
     OP_LAPPEND:
@@ -2833,7 +2833,7 @@ _runtime_error:
         vm->fiber->exception = NULL;
         ip = frame->ip;
         sp = vm->fiber->stack.values + vm->fiber->stack.count;
-        lpushObj(exc ? exc : NEW_NIL);
+        if (exc) lpushObj(exc); else lpush(V_NIL_VAL);
         DISPATCH();
     }
 #undef ReadByte
