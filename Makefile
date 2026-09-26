@@ -13,7 +13,11 @@
 
 CC          ?= cc
 CSTD        ?= -std=c11
-WARN        := -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function
+# incompatible-pointer-types is an error: passing one array struct where
+# another is expected (e.g. ValueArray vs MyMoObjectArray) compiles as a
+# mere warning otherwise, and reads garbage at runtime.
+WARN        := -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function \
+               -Werror=incompatible-pointer-types
 COMMON      := $(CSTD) $(WARN) -fno-strict-aliasing
 RELEASE     := -O3 -DNDEBUG
 DEBUG       := -O0 -g3 -DDEBUG_PRINT_CODE -DDEBUG_STACK_TRACE

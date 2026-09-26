@@ -78,12 +78,29 @@ static int enc_string(Buf *b, const char *s, int len)
 
 static int enc_value(Buf *b, MyMoObject *v);
 
-static int enc_array(Buf *b, MyMoObjectArray *arr)
+// Encode a NaN-boxed Value: inline nil/bool/int/double directly, objects
+// through enc_value.
+static int enc_value_v(Buf *b, Value v)
+{
+    char num[32];
+    if (V_IS_OBJ(v))   return enc_value(b, V_AS_OBJ(v));
+    if (V_IS_NIL(v))   return buf_puts(b, "null", 4);
+    if (V_IS_TRUE(v))  return buf_puts(b, "true", 4);
+    if (V_IS_FALSE(v)) return buf_puts(b, "false", 5);
+    if (V_IS_INT(v)) {
+        int n = snprintf(num, sizeof(num), "%d", V_AS_INT(v));
+        return buf_puts(b, num, (size_t)n);
+    }
+    int n = snprintf(num, sizeof(num), "%.17g", V_AS_DOUBLE(v));
+    return buf_puts(b, num, (size_t)n);
+}
+
+static int enc_array(Buf *b, ValueArray *arr)
 {
     if (buf_putc(b, '[')) return -1;
     for (int i = 0; i < arr->count; i++) {
         if (i > 0) buf_putc(b, ',');
-        if (enc_value(b, arr->objects[i])) return -1;
+        if (enc_value_v(b, arr->values[i])) return -1;
     }
     return buf_putc(b, ']');
 }
@@ -101,24 +118,7 @@ static int enc_dict(Buf *b, MyMoDict *d)
         MyMoString *k = (MyMoString *)e->key;
         if (enc_string(b, k->value, k->length)) return -1;
         buf_putc(b, ':');
-        // Value can be inline (Value) — go through V_*
-        if (V_IS_INT(e->value)) {
-            char num[32];
-            int n = snprintf(num, sizeof(num), "%d", V_AS_INT(e->value));
-            buf_puts(b, num, (size_t)n);
-        } else if (V_IS_OBJ(e->value)) {
-            if (enc_value(b, V_AS_OBJ(e->value))) return -1;
-        } else if (V_IS_NIL(e->value)) {
-            buf_puts(b, "null", 4);
-        } else if (V_IS_TRUE(e->value)) {
-            buf_puts(b, "true", 4);
-        } else if (V_IS_FALSE(e->value)) {
-            buf_puts(b, "false", 5);
-        } else if (V_IS_DOUBLE(e->value)) {
-            char num[32];
-            int n = snprintf(num, sizeof(num), "%.17g", V_AS_DOUBLE(e->value));
-            buf_puts(b, num, (size_t)n);
-        }
+        if (enc_value_v(b, e->value)) return -1;
     }
     return buf_putc(b, '}');
 }
@@ -286,7 +286,7 @@ static MyMoObject *parse_array(Parser *p)
         p_skipws(p);
         MyMoObject *v = parse_value(p);
         if (!v) return NULL;
-        writeMyMoObjectArray(p->vm, &list->values, v);
+        writeValueArrayObject(p->vm, &list->values, v);
         p_skipws(p);
         if (p->pos < p->len && p->s[p->pos] == ',') { p->pos++; continue; }
         if (p->pos < p->len && p->s[p->pos] == ']') { p->pos++; return AS_OBJECT(list); }

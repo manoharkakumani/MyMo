@@ -85,7 +85,7 @@ void freeObject(MVM *vm, MyMoObject *object)
     }
     case OBJ_TUPLE:
     {
-        freeMyMoObjectArray(vm, &AS_TUPLE(object)->values);
+        freeValueArray(vm, &AS_TUPLE(object)->values);
         Free(vm, MyMoTuple, object);
         break;
     }
@@ -107,7 +107,7 @@ void freeObject(MVM *vm, MyMoObject *object)
     case OBJ_LIST:
     {
         MyMoList *list = AS_LIST(object);
-        freeMyMoObjectArray(vm, &list->values);
+        freeValueArray(vm, &list->values);
         Free(vm, MyMoList, object);
         break;
     }

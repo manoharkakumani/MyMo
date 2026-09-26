@@ -73,6 +73,12 @@ static void markArray(MVM *vm, MyMoObjectArray *array)
         markObject(vm, array->objects[i]);
 }
 
+static void markValues(MVM *vm, ValueArray *array)
+{
+    for (int i = 0; i < array->count; i++)
+        markValue(vm, array->values[i]);
+}
+
 static void markFrame(MVM *vm, CallFrame *frame)
 {
     if (frame == NULL || frame->gcEpoch == vm->gcEpoch)
@@ -92,10 +98,10 @@ static void blacken(MVM *vm, MyMoObject *object)
     switch (object->type)
     {
     case OBJ_LIST:
-        markArray(vm, &AS_LIST(object)->values);
+        markValues(vm, &AS_LIST(object)->values);
         break;
     case OBJ_TUPLE:
-        markArray(vm, &AS_TUPLE(object)->values);
+        markValues(vm, &AS_TUPLE(object)->values);
         break;
     case OBJ_DICT:
         markDictContents(vm, AS_DICT(object));

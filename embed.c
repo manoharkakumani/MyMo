@@ -198,7 +198,7 @@ Value mymo_list(MVM *vm)
 void mymo_list_append(MVM *vm, Value list, Value item)
 {
     if (mymo_val_is_list(list))
-        writeMyMoObjectArray(vm, &AS_LIST(V_AS_OBJ(list))->values, valueToBoxedObject(vm, item));
+        writeValueArrayObject(vm, &AS_LIST(V_AS_OBJ(list))->values, valueToBoxedObject(vm, item));
 }
 
 Value mymo_dict(MVM *vm)
@@ -285,10 +285,10 @@ Value mymo_val_list_get(Value list, int index)
 {
     if (!mymo_val_is_list(list))
         return V_NIL_VAL;
-    MyMoObjectArray *values = &AS_LIST(V_AS_OBJ(list))->values;
+    ValueArray *values = &AS_LIST(V_AS_OBJ(list))->values;
     if (index < 0 || index >= values->count)
         return V_NIL_VAL;
-    return objectToValue(values->objects[index]);
+    return values->values[index];
 }
 
 bool mymo_val_dict_get(MVM *vm, Value dict, const char *key, Value *out)

@@ -2,6 +2,7 @@
 #define __ITER_H__
 
 #include "object.h"
+#include "../value.h"
 
 #define AS_ITER(object) ((MyMoIter *)object)
 #define IS_ITER(object) object->type == OBJ_ITER
@@ -15,7 +16,7 @@ typedef struct MyMoIter
 } MyMoIter;
 
 MyMoIter *newIter(MVM *vm, MyMoObject *object);
-MyMoObject *nextIter(MVM *vm, MyMoIter *object);
+Value nextIter(MVM *vm, MyMoIter *object);
 
 void printIter(MyMoIter *object);
 #endif

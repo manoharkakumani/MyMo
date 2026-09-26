@@ -8,7 +8,7 @@
 MyMoList *newList(MVM *vm)
 {
     MyMoList *list = AllocateObject(vm, MyMoList, OBJ_LIST);
-    initMyMoObjectArray(vm, &list->values);
+    initValueArray(vm, &list->values);
     return list;
 }
 
@@ -17,32 +17,15 @@ void printList(MyMoList *list)
     printf("[");
     for (int i = 0; i < list->values.count; i++)
     {
-        MyMoObject *object = list->values.objects[i];
-        if (object == AS_OBJECT(list))
-        {
+        Value v = list->values.values[i];
+        if (V_IS_OBJ(v) && V_AS_OBJ(v) == AS_OBJECT(list))
             printf("[...]");
-        }
         else
-        {
-            printObject(object);
-        }
+            printValue(v);
         if (i != list->values.count - 1)
             printf(", ");
     }
     printf("]");
-}
-
-MyMoObject *getValueByIndex(MyMoList *list, uint index)
-{
-    if (list->values.count >= index)
-    {
-        printf("Error");
-        return AS_OBJECT(NEW_NIL);
-    }
-    else
-    {
-        return list->values.objects[list->values.count - index - 1];
-    }
 }
 
 Value newListMethod(MVM *vm, uint argc, MyMoObject *args[])
@@ -57,7 +40,7 @@ Value newListMethod(MVM *vm, uint argc, MyMoObject *args[])
         MyMoList *list = newList(vm);
         for (int i = 0; i < argc; i++)
         {
-            writeMyMoObjectArray(vm, &list->values, args[i]);
+            writeValueArrayObject(vm, &list->values, args[i]);
         }
         for (int i = 0; i < argc; i++)
         {
@@ -74,7 +57,7 @@ Value newListMethod(MVM *vm, uint argc, MyMoObject *args[])
             MyMoList *list = AS_LIST(object);
             for (int i = 0; i < list->values.count; i++)
             {
-                writeMyMoObjectArray(vm, &copyList->values, list->values.objects[i]);
+                writeValueArray(vm, &copyList->values, list->values.values[i]);
             }
             return objectToValue(AS_OBJECT(copyList));
         }
@@ -84,7 +67,7 @@ Value newListMethod(MVM *vm, uint argc, MyMoObject *args[])
             MyMoList *list = newList(vm);
             for (int i = 0; i < tuple->values.count; i++)
             {
-                writeMyMoObjectArray(vm, &list->values, tuple->values.objects[i]);
+                writeValueArray(vm, &list->values, tuple->values.values[i]);
             }
             return objectToValue(AS_OBJECT(list));
         }
@@ -94,14 +77,14 @@ Value newListMethod(MVM *vm, uint argc, MyMoObject *args[])
             MyMoList *list = newList(vm);
             for (int i = 0; i < string->length; i++)
             {
-                writeMyMoObjectArray(vm, &list->values, NEW_STRING(vm, &string->value[i], 1));
+                writeValueArrayObject(vm, &list->values, NEW_STRING(vm, &string->value[i], 1));
             }
             return objectToValue(AS_OBJECT(list));
         }
         else
         {
             MyMoList *list = newList(vm);
-            writeMyMoObjectArray(vm, &list->values, object);
+            writeValueArrayObject(vm, &list->values, object);
             return objectToValue(AS_OBJECT(list));
         }
     }
@@ -137,7 +120,7 @@ Value appendListMethod(MVM *vm, uint argc, MyMoObject *args[])
         return V_EMPTY_VAL;
     }
     MyMoList *list = AS_LIST(function->self);
-    writeMyMoObjectArray(vm, &list->values, pop(vm));
+    writeValueArrayObject(vm, &list->values, pop(vm));
     return V_NIL_VAL;
 }
 
@@ -158,7 +141,7 @@ Value copyListMethod(MVM *vm, uint argc, MyMoObject *args[])
     MyMoList *list = AS_LIST(function->self);
     for (int i = 0; i < list->values.count; i++)
     {
-        writeMyMoObjectArray(vm, &copyList->values, list->values.objects[i]);
+        writeValueArray(vm, &copyList->values, list->values.values[i]);
     }
     return objectToValue(AS_OBJECT(copyList));
 }
@@ -176,11 +159,11 @@ Value addListMethod(MVM *vm, uint argc, MyMoObject *args[])
     
     for (int i = 0; i < aList->values.count; i++)
     {
-        writeMyMoObjectArray(vm, &resultList->values, aList->values.objects[i]);
+        writeValueArray(vm, &resultList->values, aList->values.values[i]);
     }
     for (int i = 0; i < bList->values.count; i++)
     {
-        writeMyMoObjectArray(vm, &resultList->values, bList->values.objects[i]);
+        writeValueArray(vm, &resultList->values, bList->values.values[i]);
     }
     return objectToValue(AS_OBJECT(resultList));
 }
@@ -194,10 +177,11 @@ static int listIndex(MyMoObject *index, int count)
     return (i < 0 || i >= count) ? -1 : (int)i;
 }
 
-static int findInArray(MyMoObjectArray *array, MyMoObject *value)
+static int findInArray(ValueArray *array, MyMoObject *value)
 {
+    Value target = objectToValue(value);
     for (int i = 0; i < array->count; i++)
-        if (isEqual(array->objects[i], value))
+        if (valuesEqual(array->values[i], target))
             return i;
     return -1;
 }
@@ -206,7 +190,7 @@ Value popListMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     MyMoObject *self = methodEnter(vm, "pop", argc, 0, 1);
     if (!self) return V_EMPTY_VAL;
-    MyMoObjectArray *values = &AS_LIST(self)->values;
+    ValueArray *values = &AS_LIST(self)->values;
     if (values->count == 0)
     {
         runtimeError(vm, "IndexError: pop from empty list");
@@ -221,10 +205,10 @@ Value popListMethod(MVM *vm, uint argc, MyMoObject *args[])
             return V_EMPTY_VAL;
         }
     }
-    MyMoObject *item = values->objects[i];
-    memmove(&values->objects[i], &values->objects[i + 1], sizeof(MyMoObject *) * (values->count - i - 1));
+    Value item = values->values[i];
+    memmove(&values->values[i], &values->values[i + 1], sizeof(Value) * (values->count - i - 1));
     values->count--;
-    return objectToValue(item);
+    return item;
 }
 
 Value insertListMethod(MVM *vm, uint argc, MyMoObject *args[])
@@ -236,14 +220,15 @@ Value insertListMethod(MVM *vm, uint argc, MyMoObject *args[])
         runtimeError(vm, "TypeError: insert() index must be an int");
         return V_EMPTY_VAL;
     }
-    MyMoObjectArray *values = &AS_LIST(self)->values;
+    ValueArray *values = &AS_LIST(self)->values;
     long i = INT_VAL(args[0]);
     if (i < 0) i += values->count;
     if (i < 0) i = 0;
     if (i > values->count) i = values->count;
-    writeMyMoObjectArray(vm, values, args[1]); // grow by one
-    memmove(&values->objects[i + 1], &values->objects[i], sizeof(MyMoObject *) * (values->count - 1 - i));
-    values->objects[i] = args[1];
+    Value item = objectToValue(args[1]);
+    writeValueArray(vm, values, item); // grow by one
+    memmove(&values->values[i + 1], &values->values[i], sizeof(Value) * (values->count - 1 - i));
+    values->values[i] = item;
     return V_NIL_VAL;
 }
 
@@ -251,14 +236,14 @@ Value removeListMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     MyMoObject *self = methodEnter(vm, "remove", argc, 1, 1);
     if (!self) return V_EMPTY_VAL;
-    MyMoObjectArray *values = &AS_LIST(self)->values;
+    ValueArray *values = &AS_LIST(self)->values;
     int i = findInArray(values, args[0]);
     if (i < 0)
     {
         runtimeError(vm, "ValueError: list.remove(x): x not in list");
         return V_EMPTY_VAL;
     }
-    memmove(&values->objects[i], &values->objects[i + 1], sizeof(MyMoObject *) * (values->count - i - 1));
+    memmove(&values->values[i], &values->values[i + 1], sizeof(Value) * (values->count - i - 1));
     values->count--;
     return V_NIL_VAL;
 }
@@ -287,12 +272,12 @@ Value reverseListMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     MyMoObject *self = methodEnter(vm, "reverse", argc, 0, 0);
     if (!self) return V_EMPTY_VAL;
-    MyMoObjectArray *values = &AS_LIST(self)->values;
+    ValueArray *values = &AS_LIST(self)->values;
     for (int i = 0, j = values->count - 1; i < j; i++, j--)
     {
-        MyMoObject *tmp = values->objects[i];
-        values->objects[i] = values->objects[j];
-        values->objects[j] = tmp;
+        Value tmp = values->values[i];
+        values->values[i] = values->values[j];
+        values->values[j] = tmp;
     }
     return V_NIL_VAL;
 }
@@ -314,24 +299,29 @@ Value extendListMethod(MVM *vm, uint argc, MyMoObject *args[])
         runtimeError(vm, "TypeError: extend() expects a list or tuple, got %s", getType(args[0]));
         return V_EMPTY_VAL;
     }
-    MyMoObjectArray *src = IS_LIST(args[0]) ? &AS_LIST(args[0])->values : &AS_TUPLE(args[0])->values;
+    ValueArray *src = IS_LIST(args[0]) ? &AS_LIST(args[0])->values : &AS_TUPLE(args[0])->values;
     int n = src->count; // snapshot: `xs.extend(xs)` must not loop forever
     for (int i = 0; i < n; i++)
-        writeMyMoObjectArray(vm, &AS_LIST(self)->values, src->objects[i]);
+        writeValueArray(vm, &AS_LIST(self)->values, src->values[i]);
     return V_NIL_VAL;
 }
 
 // sort(): numbers (int/double mixed) or strings, ascending. Insertion
 // sort keeps it stable and lets a type mismatch abort cleanly.
-static int compareForSort(MyMoObject *a, MyMoObject *b, bool *ok)
+static bool isStringValue(Value v)
 {
-    if (IS_NUMBER(a) && IS_NUMBER(b))
+    return V_IS_OBJ(v) && V_AS_OBJ(v)->type == OBJ_STRING;
+}
+
+static int compareForSort(Value a, Value b, bool *ok)
+{
+    if (valueLooksLikeNumber(a) && valueLooksLikeNumber(b))
     {
-        double x = NUMBER_VAL(a), y = NUMBER_VAL(b);
+        double x = valueAsNumber(a), y = valueAsNumber(b);
         return (x > y) - (x < y);
     }
-    if (IS_STRING(a) && IS_STRING(b))
-        return compareStrings(AS_STRING(a), AS_STRING(b));
+    if (isStringValue(a) && isStringValue(b))
+        return compareStrings(AS_STRING(V_AS_OBJ(a)), AS_STRING(V_AS_OBJ(b)));
     *ok = false;
     return 0;
 }
@@ -340,18 +330,18 @@ Value sortListMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     MyMoObject *self = methodEnter(vm, "sort", argc, 0, 0);
     if (!self) return V_EMPTY_VAL;
-    MyMoObjectArray *values = &AS_LIST(self)->values;
+    ValueArray *values = &AS_LIST(self)->values;
     bool ok = true;
     for (int i = 1; i < values->count && ok; i++)
     {
-        MyMoObject *key = values->objects[i];
+        Value key = values->values[i];
         int j = i - 1;
-        while (j >= 0 && compareForSort(values->objects[j], key, &ok) > 0 && ok)
+        while (j >= 0 && compareForSort(values->values[j], key, &ok) > 0 && ok)
         {
-            values->objects[j + 1] = values->objects[j];
+            values->values[j + 1] = values->values[j];
             j--;
         }
-        values->objects[j + 1] = key;
+        values->values[j + 1] = key;
     }
     if (!ok)
     {

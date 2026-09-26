@@ -16,12 +16,12 @@ int compareStrings(MyMoString *a, MyMoString *b)
 
 // New sequence holding a's elements followed by b's (list + list,
 // tuple + tuple). Operands are left untouched.
-static void concatArrays(MVM *vm, MyMoObjectArray *out, MyMoObjectArray *a, MyMoObjectArray *b)
+static void concatArrays(MVM *vm, ValueArray *out, ValueArray *a, ValueArray *b)
 {
     for (int i = 0; i < a->count; i++)
-        writeMyMoObjectArray(vm, out, a->objects[i]);
+        writeValueArray(vm, out, a->values[i]);
     for (int i = 0; i < b->count; i++)
-        writeMyMoObjectArray(vm, out, b->objects[i]);
+        writeValueArray(vm, out, b->values[i]);
 }
 
 MyMoObject *addition(MVM *vm, MyMoObject *a, MyMoObject *b)

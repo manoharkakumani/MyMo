@@ -207,13 +207,13 @@ static Value rl_select(MVM *vm, uint argc, MyMoObject *argv[])
     int maxfd = -1;
     for (size_t i = 0; i < (size_t)fds->values.count; i++)
     {
-        MyMoObject *o = fds->values.objects[i];
-        if (o->type != OBJ_INT)
+        Value v = fds->values.values[i];
+        if (!valueLooksLikeInt(v))
         {
-            runtimeError(vm, "runloop.wait_any(): fds[%zu] must be int", i);
+            runtimeError(vm, "runloop.select(): fds[%zu] must be int", i);
             return MYMO_ERROR;
         }
-        int fd = (int)((MyMoInt *)o)->value;
+        int fd = (int)valueToLong(v);
         FD_SET(fd, &rset);
         if (fd > maxfd) maxfd = fd;
     }
@@ -235,7 +235,7 @@ static Value rl_select(MVM *vm, uint argc, MyMoObject *argv[])
     if (n == 0) return objectToValue(mymo_int(vm, -1));
     for (size_t i = 0; i < (size_t)fds->values.count; i++)
     {
-        int fd = (int)((MyMoInt *)fds->values.objects[i])->value;
+        int fd = (int)valueToLong(fds->values.values[i]);
         if (FD_ISSET(fd, &rset)) return objectToValue(mymo_int(vm, (long)i));
     }
     return objectToValue(mymo_int(vm, -1));
@@ -262,14 +262,14 @@ static Value rl_ready(MVM *vm, uint argc, MyMoObject *argv[])
     struct pollfd *pfds = malloc(sizeof(struct pollfd) * (size_t)n);
     for (int i = 0; i < n; i++)
     {
-        MyMoObject *o = fds->values.objects[i];
-        if (o->type != OBJ_INT)
+        Value v = fds->values.values[i];
+        if (!valueLooksLikeInt(v))
         {
             free(pfds);
             runtimeError(vm, "runloop.ready(): fds[%d] must be int", i);
             return MYMO_ERROR;
         }
-        pfds[i].fd = (int)((MyMoInt *)o)->value;
+        pfds[i].fd = (int)valueToLong(v);
         pfds[i].events = POLLIN;
         pfds[i].revents = 0;
     }
@@ -285,7 +285,7 @@ static Value rl_ready(MVM *vm, uint argc, MyMoObject *argv[])
     }
     for (int i = 0; i < n && r > 0; i++)
         if (pfds[i].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))
-            writeMyMoObjectArray(vm, &out->values, fds->values.objects[i]);
+            writeValueArray(vm, &out->values, fds->values.values[i]);
     free(pfds);
     return objectToValue(AS_OBJECT(out));
 #endif

@@ -219,7 +219,7 @@ Value splitStringMethod(MVM *vm, uint argc, MyMoObject *args[])
             int start = i;
             while (i < s->length && !isspace((unsigned char)s->value[i])) i++;
             if (i > start)
-                writeMyMoObjectArray(vm, &out->values, NEW_STRING(vm, s->value + start, i - start));
+                writeValueArrayObject(vm, &out->values, NEW_STRING(vm, s->value + start, i - start));
         }
         return objectToValue(AS_OBJECT(out));
     }
@@ -232,10 +232,10 @@ Value splitStringMethod(MVM *vm, uint argc, MyMoObject *args[])
     int pos = 0;
     for (int i = findSub(s, sep, 0); i >= 0; i = findSub(s, sep, pos))
     {
-        writeMyMoObjectArray(vm, &out->values, NEW_STRING(vm, s->value + pos, i - pos));
+        writeValueArrayObject(vm, &out->values, NEW_STRING(vm, s->value + pos, i - pos));
         pos = i + sep->length;
     }
-    writeMyMoObjectArray(vm, &out->values, NEW_STRING(vm, s->value + pos, s->length - pos));
+    writeValueArrayObject(vm, &out->values, NEW_STRING(vm, s->value + pos, s->length - pos));
     return objectToValue(AS_OBJECT(out));
 }
 
@@ -249,17 +249,18 @@ Value joinStringMethod(MVM *vm, uint argc, MyMoObject *args[])
         runtimeError(vm, "TypeError: join() expects a list or tuple, got %s", getType(args[0]));
         return V_EMPTY_VAL;
     }
-    MyMoObjectArray *items = IS_LIST(args[0]) ? &AS_LIST(args[0])->values : &AS_TUPLE(args[0])->values;
+    ValueArray *items = IS_LIST(args[0]) ? &AS_LIST(args[0])->values : &AS_TUPLE(args[0])->values;
     MyMoString *sep = AS_STRING(self);
     int len = 0;
     for (int i = 0; i < items->count; i++)
     {
-        if (!IS_STRING(items->objects[i]))
+        Value item = items->values[i];
+        if (!V_IS_OBJ(item) || !IS_STRING(V_AS_OBJ(item)))
         {
-            runtimeError(vm, "TypeError: join() item %d is %s, not a string", i, getType(items->objects[i]));
+            runtimeError(vm, "TypeError: join() item %d is %s, not a string", i, getType(valueToBoxedObject(vm, item)));
             return V_EMPTY_VAL;
         }
-        len += AS_STRING(items->objects[i])->length + (i ? sep->length : 0);
+        len += AS_STRING(V_AS_OBJ(item))->length + (i ? sep->length : 0);
     }
     char *buf = New(char, len + 1);
     int n = 0;
@@ -270,7 +271,7 @@ Value joinStringMethod(MVM *vm, uint argc, MyMoObject *args[])
             memcpy(buf + n, sep->value, (size_t)sep->length);
             n += sep->length;
         }
-        MyMoString *item = AS_STRING(items->objects[i]);
+        MyMoString *item = AS_STRING(V_AS_OBJ(items->values[i]));
         memcpy(buf + n, item->value, (size_t)item->length);
         n += item->length;
     }

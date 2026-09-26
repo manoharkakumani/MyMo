@@ -379,7 +379,7 @@ Value dictKeysMethod(MVM *vm, uint argc, MyMoObject *args[])
     {
         Entry *e = &dict->entries[i];
         if (e->key != NULL)
-            writeMyMoObjectArray(vm, &out->values, e->key);
+            writeValueArrayObject(vm, &out->values, e->key);
     }
     return objectToValue(AS_OBJECT(out));
 }
@@ -401,7 +401,7 @@ Value dictValuesMethod(MVM *vm, uint argc, MyMoObject *args[])
         {
             MyMoObject *v = V_IS_OBJ(e->value) ? V_AS_OBJ(e->value)
                                                : valueToBoxedObject(vm, e->value);
-            writeMyMoObjectArray(vm, &out->values, v);
+            writeValueArrayObject(vm, &out->values, v);
         }
     }
     return objectToValue(AS_OBJECT(out));

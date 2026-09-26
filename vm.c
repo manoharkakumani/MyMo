@@ -687,7 +687,7 @@ int runMVM(MVM *vm)
         MyMoList *list = newList(vm);
         for (u32 i = 0; i < count; i++)
         {
-            writeMyMoObjectArray(vm, &list->values, peek(vm, count - i - 1));
+            writeValueArray(vm, &list->values, peekV(vm, count - i - 1));
         }
         for (u32 i = 0; i < count; i++)
         {
@@ -702,7 +702,7 @@ int runMVM(MVM *vm)
         MyMoTuple *tuple = newTuple(vm);
         for (u32 i = 0; i < count; i++)
         {
-            writeMyMoObjectArray(vm, &tuple->values, peek(vm, count - i - 1));
+            writeValueArray(vm, &tuple->values, peekV(vm, count - i - 1));
         }
         for (u32 i = 0; i < count; i++)
         {
@@ -778,11 +778,11 @@ int runMVM(MVM *vm)
             }
             if (indexValue < 0)
             {
-                push(vm, list->values.objects[list->values.count + indexValue]);
+                pushV(vm, list->values.values[list->values.count + indexValue]);
             }
             else
             {
-                push(vm, list->values.objects[indexValue]);
+                pushV(vm, list->values.values[indexValue]);
             }
             break;
         }
@@ -796,11 +796,11 @@ int runMVM(MVM *vm)
             }
             if (indexValue < 0)
             {
-                push(vm, tuple->values.objects[tuple->values.count + indexValue]);
+                pushV(vm, tuple->values.values[tuple->values.count + indexValue]);
             }
             else
             {
-                push(vm, tuple->values.objects[indexValue]);
+                pushV(vm, tuple->values.values[indexValue]);
             }
             break;
         }
@@ -833,7 +833,7 @@ int runMVM(MVM *vm)
             {
                 indexValue += list->values.count;
             }
-            list->values.objects[indexValue] = value;
+            list->values.values[indexValue] = objectToValue(value);
             push(vm, value);
             DISPATCH();
         }
@@ -966,7 +966,7 @@ int runMVM(MVM *vm)
             {
                 for (int i = start; i < end; i += step)
                 {
-                    writeMyMoObjectArray(vm, &list->values, lst->values.objects[i]);
+                    writeValueArray(vm, &list->values, lst->values.values[i]);
                 }
                 push(vm, AS_OBJECT(list));
                 break;
@@ -976,7 +976,7 @@ int runMVM(MVM *vm)
                 start = IS_NIL(sta) ? -1 : start;
                 for (int i = end; i > start; i += step)
                 {
-                    writeMyMoObjectArray(vm, &list->values, lst->values.objects[i]);
+                    writeValueArray(vm, &list->values, lst->values.values[i]);
                 }
                 push(vm, AS_OBJECT(list));
                 break;
@@ -1009,7 +1009,7 @@ int runMVM(MVM *vm)
             {
                 for (int i = start; i < end; i += step)
                 {
-                    writeMyMoObjectArray(vm, &tuple->values, tpl->values.objects[i]);
+                    writeValueArray(vm, &tuple->values, tpl->values.values[i]);
                 }
                 push(vm, AS_OBJECT(tuple));
                 break;
@@ -1019,7 +1019,7 @@ int runMVM(MVM *vm)
                 start = IS_NIL(sta) ? -1 : start;
                 for (int i = end; i > start; i += step)
                 {
-                    writeMyMoObjectArray(vm, &tuple->values, tpl->values.objects[i]);
+                    writeValueArray(vm, &tuple->values, tpl->values.values[i]);
                 }
                 push(vm, AS_OBJECT(tuple));
                 break;
@@ -1636,15 +1636,11 @@ int runMVM(MVM *vm)
     {
         u16 offset = ReadShort();
         MyMoIter *iterator = AS_ITER(peek(vm, 0));
-        MyMoObject *object = nextIter(vm, iterator);
-        if (IS_EMPTY(object))
-        {
+        Value next = nextIter(vm, iterator);
+        if (V_IS_EMPTY(next))
             ip += offset;
-        }
         else
-        {
-            push(vm, object);
-        }
+            pushV(vm, next);
         DISPATCH();
     }
     OP_GETI:
@@ -2522,7 +2518,7 @@ int runMVM(MVM *vm)
             runtimeError(vm, "OP_LAPPEND: expected list under value, got %s.", getType(listObj));
             goto _runtime_error;
         }
-        writeMyMoObjectArray(vm, &AS_LIST(listObj)->values, valueToBoxedObject(vm, v));
+        writeValueArrayObject(vm, &AS_LIST(listObj)->values, valueToBoxedObject(vm, v));
         DISPATCH();
     }
     OP_TOSTRING:

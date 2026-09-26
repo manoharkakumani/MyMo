@@ -77,7 +77,13 @@ static inline bool valueAsBoolBit(Value v) {
     return ((MyMoBool *)V_AS_OBJ(v))->value;
 }
 
+static bool isWildcard(Value v) {
+    return V_IS_OBJ(v) && V_AS_OBJ(v)->type == OBJ_WILDCARD;
+}
+
 bool valuesEqual(Value a, Value b) {
+    // `_` in a case pattern matches anything, inline values included.
+    if (isWildcard(a) || isWildcard(b)) return true;
     // Fast path: identical bit patterns (covers nil, bool, same-tagged-int,
     // same heap pointer, +0.0 == +0.0). Has the IEEE-required quirk that
     // NaN != NaN, which we explicitly preserve.
@@ -111,12 +117,14 @@ bool valuesEqual(Value a, Value b) {
     return false;
 }
 
+// Same spelling as print(): Nil/True/False, doubles with 16 significant
+// digits (like printDouble).
 void printValue(Value v) {
-    if (V_IS_NIL(v))    { printf("nil"); return; }
-    if (V_IS_TRUE(v))   { printf("true"); return; }
-    if (V_IS_FALSE(v))  { printf("false"); return; }
+    if (V_IS_NIL(v))    { printf("Nil"); return; }
+    if (V_IS_TRUE(v))   { printf("True"); return; }
+    if (V_IS_FALSE(v))  { printf("False"); return; }
     if (V_IS_INT(v))    { printf("%d", V_AS_INT(v)); return; }
-    if (V_IS_DOUBLE(v)) { printf("%g", V_AS_DOUBLE(v)); return; }
+    if (V_IS_DOUBLE(v)) { printf("%.16g", V_AS_DOUBLE(v)); return; }
     if (V_IS_OBJ(v))    { printObject(V_AS_OBJ(v)); return; }
     printf("<unknown value 0x%016llx>", (unsigned long long)v);
 }

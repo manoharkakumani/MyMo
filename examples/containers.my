@@ -1,0 +1,24 @@
+# Containers store inline values (nil/bool/numbers); for-in over a dict
+# visits every key (the last hash slot used to be skipped).
+bad = 0
+n = 1
+while n < 300:
+    d = {}
+    i = 0
+    while i < n:
+        d["k" + str(i * 7919)] = i
+        i = i + 1
+    seen = 0
+    for k in d:
+        seen = seen + 1
+    if seen != n:
+        bad = bad + 1
+    n = n + 1
+print("dict sizes with missed keys:", bad)
+xs = [True, Nil, 1, 2.5, "s", (1, 2), [3]]
+print(xs, xs.contains(Nil), xs.index(2.5))
+case (1, True, Nil):
+    (1, _, Nil):
+        print("pattern with inline bool/nil matched")
+    _:
+        print("no match")

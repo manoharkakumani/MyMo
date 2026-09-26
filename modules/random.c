@@ -59,7 +59,7 @@ static Value random_choice(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "random.choice(): list is empty");
         return MYMO_ERROR;
     }
-    return objectToValue(list->values.objects[rng_next() % (uint64_t)list->values.count]);
+    return list->values.values[rng_next() % (uint64_t)list->values.count];
 }
 
 MyMoObject *randomModule(MVM *vm)

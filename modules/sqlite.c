@@ -126,7 +126,7 @@ static Value sql_query(MVM *vm, uint argc, MyMoObject *argv[])
             MyMoObject *key = AS_OBJECT(newString(vm, colname, (int)strlen(colname)));
             setEntry(vm, row, key, column_to_object(vm, st, i));
         }
-        writeMyMoObjectArray(vm, &rows->values, AS_OBJECT(row));
+        writeValueArrayObject(vm, &rows->values, AS_OBJECT(row));
     }
     sqlite3_finalize(st);
     return objectToValue(AS_OBJECT(rows));

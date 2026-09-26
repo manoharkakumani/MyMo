@@ -226,7 +226,7 @@ bool isEqual(MyMoObject *a, MyMoObject *b)
         if (ta->values.count != tb->values.count) return false;
         for (int i = 0; i < ta->values.count; i++)
         {
-            if (!isEqual(ta->values.objects[i], tb->values.objects[i]))
+            if (!valuesEqual(ta->values.values[i], tb->values.values[i]))
                 return false;
         }
         return true;
@@ -238,7 +238,7 @@ bool isEqual(MyMoObject *a, MyMoObject *b)
         if (la->values.count != lb->values.count) return false;
         for (int i = 0; i < la->values.count; i++)
         {
-            if (!isEqual(la->values.objects[i], lb->values.objects[i]))
+            if (!valuesEqual(la->values.values[i], lb->values.values[i]))
                 return false;
         }
         return true;

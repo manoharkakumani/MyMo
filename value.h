@@ -196,6 +196,11 @@ typedef struct {
 
 void initValueArray(MVM *vm, ValueArray *arr);
 void writeValueArray(MVM *vm, ValueArray *arr, Value v);
+// Append an object, storing nil/bool (and any other inline-able value)
+// inline rather than as a heap singleton.
+static inline void writeValueArrayObject(MVM *vm, ValueArray *arr, MyMoObject *o) {
+    writeValueArray(vm, arr, objectToValue(o));
+}
 void freeValueArray(MVM *vm, ValueArray *arr);
 
 // ---- Equality / printing ---------------------------------------------------

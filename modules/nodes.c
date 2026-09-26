@@ -382,7 +382,7 @@ static Value nodes_children(MVM *vm, uint argc, MyMoObject *argv[])
     MyMoList *out = newList(vm);
     for (int i = 1; i < NODES_MAX; i++)
         if (g_slots[i].alive)
-            writeMyMoObjectArray(vm, &out->values, mymo_int(vm, i));
+            writeValueArrayObject(vm, &out->values, mymo_int(vm, i));
     return objectToValue(AS_OBJECT(out));
 }
 

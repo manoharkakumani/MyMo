@@ -10,7 +10,9 @@ MyMoIter *newIter(MVM *vm, MyMoObject *object)
   return iter;
 }
 
-MyMoObject *nextIter(MVM *vm, MyMoIter *object)
+// Next element as a Value (inline for ints/nil/bool/...), or V_EMPTY_VAL
+// when the iteration is done.
+Value nextIter(MVM *vm, MyMoIter *object)
 {
   MyMoObject *iterator = object->iterator;
   switch (iterator->type)
@@ -20,44 +22,44 @@ MyMoObject *nextIter(MVM *vm, MyMoIter *object)
     MyMoString *string = AS_STRING(iterator);
     if (object->index >= string->length)
     {
-      return NEW_EMPTY;
+      return V_EMPTY_VAL;
     }
-    return NEW_STRING(vm, string->value + object->index++, 1);
+    return V_OBJ_VAL(NEW_STRING(vm, string->value + object->index++, 1));
   }
   case OBJ_LIST:
   {
     MyMoList *list = AS_LIST(iterator);
     if (object->index >= list->values.count)
     {
-      return NEW_EMPTY;
+      return V_EMPTY_VAL;
     }
-    return list->values.objects[object->index++];
+    return list->values.values[object->index++];
   }
   case OBJ_TUPLE:
   {
     MyMoTuple *tuple = AS_TUPLE(iterator);
     if (object->index >= tuple->values.count)
     {
-      return NEW_EMPTY;
+      return V_EMPTY_VAL;
     }
-    return tuple->values.objects[object->index++];
+    return tuple->values.values[object->index++];
   }
   case OBJ_DICT:
   {
     // Walk the entry table; skip empty (key==NULL) slots. Yields
     // keys in insertion order via the entries[] index, matching
     // for-in semantics over a list of keys. Stops at the first
-    // slot >= capacity.
+    // slot past the table (capacity is the index mask: size - 1).
     MyMoDict *dict = AS_DICT(iterator);
-    while (object->index < dict->capacity)
+    while (object->index <= dict->capacity)
     {
       Entry *e = &dict->entries[object->index++];
-      if (e->key != NULL) return e->key;
+      if (e->key != NULL) return V_OBJ_VAL(e->key);
     }
-    return NEW_EMPTY;
+    return V_EMPTY_VAL;
   }
   default:
-    return NEW_EMPTY;
+    return V_EMPTY_VAL;
   }
 }
 
