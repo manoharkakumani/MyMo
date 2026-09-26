@@ -13,11 +13,13 @@
 
 typedef struct Entry
 {
-    struct Entry *prev;
-    struct Entry *next;
     MyMoObject *key;
     Value value;     // NaN-boxed; legacy callers go through setEntry/getEntry which wrap/unwrap
-    int index;
+    // Insertion order: slot indices of the neighbouring live entries
+    // (-1 at either end). Slots never move except on rehash, which
+    // rebuilds the list in the same order.
+    int prev;
+    int next;
 } Entry;
 
 typedef struct MyMoDict
@@ -37,7 +39,19 @@ typedef struct MyMoDict
     // insert/delete churn fills with tombstones and findEntry never finds
     // an empty slot (infinite probe loop).
     int tombstones;
+    // First and last live entries in insertion order (-1 when empty).
+    int head;
+    int tail;
 } MyMoDict;
+
+// Visit a dict's live entries in insertion order:
+//     Entry *e;
+//     DICT_FOREACH(dict, e) { ... e->key, e->value ... }
+// Don't insert or delete keys inside the loop.
+#define DICT_FOREACH(dict, e)                                          \
+    for (int _slot = (dict)->head;                                      \
+         _slot >= 0 && ((e) = &(dict)->entries[_slot], true);           \
+         _slot = (e)->next)
 
 MyMoDict *newDict(MVM *vm);
 void freeDictionary(MVM *vm, MyMoDict *dict);

@@ -213,11 +213,9 @@ static bool formatObject(MVM *vm, StrBuf *b, MyMoObject *o, bool repr, int depth
         MyMoDict *dict = AS_DICT(o);
         strbufAppend(b, "{", 1);
         bool first = true;
-        for (int i = 0; i <= dict->capacity; i++)
+        Entry *entry;
+        DICT_FOREACH(dict, entry)
         {
-            Entry *entry = &dict->entries[i];
-            if (entry->key == NULL)
-                continue;
             if (!first)
                 strbufAppend(b, ", ", 2);
             first = false;

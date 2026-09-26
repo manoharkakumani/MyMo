@@ -745,20 +745,25 @@ int runMVM(MVM *vm)
     }
     OP_DICT:
     {
+        // [k0, v0, k1, v1, ...] -> [dict], inserted left to right so the
+        // dict keeps the literal's order. The pairs stay on the stack
+        // (rooted) until the dict holds them.
         u32 count = ReadByte();
+        Value *pairs = sp - 2 * count;
         MyMoDict *dict = newDict(vm);
         for (u32 i = 0; i < count; i++)
         {
-            MyMoObject *value = pop(vm);
-            MyMoObject *key = pop(vm);
+            MyMoObject *key = valueToBoxedObject(vm, pairs[2 * i]);
             if (!IS_NIL(key) && !IS_BOOL(key) && !IS_INT(key) && !IS_DOUBLE(key) && !IS_STRING(key))
             {
+                SAVE();
                 runtimeError(vm, "TypeError: Dictionary keys must be immutable.");
                 goto _runtime_error;
             }
-            setEntry(vm, dict, key, value);
+            setEntryV(vm, dict, key, pairs[2 * i + 1]);
         }
-        push(vm, AS_OBJECT(dict));
+        sp = pairs;
+        lpush(V_OBJ_VAL(AS_OBJECT(dict)));
         DISPATCH();
     }
     OP_SUBSCR:

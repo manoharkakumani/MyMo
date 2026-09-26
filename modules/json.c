@@ -109,9 +109,8 @@ static int enc_dict(Buf *b, MyMoDict *d)
 {
     if (buf_putc(b, '{')) return -1;
     int first = 1;
-    for (int i = 0; i <= d->capacity; i++) {
-        Entry *e = &d->entries[i];
-        if (!e->key) continue;
+    Entry *e;
+    DICT_FOREACH(d, e) {
         if (!first) buf_putc(b, ',');
         first = 0;
         if (e->key->type != OBJ_STRING) return -2;  // non-string key

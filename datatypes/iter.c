@@ -5,8 +5,20 @@
 MyMoIter *newIter(MVM *vm, MyMoObject *object)
 {
   MyMoIter *iter = AllocateObject(vm, MyMoIter, OBJ_ITER);
-  iter->iterator = object;
   iter->index = 0;
+  if (object->type == OBJ_DICT)
+  {
+    // Iterate a snapshot of the keys (in insertion order), so the loop
+    // body may add or delete keys safely.
+    MyMoDict *dict = AS_DICT(object);
+    MyMoTuple *keys = newTuple(vm);
+    iter->iterator = AS_OBJECT(keys);
+    Entry *e;
+    DICT_FOREACH(dict, e)
+      writeValueArray(vm, &keys->values, objectToValue(e->key));
+    return iter;
+  }
+  iter->iterator = object;
   return iter;
 }
 
@@ -43,20 +55,6 @@ Value nextIter(MVM *vm, MyMoIter *object)
       return V_EMPTY_VAL;
     }
     return tuple->values.values[object->index++];
-  }
-  case OBJ_DICT:
-  {
-    // Walk the entry table; skip empty (key==NULL) slots. Yields
-    // keys in insertion order via the entries[] index, matching
-    // for-in semantics over a list of keys. Stops at the first
-    // slot past the table (capacity is the index mask: size - 1).
-    MyMoDict *dict = AS_DICT(iterator);
-    while (object->index <= dict->capacity)
-    {
-      Entry *e = &dict->entries[object->index++];
-      if (e->key != NULL) return V_OBJ_VAL(e->key);
-    }
-    return V_EMPTY_VAL;
   }
   default:
     return V_EMPTY_VAL;

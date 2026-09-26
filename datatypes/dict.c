@@ -21,6 +21,8 @@ void initDict(MyMoDict *dict)
     dict->entries = NULL;
     dict->modifyCount = 0;
     dict->tombstones = 0;
+    dict->head = -1;
+    dict->tail = -1;
     dict->object.type = OBJ_DICT;
 }
 
@@ -98,6 +100,33 @@ bool getEntryV(MyMoDict *dict, MyMoObject *key, Value *out)
     return true;
 }
 
+// Append the entry in `slot` to the insertion-order list.
+static void linkEntry(MyMoDict *dict, int slot)
+{
+    Entry *entry = &dict->entries[slot];
+    entry->prev = dict->tail;
+    entry->next = -1;
+    if (dict->tail >= 0)
+        dict->entries[dict->tail].next = slot;
+    else
+        dict->head = slot;
+    dict->tail = slot;
+}
+
+static void unlinkEntry(MyMoDict *dict, int slot)
+{
+    Entry *entry = &dict->entries[slot];
+    if (entry->prev >= 0)
+        dict->entries[entry->prev].next = entry->next;
+    else
+        dict->head = entry->next;
+    if (entry->next >= 0)
+        dict->entries[entry->next].prev = entry->prev;
+    else
+        dict->tail = entry->prev;
+    entry->prev = entry->next = -1;
+}
+
 void adjustCapacity(MVM *vm, MyMoDict *dict, int capacity)
 {
     Entry *entries = Allocate(vm, Entry, capacity + 1);
@@ -105,20 +134,19 @@ void adjustCapacity(MVM *vm, MyMoDict *dict, int capacity)
     {
         entries[i].key = NULL;
         entries[i].value = V_NIL_VAL;
+        entries[i].prev = entries[i].next = -1;
     }
     Entry *oldEntries = dict->entries;
     int oldCapacity = dict->capacity;
+    int oldHead = dict->head;
     dict->count = 0;
     dict->tombstones = 0; // rehashing drops them
+    dict->head = dict->tail = -1;
     dict->entries = entries;
     dict->capacity = capacity;
-    for (int i = 0; i <= oldCapacity; i++)
-    {
-        Entry *entry = &oldEntries[i];
-        if (entry->key == NULL)
-            continue;
-        setEntryV(vm, dict, entry->key, entry->value);
-    }
+    // Re-insert in insertion order so the new table keeps it.
+    for (int i = oldHead; i >= 0; i = oldEntries[i].next)
+        setEntryV(vm, dict, oldEntries[i].key, oldEntries[i].value);
     FreeArray(vm, Entry, oldEntries, oldCapacity + 1);
     // The entry array moved — every cached entry index from before this call
     // now points into freed memory or a different slot. Bump modifyCount to
@@ -149,6 +177,7 @@ bool setEntryV(MVM *vm, MyMoDict *dict, MyMoObject *key, Value value)
     entry->value = value;
     if (isNewKey)
     {
+        linkEntry(dict, (int)(entry - dict->entries));
         dict->count++;
         dict->modifyCount++;  // structural change: invalidate caches
     }
@@ -163,6 +192,7 @@ bool deleteEntry(MVM *vm, MyMoDict *dict, MyMoObject *key)
     if (entry->key == NULL)
         return false;
     dict->count--;
+    unlinkEntry(dict, (int)(entry - dict->entries));
     entry->key = NULL;
     // Tombstone marker (anything not V_NIL_VAL). Use V_FALSE_VAL so the
     // probe loop stops looking once it can; any non-nil sentinel works.
@@ -174,14 +204,9 @@ bool deleteEntry(MVM *vm, MyMoDict *dict, MyMoObject *key)
 
 void copyDict(MVM *vm, MyMoDict *from, MyMoDict *to)
 {
-    for (int i = 0; i <= from->capacity; i++)
-    {
-        Entry *entry = &from->entries[i];
-        if (entry->key != NULL)
-        {
-            setEntryV(vm, to, entry->key, entry->value);
-        }
-    }
+    Entry *entry;
+    DICT_FOREACH(from, entry)
+        setEntryV(vm, to, entry->key, entry->value);
 }
 
 MyMoObject *findKey(MyMoDict *dict, u32 hash)
@@ -208,24 +233,19 @@ MyMoObject *findKey(MyMoDict *dict, u32 hash)
 void printDict(MyMoDict *dict)
 {
     printf("{");
-    for (int i = 0, j = dict->count; i <= dict->capacity; i++)
+    Entry *entry;
+    bool first = true;
+    DICT_FOREACH(dict, entry)
     {
-        Entry *entry = &dict->entries[i];
-        if (entry->key != NULL)
-        {
-            printObject(entry->key);
-            printf(": ");
-            if (V_IS_OBJ(entry->value) && V_AS_OBJ(entry->value) == AS_OBJECT(dict))
-            {
-                printf("{...}");
-            }
-            else
-            {
-                printValue(entry->value);
-            }
-            if (--j)
-                printf(", ");
-        }
+        if (!first)
+            printf(", ");
+        first = false;
+        printObject(entry->key);
+        printf(": ");
+        if (V_IS_OBJ(entry->value) && V_AS_OBJ(entry->value) == AS_OBJECT(dict))
+            printf("{...}");
+        else
+            printValue(entry->value);
     }
     printf("}");
 }
@@ -376,12 +396,9 @@ Value dictKeysMethod(MVM *vm, uint argc, Value args[])
     MyMoDict *dict = dictSelf(vm, "keys", 0);
     if (!dict) return V_EMPTY_VAL;
     MyMoList *out = newList(vm);
-    for (int i = 0; i <= dict->capacity; i++)
-    {
-        Entry *e = &dict->entries[i];
-        if (e->key != NULL)
-            writeValueArrayObject(vm, &out->values, e->key);
-    }
+    Entry *e;
+    DICT_FOREACH(dict, e)
+        writeValueArray(vm, &out->values, objectToValue(e->key));
     return objectToValue(AS_OBJECT(out));
 }
 
@@ -395,16 +412,9 @@ Value dictValuesMethod(MVM *vm, uint argc, Value args[])
     MyMoDict *dict = dictSelf(vm, "values", 0);
     if (!dict) return V_EMPTY_VAL;
     MyMoList *out = newList(vm);
-    for (int i = 0; i <= dict->capacity; i++)
-    {
-        Entry *e = &dict->entries[i];
-        if (e->key != NULL)
-        {
-            MyMoObject *v = V_IS_OBJ(e->value) ? V_AS_OBJ(e->value)
-                                               : valueToBoxedObject(vm, e->value);
-            writeValueArrayObject(vm, &out->values, v);
-        }
-    }
+    Entry *e;
+    DICT_FOREACH(dict, e)
+        writeValueArray(vm, &out->values, e->value);
     return objectToValue(AS_OBJECT(out));
 }
 
@@ -461,8 +471,11 @@ void setPrimitive(MVM *vm, MyMoDict *dict, MyMoObject *key)
         }
         index = (index + 1) & dict->capacity;
     }
+    if (entry->key == key)
+        return; // already interned
     entry->key = key;
     entry->value = V_NIL_VAL;
+    linkEntry(dict, (int)(index));
     dict->count++;
     dict->modifyCount++;
 }

@@ -926,7 +926,7 @@ static void functionStatementDecorated(Compiler *compiler, const u8 *decoratorAr
     FunctionType type;
     if (compiler->flags.cl_fn)
     {
-        if (memcmp(compiler->parser->current.token, "__init__", compiler->parser->current.length) == 0)
+        if (compiler->parser->current.length == 8 && memcmp(compiler->parser->current.token, "__init__", 8) == 0)
         {
             type = FN_INIT;
         }
