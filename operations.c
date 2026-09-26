@@ -3,6 +3,15 @@
 #include "vm.h"
 #include "datatypes/datatypes.h"
 
+// Slow paths of + - * / (the dispatch loop handles plain numbers inline
+// first). Operands and results are Values; errors raise and return
+// V_EMPTY_VAL.
+//
+// Language rules kept here: two bools combine logically (+ is or, - is
+// "a and not b", * and / are and); a bool mixed with a number counts as
+// 0/1; str + str concatenates; list + list and tuple + tuple concatenate;
+// str * int repeats.
+
 // Bytewise lexicographic order (like strcmp, but length-aware so
 // embedded NULs compare correctly): <0, 0 or >0.
 int compareStrings(MyMoString *a, MyMoString *b)
@@ -24,221 +33,124 @@ static void concatArrays(MVM *vm, ValueArray *out, ValueArray *a, ValueArray *b)
         writeValueArray(vm, out, b->values[i]);
 }
 
-MyMoObject *addition(MVM *vm, MyMoObject *a, MyMoObject *b)
+// `s * n`: s repeated n times ("" for n <= 0).
+static Value repeatString(MVM *vm, MyMoString *s, long n)
 {
-    if (IS_LIST(a) && IS_LIST(b))
+    long length = n > 0 ? (long)s->length * n : 0;
+    char *chars = New(char, length + 1);
+    for (long i = 0; i < length; i++)
+        chars[i] = s->value[i % s->length];
+    chars[length] = '\0';
+    MyMoObject *result = NEW_STRING(vm, chars, (int)length);
+    free(chars);
+    return V_OBJ_VAL(result);
+}
+
+// A bool used in arithmetic next to a number is 0 or 1.
+static Value boolAsInt(Value v)
+{
+    return valueIsBool(v) ? V_INT_VAL(valueAsBool(v) ? 1 : 0) : v;
+}
+
+static Value typeError(MVM *vm, const char *op, Value a, Value b)
+{
+    runtimeError(vm, "TypeError: can't perform %s between  %s and %s", op, valueTypeName(a), valueTypeName(b));
+    return V_EMPTY_VAL;
+}
+
+static bool isType(Value v, MyMoObjectType t) { return V_IS_OBJ_TYPE(v, t); }
+
+Value addValues(MVM *vm, Value a, Value b)
+{
+    if (valueIsBool(a) && valueIsBool(b))
+        return V_BOOL_VAL(valueAsBool(a) || valueAsBool(b));
+    a = boolAsInt(a);
+    b = boolAsInt(b);
+    if (valueLooksLikeInt(a) && valueLooksLikeInt(b))
+        return valueFromLong(vm, valueToLong(a) + valueToLong(b));
+    if (valueLooksLikeNumber(a) && valueLooksLikeNumber(b))
+        return V_DOUBLE_VAL(valueAsNumber(a) + valueAsNumber(b));
+    if (isType(a, OBJ_STRING) && isType(b, OBJ_STRING))
     {
-        MyMoList *out = newList(vm);
-        concatArrays(vm, &out->values, &AS_LIST(a)->values, &AS_LIST(b)->values);
-        return AS_OBJECT(out);
-    }
-    if (IS_TUPLE(a) && IS_TUPLE(b))
-    {
-        MyMoTuple *out = newTuple(vm);
-        concatArrays(vm, &out->values, &AS_TUPLE(a)->values, &AS_TUPLE(b)->values);
-        return AS_OBJECT(out);
-    }
-    if (IS_BOOL(a) && IS_BOOL(b))
-    {
-        bool a_val = BOOL_VAL(a);
-        bool b_val = BOOL_VAL(b);
-        return NEW_BOOL(a_val || b_val);
-    }
-    if (IS_BOOL(a))
-    {
-        a = NEW_INT(vm, BOOL_VAL(a));
-    }
-    if (IS_BOOL(b))
-    {
-        b = NEW_INT(vm, BOOL_VAL(b));
-    }
-    if (IS_INT(a) && IS_INT(b))
-    {
-        long a_val = INT_VAL(a);
-        long b_val = INT_VAL(b);
-        return NEW_INT(vm, a_val + b_val);
-    }
-    else if (IS_DOUBLE(a) && IS_DOUBLE(b))
-    {
-        double a_val = DOUBLE_VAL(a);
-        double b_val = DOUBLE_VAL(b);
-        return NEW_DOUBLE(vm, a_val + b_val);
-    }
-    else if ((IS_DOUBLE(a) && IS_INT(b)) || (IS_INT(a) && IS_DOUBLE(b)))
-    {
-        double a_val = IS_DOUBLE(a) ? DOUBLE_VAL(a) : (double)INT_VAL(a);
-        double b_val = IS_DOUBLE(b) ? DOUBLE_VAL(b) : (double)INT_VAL(b);
-        return NEW_DOUBLE(vm, a_val + b_val);
-    }
-    else if (IS_STRING(a) && IS_STRING(b))
-    {
-        MyMoString *a_val = AS_STRING(a);
-        MyMoString *b_val = AS_STRING(b);
-        int length = a_val->length + b_val->length;
+        MyMoString *x = AS_STRING(V_AS_OBJ(a)), *y = AS_STRING(V_AS_OBJ(b));
+        int length = x->length + y->length;
         char *chars = New(char, length + 1);
-        memcpy(chars, a_val->value, a_val->length);
-        memcpy(chars + a_val->length, b_val->value, b_val->length);
+        memcpy(chars, x->value, (size_t)x->length);
+        memcpy(chars + x->length, y->value, (size_t)y->length);
         chars[length] = '\0';
         MyMoObject *result = NEW_STRING(vm, chars, length);
-        Free(vm,char,chars);
-        return result;
+        free(chars);
+        return V_OBJ_VAL(result);
     }
-    else
+    if (isType(a, OBJ_LIST) && isType(b, OBJ_LIST))
     {
-        runtimeError(vm, "TypeError: can't perform + between  %s and %s", getType(a), getType(b));
-        return NEW_EMPTY;
+        MyMoList *out = newList(vm);
+        concatArrays(vm, &out->values, &AS_LIST(V_AS_OBJ(a))->values, &AS_LIST(V_AS_OBJ(b))->values);
+        return V_OBJ_VAL(AS_OBJECT(out));
     }
+    if (isType(a, OBJ_TUPLE) && isType(b, OBJ_TUPLE))
+    {
+        MyMoTuple *out = newTuple(vm);
+        concatArrays(vm, &out->values, &AS_TUPLE(V_AS_OBJ(a))->values, &AS_TUPLE(V_AS_OBJ(b))->values);
+        return V_OBJ_VAL(AS_OBJECT(out));
+    }
+    return typeError(vm, "+", a, b);
 }
 
-MyMoObject *subtraction(MVM *vm, MyMoObject *a, MyMoObject *b)
+Value subValues(MVM *vm, Value a, Value b)
 {
-    if (IS_BOOL(a) && IS_BOOL(b))
-    {
-        bool a_val = BOOL_VAL(a);
-        bool b_val = BOOL_VAL(b);
-        return NEW_BOOL(a_val && !b_val);
-    }
-    if (IS_BOOL(a))
-    {
-        a = NEW_INT(vm, BOOL_VAL(a));
-    }
-    if (IS_BOOL(b))
-    {
-        b = NEW_INT(vm, BOOL_VAL(b));
-    }
-    if (IS_INT(a) && IS_INT(b))
-    {
-        int a_val = INT_VAL(a);
-        int b_val = INT_VAL(b);
-        return NEW_INT(vm, a_val - b_val);
-    }
-    else if (IS_DOUBLE(a) && IS_DOUBLE(b))
-    {
-        double a_val = DOUBLE_VAL(a);
-        double b_val = DOUBLE_VAL(b);
-        return NEW_DOUBLE(vm, a_val - b_val);
-    }
-    else if ((IS_DOUBLE(a) && IS_INT(b)) || (IS_INT(a) && IS_DOUBLE(b)))
-    {
-        double a_val = IS_DOUBLE(a) ? DOUBLE_VAL(a) : (double)INT_VAL(a);
-        double b_val = IS_DOUBLE(b) ? DOUBLE_VAL(b) : (double)INT_VAL(b);
-        return NEW_DOUBLE(vm, a_val - b_val);
-    }
-    else
-    {
-        runtimeError(vm, "TypeError: can't perform - between  %s and %s", getType(a), getType(b));
-        return NEW_EMPTY;
-    }
+    if (valueIsBool(a) && valueIsBool(b))
+        return V_BOOL_VAL(valueAsBool(a) && !valueAsBool(b));
+    a = boolAsInt(a);
+    b = boolAsInt(b);
+    if (valueLooksLikeInt(a) && valueLooksLikeInt(b))
+        return valueFromLong(vm, valueToLong(a) - valueToLong(b));
+    if (valueLooksLikeNumber(a) && valueLooksLikeNumber(b))
+        return V_DOUBLE_VAL(valueAsNumber(a) - valueAsNumber(b));
+    return typeError(vm, "-", a, b);
 }
 
-MyMoObject *stringMultiple(MVM *vm, MyMoString *a, double b)
+Value mulValues(MVM *vm, Value a, Value b)
 {
-    int length = a->length * b;
-    char *chars = New(char, length + 1);
-    for (int i = 0; i < length; i++)
+    if (valueIsBool(a) && valueIsBool(b))
+        return V_BOOL_VAL(valueAsBool(a) && valueAsBool(b));
+    a = boolAsInt(a);
+    b = boolAsInt(b);
+    if (valueLooksLikeInt(a) && valueLooksLikeInt(b))
     {
-        chars[i] = a->value[i % a->length];
+        long r;
+        if (!__builtin_mul_overflow(valueToLong(a), valueToLong(b), &r))
+            return valueFromLong(vm, r);
+        return V_DOUBLE_VAL(valueAsNumber(a) * valueAsNumber(b));
     }
-    chars[length] = '\0';
-    MyMoObject *result = NEW_STRING(vm, chars, length);
-    Free(vm,char,chars);
-    return result;
+    if (valueLooksLikeNumber(a) && valueLooksLikeNumber(b))
+        return V_DOUBLE_VAL(valueAsNumber(a) * valueAsNumber(b));
+    if (isType(a, OBJ_STRING) && valueLooksLikeInt(b))
+        return repeatString(vm, AS_STRING(V_AS_OBJ(a)), valueToLong(b));
+    if (valueLooksLikeInt(a) && isType(b, OBJ_STRING))
+        return repeatString(vm, AS_STRING(V_AS_OBJ(b)), valueToLong(a));
+    return typeError(vm, "*", a, b);
 }
 
-MyMoObject *multiplication(MVM *vm, MyMoObject *a, MyMoObject *b)
+Value divValues(MVM *vm, Value a, Value b)
 {
-    if (IS_BOOL(a) && IS_BOOL(b))
+    if (valueIsBool(a) && valueIsBool(b))
+        return V_BOOL_VAL(valueAsBool(a) && valueAsBool(b));
+    a = boolAsInt(a);
+    b = boolAsInt(b);
+    if (valueLooksLikeNumber(a) && valueLooksLikeNumber(b))
     {
-        bool a_val = BOOL_VAL(a);
-        bool b_val = BOOL_VAL(b);
-        return NEW_BOOL(a_val && b_val);
-    }
-    if (IS_BOOL(a))
-    {
-        a = NEW_INT(vm, BOOL_VAL(a));
-    }
-    if (IS_BOOL(b))
-    {
-        b = NEW_INT(vm, BOOL_VAL(b));
-    }
-    if (IS_INT(a) && IS_INT(b))
-    {
-        int a_val = INT_VAL(a);
-        int b_val = INT_VAL(b);
-        return NEW_INT(vm, a_val * b_val);
-    }
-    else if (IS_DOUBLE(a) && IS_DOUBLE(b))
-    {
-        double a_val = DOUBLE_VAL(a);
-        double b_val = DOUBLE_VAL(b);
-        return NEW_DOUBLE(vm, a_val * b_val);
-    }
-    else if ((IS_DOUBLE(a) && IS_INT(b)) || (IS_INT(a) && IS_DOUBLE(b)))
-    {
-        double a_val = IS_DOUBLE(a) ? DOUBLE_VAL(a) : (double)INT_VAL(a);
-        double b_val = IS_DOUBLE(b) ? DOUBLE_VAL(b) : (double)INT_VAL(b);
-        return NEW_DOUBLE(vm, a_val * b_val);
-    }
-    else if (IS_STRING(a) && IS_INT(b))
-    {
-        return stringMultiple(vm, AS_STRING(a), INT_VAL(b));
-    }
-    else if (IS_INT(a) && IS_STRING(b))
-    {
-        return stringMultiple(vm, AS_STRING(b), INT_VAL(a));
-    }
-    else
-    {
-        runtimeError(vm, "TypeError: can't perform * between  %s and %s", getType(a), getType(b));
-        return NEW_EMPTY;
-    }
-}
-
-MyMoObject *division(MVM *vm, MyMoObject *a, MyMoObject *b)
-{
-    if (IS_BOOL(a) && IS_BOOL(b))
-    {
-        bool a_val = BOOL_VAL(a);
-        bool b_val = BOOL_VAL(b);
-        return NEW_BOOL(a_val && b_val);
-    }
-    if (IS_BOOL(a))
-    {
-        a = NEW_INT(vm, BOOL_VAL(a));
-    }
-    if (IS_BOOL(b))
-    {
-        b = NEW_INT(vm, BOOL_VAL(b));
-    }
-    if (IS_INT(a) && IS_INT(b))
-    {
-        long a_val = INT_VAL(a);
-        double b_val = INT_VAL(b);
-        double result = a_val / b_val;
-        if (result == (int) result)
+        double d = valueAsNumber(b);
+        if (d == 0)
         {
-            return NEW_INT(vm, (long)result);
+            runtimeError(vm, "ZeroDivisionError: division by zero.");
+            return V_EMPTY_VAL;
         }
-        else
-        {
-            return NEW_DOUBLE(vm, result);
-        }
+        double r = valueAsNumber(a) / d;
+        // int / int stays an int when the result is whole (6 / 2 == 3).
+        if (valueLooksLikeInt(a) && valueLooksLikeInt(b) && r == (long)r)
+            return valueFromLong(vm, (long)r);
+        return V_DOUBLE_VAL(r);
     }
-    else if (IS_DOUBLE(a) && IS_DOUBLE(b))
-    {
-        double a_val = DOUBLE_VAL(a);
-        double b_val = DOUBLE_VAL(b);
-        return NEW_DOUBLE(vm, a_val / b_val);
-    }
-    else if ((IS_DOUBLE(a) && IS_INT(b)) || (IS_INT(a) && IS_DOUBLE(b)))
-    {
-        double a_val = IS_DOUBLE(a) ? DOUBLE_VAL(a) : (double)INT_VAL(a);
-        double b_val = IS_DOUBLE(b) ? DOUBLE_VAL(b) : (double)INT_VAL(b);
-        return NEW_DOUBLE(vm, a_val / b_val);
-    }
-    else
-    {
-        runtimeError(vm, "TypeError: can't perform / between  %s and %s", getType(a), getType(b));
-        return NEW_EMPTY;
-    }
+    return typeError(vm, "/", a, b);
 }

@@ -126,9 +126,10 @@ void adjustCapacity(MVM *vm, MyMoDict *dict, int capacity)
     dict->modifyCount++;
 }
 
+// Legacy object API: heap nil/bool singletons are stored inline.
 bool setEntry(MVM *vm, MyMoDict *dict, MyMoObject *key, MyMoObject *value)
 {
-    return setEntryV(vm, dict, key, V_OBJ_VAL(value));
+    return setEntryV(vm, dict, key, objectToValue(value));
 }
 
 bool setEntryV(MVM *vm, MyMoDict *dict, MyMoObject *key, Value value)

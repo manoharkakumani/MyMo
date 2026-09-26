@@ -22,6 +22,7 @@ MyMoObject *valueToBoxedObject(MVM *vm, Value v) {
 }
 
 Value objectToValue(MyMoObject *o) {
+    if (o == NULL) return V_OBJ_VAL(NULL);
     switch (o->type) {
     case OBJ_NIL:    return V_NIL_VAL;
     case OBJ_BOOL:   return V_BOOL_VAL(((MyMoBool *)o)->value);

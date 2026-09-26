@@ -40,9 +40,10 @@ static MyMoObject *boxValueAsObject(MVM *vm, Value v)
     return valueToBoxedObject(vm, v);
 }
 
+// Heap nil/bool singletons are pushed as their inline Values.
 void push(MVM *vm, MyMoObject *object)
 {
-    pushV(vm, V_OBJ_VAL(object));
+    pushV(vm, objectToValue(object));
 }
 
 MyMoObject *pop(MVM *vm)

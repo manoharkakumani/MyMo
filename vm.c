@@ -423,46 +423,53 @@ static bool callerEx(MVM *vm, MyMoObject *callee, u32 argc, bool calleeSlot)
     }
 }
 
-#define BitwiseOp(a, b, op)                                             \
-    do                                                                  \
-    {                                                                   \
-        if (!IS_INT(a) || !IS_INT(b))                                   \
-        {                                                               \
-            runtimeError(vm, "TypeError : Operands must be integers."); \
-            return false;                                               \
-        }                                                               \
-        push(vm, NEW_INT(vm, INT_VAL(a) op INT_VAL(b)));                \
+// Integer-only binary operators (& | ^ << >>) on Values.
+#define BitwiseOp(a, b, op)                                                 \
+    do                                                                      \
+    {                                                                       \
+        if (!valueLooksLikeInt(a) || !valueLooksLikeInt(b))                 \
+        {                                                                   \
+            SAVE();                                                         \
+            runtimeError(vm, "TypeError : Operands must be integers.");     \
+            goto _runtime_error;                                            \
+        }                                                                   \
+        pushV(vm, intResult(vm, valueToLong(a) op valueToLong(b)));         \
     } while (0);
 
-#define UnaryOp(op, a)                                     \
-    do                                                     \
-    {                                                      \
-        if (IS_INT(a))                                     \
-            push(vm, NEW_INT(vm, op(INT_VAL(a))));         \
-        else if (IS_DOUBLE(a))                             \
-            push(vm, NEW_DOUBLE(vm, op(DOUBLE_VAL(a))));   \
-        else                                               \
-        {                                                  \
-            runtimeError(vm, "Operand must be a number."); \
-            goto _runtime_error;                           \
-        }                                                  \
+// Unary + / - on a numeric Value.
+#define UnaryOp(op, a)                                                      \
+    do                                                                      \
+    {                                                                       \
+        if (valueLooksLikeInt(a))                                           \
+            pushV(vm, intResult(vm, op valueToLong(a)));                    \
+        else if (valueLooksLikeDouble(a))                                   \
+            pushV(vm, V_DOUBLE_VAL(op valueToDouble(a)));                   \
+        else                                                                \
+        {                                                                   \
+            SAVE();                                                         \
+            runtimeError(vm, "Operand must be a number.");                  \
+            goto _runtime_error;                                            \
+        }                                                                   \
     } while (0);
 
+// Call an instance's operator method: `a` is the instance Value, `b` the
+// right operand (V_EMPTY_VAL for unary operators). Stack: [method, a, b].
 #define OperatorOverLoad(a, b, op)                                                          \
     do                                                                                      \
     {                                                                                       \
-        MyMoObject *method = getMethod(vm, a, op);                                          \
+        MyMoObject *method = getMethod(vm, V_AS_OBJ(a), op);                                \
         if (IS_EMPTY(method))                                                               \
         {                                                                                   \
-            runtimeError(vm, "MethodNotFound: %s does not have method %s", getType(a), op); \
+            SAVE();                                                                         \
+            runtimeError(vm, "MethodNotFound: %s does not have method %s", valueTypeName(a), op); \
             goto _runtime_error;                                                            \
         }                                                                                   \
-        push(vm, method);                                                                   \
-        push(vm, a);                                                                        \
-        if (b != NULL)                                                                      \
-            push(vm, b);                                                                    \
+        pushV(vm, V_OBJ_VAL(method));                                                       \
+        pushV(vm, a);                                                                       \
+        if (!V_IS_EMPTY(b))                                                                 \
+            pushV(vm, b);                                                                   \
         SAVE();                                                                             \
-        if (!caller(vm, method, b != NULL ? 2 : 1))                                         \
+        if (!caller(vm, method, V_IS_EMPTY(b) ? 1 : 2))                                     \
         {                                                                                   \
             goto _runtime_error;                                                            \
         }                                                                                   \
@@ -550,7 +557,9 @@ int runMVM(MVM *vm)
 // Legacy push/pop/peek calls inside dispatch handlers must use the local
 // `sp`; redefine them as macros that override the global function names.
 // The originals in stack.c remain used outside runMVM.
-#define push(vm_, obj)  (lpushObj(obj))
+// Legacy object push: normalizes heap nil/bool singletons to inline Values
+// (objectToValue), so they never persist on the stack.
+#define push(vm_, obj)  (lpush(objectToValue(obj)))
 #define pop(vm_)        valueToBoxedObject((vm_), lpop())
 #define peek(vm_, n)    valueToBoxedObject((vm_), lpeek(n))
 #define pushV(vm_, v)   (lpush(v))
@@ -1039,12 +1048,12 @@ int runMVM(MVM *vm)
     }
     OP_NOT:
     {
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
-            OperatorOverLoad(a, NULL, "!");
+            OperatorOverLoad(a, V_EMPTY_VAL, "!");
         }
-        pushV(vm, V_BOOL_VAL(isFalsey(a)));
+        pushV(vm, V_BOOL_VAL(valueIsFalsey(a)));
         DISPATCH();
     }
     OP_DUP:
@@ -1055,7 +1064,7 @@ int runMVM(MVM *vm)
     }
     OP_POP:
     {
-        pop(vm);
+        lpop(); // discard without boxing (pop() would allocate for ints)
         DISPATCH();
     }
     OP_EQUAL:
@@ -1082,21 +1091,21 @@ int runMVM(MVM *vm)
         }
         // Slow path: instance with __eq__/__ne__ overload. Fall through to
         // the legacy heap-object dispatch.
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        MyMoObject *method = getMethod(vm, a, inplace ? "!=" : "==");
+        Value b = popV(vm);
+        Value a = popV(vm);
+        MyMoObject *method = getMethod(vm, V_AS_OBJ(a), inplace ? "!=" : "==");
         if (IS_EMPTY(method))
         {
-            pushV(vm, V_BOOL_VAL(isEqual(a, b)));
+            pushV(vm, V_BOOL_VAL(valuesEqual(a, b)));
             DISPATCH();
         }
         if (inplace)
         {
             UNUSED(ReadByte());
         }
-        push(vm, method);
-        push(vm, a);
-        push(vm, b);
+        pushV(vm, V_OBJ_VAL(method));
+        pushV(vm, a);
+        pushV(vm, b);
         SAVE();
         if (!caller(vm, method, 2))
         {
@@ -1134,24 +1143,24 @@ int runMVM(MVM *vm)
             lpush(V_BOOL_VAL(a > b));
             DISPATCH();
         }
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value b = popV(vm);
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             if (inplace) UNUSED(ReadByte());
             OperatorOverLoad(a, b, inplace ? "<=" : ">");
         }
-        if (IS_STRING(a) && IS_STRING(b))
+        if (V_IS_OBJ_TYPE(a, OBJ_STRING) && V_IS_OBJ_TYPE(b, OBJ_STRING))
         {
-            pushV(vm, V_BOOL_VAL(compareStrings(AS_STRING(a), AS_STRING(b)) > 0));
+            pushV(vm, V_BOOL_VAL(compareStrings(AS_STRING(V_AS_OBJ(a)), AS_STRING(V_AS_OBJ(b))) > 0));
             DISPATCH();
         }
-        if (!IS_NUMBER(a) || !IS_NUMBER(b))
+        if (!valueLooksLikeNumber(a) || !valueLooksLikeNumber(b))
         {
             runtimeError(vm, "Operands must be numbers.");
             goto _runtime_error;
         }
-        pushV(vm, V_BOOL_VAL(NUMBER_VAL(a) > NUMBER_VAL(b)));
+        pushV(vm, V_BOOL_VAL(valueAsNumber(a) > valueAsNumber(b)));
         DISPATCH();
     }
     OP_LESS:
@@ -1184,32 +1193,32 @@ int runMVM(MVM *vm)
             lpush(V_BOOL_VAL(a < b));
             DISPATCH();
         }
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value b = popV(vm);
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             if (inplace) UNUSED(ReadByte());
             OperatorOverLoad(a, b, inplace ? ">=" : "<");
         }
-        if (IS_STRING(a) && IS_STRING(b))
+        if (V_IS_OBJ_TYPE(a, OBJ_STRING) && V_IS_OBJ_TYPE(b, OBJ_STRING))
         {
-            pushV(vm, V_BOOL_VAL(compareStrings(AS_STRING(a), AS_STRING(b)) < 0));
+            pushV(vm, V_BOOL_VAL(compareStrings(AS_STRING(V_AS_OBJ(a)), AS_STRING(V_AS_OBJ(b))) < 0));
             DISPATCH();
         }
-        if (!IS_NUMBER(a) || !IS_NUMBER(b))
+        if (!valueLooksLikeNumber(a) || !valueLooksLikeNumber(b))
         {
             runtimeError(vm, "Operands must be numbers.");
             goto _runtime_error;
         }
-        pushV(vm, V_BOOL_VAL(NUMBER_VAL(a) < NUMBER_VAL(b)));
+        pushV(vm, V_BOOL_VAL(valueAsNumber(a) < valueAsNumber(b)));
         DISPATCH();
     }
     OP_BAND:
     {
         u32 inplace = ReadByte();
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value b = popV(vm);
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             OperatorOverLoad(a, b, inplace ? "&=" : "&");
         }
@@ -1219,9 +1228,9 @@ int runMVM(MVM *vm)
     OP_BOR:
     {
         u32 inplace = ReadByte();
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value b = popV(vm);
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             OperatorOverLoad(a, b, inplace ? "|=" : "|");
         }
@@ -1231,9 +1240,9 @@ int runMVM(MVM *vm)
     OP_BXOR:
     {
         u32 inplace = ReadByte();
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value b = popV(vm);
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             OperatorOverLoad(a, b, inplace ? "^=" : "^");
         }
@@ -1277,17 +1286,17 @@ int runMVM(MVM *vm)
             lpush(V_DOUBLE_VAL(r));
             DISPATCH();
         }
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value b = popV(vm);
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             OperatorOverLoad(a, b, inplace ? "+=" : "+");
         }
         SAVE(); // sync ip so a TypeError inside addition() has the right line
-        MyMoObject *result = addition(vm, a, b);
-        if (IS_EMPTY(result))
+        Value result = addValues(vm, a, b);
+        if (V_IS_EMPTY(result))
             goto _runtime_error;
-        push(vm, result);
+        pushV(vm, result);
         DISPATCH();
     }
     OP_SUB:
@@ -1322,17 +1331,17 @@ int runMVM(MVM *vm)
             lpush(V_DOUBLE_VAL(r));
             DISPATCH();
         }
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value b = popV(vm);
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             OperatorOverLoad(a, b, inplace ? "-=" : "-");
         }
         SAVE();
-        MyMoObject *result = subtraction(vm, a, b);
-        if (IS_EMPTY(result))
+        Value result = subValues(vm, a, b);
+        if (V_IS_EMPTY(result))
             goto _runtime_error;
-        push(vm, result);
+        pushV(vm, result);
         DISPATCH();
     }
     OP_MUL:
@@ -1367,17 +1376,17 @@ int runMVM(MVM *vm)
             lpush(V_DOUBLE_VAL(r));
             DISPATCH();
         }
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value b = popV(vm);
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             OperatorOverLoad(a, b, inplace ? "*=" : "*");
         }
         SAVE();
-        MyMoObject *result = multiplication(vm, a, b);
-        if (IS_EMPTY(result))
+        Value result = mulValues(vm, a, b);
+        if (V_IS_EMPTY(result))
             goto _runtime_error;
-        push(vm, result);
+        pushV(vm, result);
         DISPATCH();
     }
     OP_DIV:
@@ -1419,38 +1428,38 @@ int runMVM(MVM *vm)
             lpush(V_DOUBLE_VAL(r));
             DISPATCH();
         }
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value b = popV(vm);
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             OperatorOverLoad(a, b, inplace ? "/=" : "/");
         }
         SAVE();
-        MyMoObject *result = division(vm, a, b);
-        if (IS_EMPTY(result))
+        Value result = divValues(vm, a, b);
+        if (V_IS_EMPTY(result))
             goto _runtime_error;
-        push(vm, result);
+        pushV(vm, result);
         DISPATCH();
     }
     OP_POW:
     {
         u32 inplace = ReadByte();
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value b = popV(vm);
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             OperatorOverLoad(a, b, inplace ? "**=" : "**");
         }
-        if (!IS_NUMBER(a) || !IS_NUMBER(b))
+        if (!valueLooksLikeNumber(a) || !valueLooksLikeNumber(b))
         {
             runtimeError(vm, "Operands must be numbers.");
             goto _runtime_error;
         }
-        if (IS_INT(a) && IS_INT(b) && INT_VAL(b) >= 0)
+        if (valueLooksLikeInt(a) && valueLooksLikeInt(b) && valueToLong(b) >= 0)
         {
             // Exact integer power by squaring; fall back to double on
             // overflow of a signed 64-bit long.
-            long base = INT_VAL(a), exp = INT_VAL(b), acc = 1;
+            long base = valueToLong(a), exp = valueToLong(b), acc = 1;
             bool overflow = false;
             while (exp > 0 && !overflow)
             {
@@ -1466,50 +1475,50 @@ int runMVM(MVM *vm)
                 DISPATCH();
             }
         }
-        push(vm, NEW_DOUBLE(vm, pow(NUMBER_VAL(a), NUMBER_VAL(b))));
+        pushV(vm, V_DOUBLE_VAL(pow(valueAsNumber(a), valueAsNumber(b))));
         DISPATCH();
     }
     OP_MOD:
     {
         u32 inplace = ReadByte();
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value b = popV(vm);
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             OperatorOverLoad(a, b, inplace ? "%=" : "%");
         }
-        if (!IS_NUMBER(a) || !IS_NUMBER(b))
+        if (!valueLooksLikeNumber(a) || !valueLooksLikeNumber(b))
         {
             runtimeError(vm, "Operands must be numbers.");
             goto _runtime_error;
         }
         // Python semantics: the result takes the divisor's sign.
-        if (NUMBER_VAL(b) == 0)
+        if (valueAsNumber(b) == 0)
         {
             runtimeError(vm, "ZeroDivisionError: modulo by zero");
             goto _runtime_error;
         }
-        if (IS_INT(a) && IS_INT(b))
+        if (valueLooksLikeInt(a) && valueLooksLikeInt(b))
         {
-            long x = INT_VAL(a), y = INT_VAL(b), r = x % y;
+            long x = valueToLong(a), y = valueToLong(b), r = x % y;
             if (r != 0 && ((r < 0) != (y < 0)))
                 r += y;
             pushV(vm, intResult(vm, r));
             DISPATCH();
         }
-        double y = NUMBER_VAL(b);
-        double r = fmod(NUMBER_VAL(a), y);
+        double y = valueAsNumber(b);
+        double r = fmod(valueAsNumber(a), y);
         if (r != 0 && ((r < 0) != (y < 0)))
             r += y;
-        push(vm, NEW_DOUBLE(vm, r));
+        pushV(vm, V_DOUBLE_VAL(r));
         DISPATCH();
     }
     OP_LSFT:
     {
         u32 inplace = ReadByte();
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value b = popV(vm);
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             OperatorOverLoad(a, b, inplace ? "<<=" : "<<");
         }
@@ -1519,9 +1528,9 @@ int runMVM(MVM *vm)
     OP_RSFT:
     {
         u32 inplace = ReadByte();
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value b = popV(vm);
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             OperatorOverLoad(a, b, inplace ? ">>=" : ">>");
         }
@@ -1531,50 +1540,50 @@ int runMVM(MVM *vm)
     OP_IDIV:
     {
         u32 inplace = ReadByte();
-        MyMoObject *b = pop(vm);
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value b = popV(vm);
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             OperatorOverLoad(a, b, inplace ? "//=" : "//");
         }
-        if (!IS_NUMBER(a) || !IS_NUMBER(b))
+        if (!valueLooksLikeNumber(a) || !valueLooksLikeNumber(b))
         {
             runtimeError(vm, "Operands must be numbers.");
             goto _runtime_error;
         }
         // Floor division (Python semantics): -7 // 2 == -4.
-        if (NUMBER_VAL(b) == 0)
+        if (valueAsNumber(b) == 0)
         {
             runtimeError(vm, "ZeroDivisionError: integer division by zero");
             goto _runtime_error;
         }
-        if (IS_INT(a) && IS_INT(b))
+        if (valueLooksLikeInt(a) && valueLooksLikeInt(b))
         {
-            long x = INT_VAL(a), y = INT_VAL(b), q = x / y;
+            long x = valueToLong(a), y = valueToLong(b), q = x / y;
             if ((x % y != 0) && ((x < 0) != (y < 0)))
                 q--;
             pushV(vm, intResult(vm, q));
             DISPATCH();
         }
-        push(vm, NEW_DOUBLE(vm, floor(NUMBER_VAL(a) / NUMBER_VAL(b))));
+        pushV(vm, V_DOUBLE_VAL(floor(valueAsNumber(a) / valueAsNumber(b))));
         DISPATCH();
     }
     OP_NEG:
     {
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
-            OperatorOverLoad(a, NULL, "-@");
+            OperatorOverLoad(a, V_EMPTY_VAL, "-@");
         }
         UnaryOp(-, a);
         DISPATCH();
     }
     OP_POS:
     {
-        MyMoObject *a = pop(vm);
-        if (IS_INSTANCE(a))
+        Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
-            OperatorOverLoad(a, NULL, "+@");
+            OperatorOverLoad(a, V_EMPTY_VAL, "+@");
         }
         UnaryOp(+, a);
         DISPATCH();
