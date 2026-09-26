@@ -393,7 +393,7 @@ char *pathResolver(MVM *vm, char *_path)
                 }
             }
             int k = len + 1 - c;
-            char helper[k];
+            char helper[k + 1];
             int i;
             for (i = 0; i < k; i++)
             {

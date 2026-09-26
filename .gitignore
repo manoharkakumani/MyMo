@@ -9,3 +9,6 @@
 .claude
 *.o
 Claude.md
+*.o.d
+*.do.d
+*.do

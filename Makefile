@@ -63,6 +63,8 @@ OBJ_DBG     := $(SRC:.c=.do)
 BIN         := mymo
 BIN_DEBUG   := mymo-debug
 
+.DEFAULT_GOAL := all
+
 .PHONY: all debug test bench clean ext-hello ext-strings ext-mymath ext-all stdlib
 
 # Embedded MyMo-source stdlib modules. Every .my file in stdlib/
@@ -96,11 +98,18 @@ $(BIN_DEBUG): CFLAGS := $(COMMON) $(DEBUG) $(CFLAGS_EXTRA)
 $(BIN_DEBUG): $(OBJ_DBG)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# -MMD writes a <obj>.d per object listing the headers it includes, so
+# editing a header rebuilds its dependents (without it, stale objects
+# silently mix old and new struct/typedef layouts).
+DEPFLAGS     = -MMD -MP -MF $@.d
+
 %.o: %.c
-	$(CC) $(COMMON) $(RELEASE) $(CFLAGS_EXTRA) -c -o $@ $<
+	$(CC) $(COMMON) $(RELEASE) $(CFLAGS_EXTRA) $(DEPFLAGS) -c -o $@ $<
 
 %.do: %.c
-	$(CC) $(COMMON) $(DEBUG) $(CFLAGS_EXTRA) -c -o $@ $<
+	$(CC) $(COMMON) $(DEBUG) $(CFLAGS_EXTRA) $(DEPFLAGS) -c -o $@ $<
+
+-include $(addsuffix .d,$(OBJ_REL) $(OBJ_DBG))
 
 test: $(BIN)
 	@./scripts/run-examples.sh
@@ -110,6 +119,7 @@ bench: $(BIN)
 
 clean:
 	rm -f $(BIN) $(BIN_DEBUG) $(OBJ_REL) $(OBJ_DBG) \
+	      $(addsuffix .d,$(OBJ_REL) $(OBJ_DBG)) \
 	      examples/ext/hellomod.* examples/ext/stringsmod.* examples/ext/mymathmod.*
 
 # Build the sample external module — demonstrates the C-API path.
