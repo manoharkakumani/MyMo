@@ -34,7 +34,7 @@ Value newBoolMethod(MVM *vm, uint argc, Value args[])
     // bool(x): x's truthiness (Nil, False, 0, 0.0 and "" are false).
     if (argc > 1)
     {
-        runtimeError(vm, "bool() takes  1 argument (%d given)", argc);
+        runtimeError(vm, "TypeError: bool() takes 1 argument (%d given)", argc);
         return V_EMPTY_VAL;
     }
     if (argc == 0)

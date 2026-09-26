@@ -80,6 +80,8 @@ void *dispatchTable[] = {
     &&OP_DELSUBSCR,
     &&OP_CALLKW,
     &&OP_SET,
-    &&OP_FORMAT
+    &&OP_FORMAT,
+    &&OP_EXCMATCH,
+    &&OP_RERAISE
     };
 #endif

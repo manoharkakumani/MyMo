@@ -1,6 +1,9 @@
 #include "common.h"
 #include "vm.h"
 #include "repr.h"
+#include "prelude.h"
+#include "builtins.h"
+#include <ctype.h>
 #include "format.h"
 #include <limits.h>
 #include "include/mymo.h"
@@ -52,6 +55,7 @@ MVM *initVM()
     // Register all statically-linked built-in modules. Dynamic .so/.dylib
     // modules load lazily via OP_USE → loadBuiltInModule.
     defineBuiltInModules(vm);
+    loadPrelude(vm);
     return vm;
 }
 
@@ -111,6 +115,56 @@ static bool hasActiveHandler(MVM *vm)
     return true;
 }
 
+// The exception object for a runtime error message "Name: text": an
+// instance of the built-in exception class Name (RuntimeError when the
+// message has no known class prefix) whose `message` is text. Before
+// the prelude has loaded, just the message string.
+static MyMoObject *errorObject(MVM *vm, const char *msg)
+{
+    const char *text = msg;
+    Value klass = V_NIL_VAL;
+    const char *colon = strchr(msg, ':');
+    if (colon && colon > msg && colon - msg < 64)
+    {
+        int len = (int)(colon - msg);
+        while (len > 0 && msg[len - 1] == ' ')
+            len--;
+        bool identifier = len > 0;
+        for (int i = 0; i < len; i++)
+            if (!isalnum((unsigned char)msg[i]) && msg[i] != '_')
+                identifier = false;
+        if (identifier && getEntryV(&vm->builtins, AS_OBJECT(newString(vm, msg, len)), &klass) &&
+            V_IS_OBJ_TYPE(klass, OBJ_CLASS))
+        {
+            text = colon + 1;
+            while (*text == ' ')
+                text++;
+        }
+        else
+            klass = V_NIL_VAL;
+    }
+    if (valueIsNil(klass))
+    {
+        // Unprefixed: errors from the I/O modules ("socket.connect(): ...")
+        // are OSErrors, the rest RuntimeErrors.
+        static const char *ioModules[] = {"socket", "server", "runloop", "nodes", "os", "io", "http", "sqlite", NULL};
+        const char *fallback = "RuntimeError";
+        for (const char **m = ioModules; *m; m++)
+        {
+            size_t n = strlen(*m);
+            if (strncmp(msg, *m, n) == 0 && (msg[n] == '.' || msg[n] == ':'))
+                fallback = "OSError";
+        }
+        if (!getEntryV(&vm->builtins, AS_OBJECT(newString(vm, fallback, (int)strlen(fallback))), &klass) ||
+            !V_IS_OBJ_TYPE(klass, OBJ_CLASS))
+            return AS_OBJECT(newString(vm, msg, (int)strlen(msg)));
+    }
+    MyMoInstance *instance = newInstance(vm, AS_CLASS(V_AS_OBJ(klass)));
+    setEntryV(vm, instance->fields, AS_OBJECT(newString(vm, "message", 7)),
+              V_OBJ_VAL(AS_OBJECT(newString(vm, text, (int)strlen(text)))));
+    return AS_OBJECT(instance);
+}
+
 void runtimeError(MVM *vm, const char *format, ...)
 {
     // Build the message into a single buffer so we can both stash
@@ -134,7 +188,7 @@ void runtimeError(MVM *vm, const char *format, ...)
     if (hasActiveHandler(vm) || outerHandler)
     {
         if (vm->fiber->exception == NULL)
-            vm->fiber->exception = AS_OBJECT(newString(vm, msg, (int)strlen(msg)));
+            vm->fiber->exception = errorObject(vm, msg);
         return;
     }
 
@@ -347,14 +401,14 @@ static bool callerEx(MVM *vm, MyMoObject *callee, u32 argc, bool calleeSlot)
         MyMoFunction *function = AS_FUNCTION(callee);
         if (function->type == FN_SCRIPT)
         {
-            runtimeError(vm, "TypeError : <Script '%s'> is not callable.", function->name->value);
+            runtimeError(vm, "TypeError: <Script '%s'> is not callable.", function->name->value);
             return false;
         }
         // Functions containing `yield` may be called directly: yielding
         // then suspends the enclosing fiber (and errors outside one).
         else if (function->type == FN_MODULE)
         {
-            runtimeError(vm, "TypeError : <module '%s'> is not callable.", function->name->value);
+            runtimeError(vm, "TypeError: <module '%s'> is not callable.", function->name->value);
             return false;
         }
         return callFunction(vm, function, argc, calleeSlot);
@@ -382,7 +436,7 @@ static bool callerEx(MVM *vm, MyMoObject *callee, u32 argc, bool calleeSlot)
         {
             if (argc)
             {
-                runtimeError(vm, "TypeError : %s() Takes 0 arguments but got %d.", AS_CLASS(callee)->name->value, argc);
+                runtimeError(vm, "TypeError: %s() Takes 0 arguments but got %d.", AS_CLASS(callee)->name->value, argc);
                 return false;
             }
             pop(vm);
@@ -428,7 +482,7 @@ static bool callerEx(MVM *vm, MyMoObject *callee, u32 argc, bool calleeSlot)
     }
     default:
         printObject(callee);
-        runtimeError(vm, "Can only call functions and classes.");
+        runtimeError(vm, "TypeError: only functions and classes can be called");
         return false;
     }
 }
@@ -540,6 +594,43 @@ static bool bindKeywords(MVM *vm, Value calleeV, u32 *argc, int kwc, MyMoString 
     return true;
 }
 
+// `catch types` against a raised value: types is an exception class or a
+// tuple of them. Instances match by class (with inheritance); a raised
+// string matches Exception, or the class its "Name:" prefix names.
+static bool exceptionMatches(MVM *vm, Value exc, Value types, bool *out)
+{
+    if (V_IS_OBJ_TYPE(types, OBJ_TUPLE))
+    {
+        ValueArray *options = &AS_TUPLE(V_AS_OBJ(types))->values;
+        for (int i = 0; i < options->count; i++)
+        {
+            if (!exceptionMatches(vm, exc, options->values[i], out))
+                return false;
+            if (*out)
+                return true;
+        }
+        *out = false;
+        return true;
+    }
+    if (!V_IS_OBJ_TYPE(types, OBJ_CLASS))
+    {
+        runtimeError(vm, "TypeError: catch expects an exception class or a tuple of them, not %s", valueTypeName(types));
+        return false;
+    }
+    MyMoClass *klass = AS_CLASS(V_AS_OBJ(types));
+    if (V_IS_OBJ_TYPE(exc, OBJ_STRING))
+    {
+        MyMoString *s = AS_STRING(V_AS_OBJ(exc));
+        int n = klass->name->length;
+        *out = strcmp(klass->name->value, "Exception") == 0 ||
+               (s->length >= n && memcmp(s->value, klass->name->value, (size_t)n) == 0 &&
+                (s->length == n || s->value[n] == ':'));
+        return true;
+    }
+    *out = isInstanceOf(vm, exc, types);
+    return true;
+}
+
 // Integer-only binary operators (& | ^ << >>) on Values.
 #define BitwiseOp(a, b, op)                                                 \
     do                                                                      \
@@ -547,7 +638,7 @@ static bool bindKeywords(MVM *vm, Value calleeV, u32 *argc, int kwc, MyMoString 
         if (!valueLooksLikeInt(a) || !valueLooksLikeInt(b))                 \
         {                                                                   \
             SAVE();                                                         \
-            runtimeError(vm, "TypeError : Operands must be integers.");     \
+            runtimeError(vm, "TypeError: Operands must be integers.");     \
             goto _runtime_error;                                            \
         }                                                                   \
         pushV(vm, intResult(vm, valueToLong(a) op valueToLong(b)));         \
@@ -564,7 +655,7 @@ static bool bindKeywords(MVM *vm, Value calleeV, u32 *argc, int kwc, MyMoString 
         else                                                                \
         {                                                                   \
             SAVE();                                                         \
-            runtimeError(vm, "Operand must be a number.");                  \
+            runtimeError(vm, "TypeError: operand must be a number");                  \
             goto _runtime_error;                                            \
         }                                                                   \
     } while (0);
@@ -578,7 +669,7 @@ static bool bindKeywords(MVM *vm, Value calleeV, u32 *argc, int kwc, MyMoString 
         if (IS_EMPTY(method))                                                               \
         {                                                                                   \
             SAVE();                                                                         \
-            runtimeError(vm, "MethodNotFound: %s does not have method %s", valueTypeName(a), op); \
+            runtimeError(vm, "AttributeError: %s has no method %s", valueTypeName(a), op); \
             goto _runtime_error;                                                            \
         }                                                                                   \
         pushV(vm, V_OBJ_VAL(method));                                                       \
@@ -787,6 +878,7 @@ int runMVM(MVM *vm)
         DISPATCH();
     }
     OP_RAISE:
+    raise_value:
     {
         // Pop the raised value, wrap it as a string error message
         // for now (typed exceptions land later), and trigger the
@@ -794,6 +886,13 @@ int runMVM(MVM *vm)
         // correct line for any traceback printed below.
         Value raised = lpeek(0);
         SAVE();
+        if (V_IS_OBJ_TYPE(raised, OBJ_CLASS))
+        {
+            // `raise ValueError` raises ValueError().
+            if (mymo_call(vm, raised, 0, NULL, &raised) != MYMO_OK)
+                goto _runtime_error;
+            sp[-1] = raised;
+        }
         // The message printed if nothing catches it: the value's str().
         Value text = valueToStr(vm, raised);
         const char *message = V_IS_EMPTY(text) ? "RaiseError" : AS_STRING(V_AS_OBJ(text))->value;
@@ -1337,7 +1436,7 @@ int runMVM(MVM *vm)
         }
         if (!valueLooksLikeNumber(a) || !valueLooksLikeNumber(b))
         {
-            runtimeError(vm, "Operands must be numbers.");
+            runtimeError(vm, "TypeError: operands must be numbers");
             goto _runtime_error;
         }
         pushV(vm, V_BOOL_VAL(valueAsNumber(a) > valueAsNumber(b)));
@@ -1402,7 +1501,7 @@ int runMVM(MVM *vm)
         }
         if (!valueLooksLikeNumber(a) || !valueLooksLikeNumber(b))
         {
-            runtimeError(vm, "Operands must be numbers.");
+            runtimeError(vm, "TypeError: operands must be numbers");
             goto _runtime_error;
         }
         pushV(vm, V_BOOL_VAL(valueAsNumber(a) < valueAsNumber(b)));
@@ -1665,7 +1764,7 @@ int runMVM(MVM *vm)
         }
         if (!valueLooksLikeNumber(a) || !valueLooksLikeNumber(b))
         {
-            runtimeError(vm, "Operands must be numbers.");
+            runtimeError(vm, "TypeError: operands must be numbers");
             goto _runtime_error;
         }
         if (valueLooksLikeInt(a) && valueLooksLikeInt(b) && valueToLong(b) >= 0)
@@ -1702,7 +1801,7 @@ int runMVM(MVM *vm)
         }
         if (!valueLooksLikeNumber(a) || !valueLooksLikeNumber(b))
         {
-            runtimeError(vm, "Operands must be numbers.");
+            runtimeError(vm, "TypeError: operands must be numbers");
             goto _runtime_error;
         }
         // Python semantics: the result takes the divisor's sign.
@@ -1761,7 +1860,7 @@ int runMVM(MVM *vm)
         }
         if (!valueLooksLikeNumber(a) || !valueLooksLikeNumber(b))
         {
-            runtimeError(vm, "Operands must be numbers.");
+            runtimeError(vm, "TypeError: operands must be numbers");
             goto _runtime_error;
         }
         // Floor division (Python semantics): -7 // 2 == -4.
@@ -1998,7 +2097,7 @@ int runMVM(MVM *vm)
                 DISPATCH();
             }
         }
-        runtimeError(vm, "Name Error: Undefined variable '%s'.", STRING_VAL(variable));
+        runtimeError(vm, "NameError: Undefined variable '%s'.", STRING_VAL(variable));
         goto _runtime_error;
     }
     OP_SETV:
@@ -2061,7 +2160,7 @@ int runMVM(MVM *vm)
             DISPATCH();
         }
         SAVE();
-        runtimeError(vm, "Name Error: Undefined variable '%s'.", AS_STRING(variable)->value);
+        runtimeError(vm, "NameError: Undefined variable '%s'.", AS_STRING(variable)->value);
         goto _runtime_error;
     }
     OP_MET:
@@ -2126,7 +2225,7 @@ int runMVM(MVM *vm)
                 if (function->type == FN_SCRIPT || function->type == FN_MODULE)
                 {
                     SAVE();
-                    runtimeError(vm, "TypeError : <%s '%s'> is not callable.",
+                    runtimeError(vm, "TypeError: <%s '%s'> is not callable.",
                                  function->type == FN_SCRIPT ? "Script" : "module",
                                  function->name->value);
                     goto _runtime_error;
@@ -2195,6 +2294,30 @@ int runMVM(MVM *vm)
             goto _runtime_error;
         LOAD();
         DISPATCH();
+    }
+    OP_EXCMATCH:
+    {
+        // [exc, types] -> [bool]: does `catch types` handle exc?
+        Value types = lpop();
+        Value exc = lpop();
+        SAVE();
+        bool match;
+        if (!exceptionMatches(vm, exc, types, &match))
+            goto _runtime_error;
+        lpush(V_BOOL_VAL(match));
+        DISPATCH();
+    }
+    OP_RERAISE:
+    {
+        // End of a `final:` block: [pending] -> []; raises it again
+        // unless it is Nil (no exception was in flight).
+        Value pending = lpeek(0);
+        if (valueIsNil(pending))
+        {
+            lpop();
+            DISPATCH();
+        }
+        goto raise_value;
     }
     OP_FORMAT:
     {
@@ -2268,7 +2391,7 @@ int runMVM(MVM *vm)
         MyMoObject *fn = pop(vm);
         if (!(IS_FUNCTION(fn) || IS_CLASS(fn) || IS_BUILTIN_FUNCTION(fn) || IS_BUILTIN_METHOD(fn) || IS_BOUND_METHOD(fn) || IS_BUILTIN_CLASS(fn)))
         {
-            runtimeError(vm, "Type Error: Cannot Pipe Through '%s'.", getType(fn));
+            runtimeError(vm, "TypeError: Cannot Pipe Through '%s'.", getType(fn));
             goto _runtime_error;
         }
         MyMoObject *arg = pop(vm);
@@ -2523,7 +2646,7 @@ int runMVM(MVM *vm)
                 GETP_FOUND(value);
             }
             SAVE();
-            runtimeError(vm, "Undefined property '%s'.", STRING_VAL(variable));
+            runtimeError(vm, "AttributeError: undefined property '%s'", STRING_VAL(variable));
             goto _runtime_error;
         }
         case OBJ_SUPER:
@@ -2571,7 +2694,7 @@ int runMVM(MVM *vm)
                 GETP_FOUND(value);
             }
             SAVE();
-            runtimeError(vm, "Undefined property '%s'.", STRING_VAL(variable));
+            runtimeError(vm, "AttributeError: undefined property '%s'", STRING_VAL(variable));
             goto _runtime_error;
         }
         case OBJ_MODULE:
@@ -2854,7 +2977,7 @@ int runMVM(MVM *vm)
         MyMoFunction *function = runFile(vm, path);
         if (function == NULL)
         {
-            runtimeError(vm, "Syntax error in module '%s'.", path);
+            runtimeError(vm, "ImportError: syntax error in module '%s'.", path);
             free(path);
             goto _runtime_error;
         }
@@ -2981,7 +3104,7 @@ int runMVM(MVM *vm)
             if (!have)
             {
                 SAVE();
-                runtimeError(vm, "Name Error: Undefined variable '%s'.", STRING_VAL(variable));
+                runtimeError(vm, "NameError: Undefined variable '%s'.", STRING_VAL(variable));
                 goto _runtime_error;
             }
             calleeV = val;
@@ -3035,7 +3158,7 @@ int runMVM(MVM *vm)
             if (function->type == FN_SCRIPT || function->type == FN_MODULE)
             {
                 SAVE();
-                runtimeError(vm, "TypeError : <%s '%s'> is not callable.",
+                runtimeError(vm, "TypeError: <%s '%s'> is not callable.",
                              function->type == FN_SCRIPT ? "Script" : "module",
                              function->name->value);
                 goto _runtime_error;
@@ -3234,7 +3357,7 @@ int runMVM(MVM *vm)
         if (!getEntryV(target, variable, &cur))
         {
             SAVE();
-            runtimeError(vm, "Name Error: Undefined variable '%s'.", STRING_VAL(variable));
+            runtimeError(vm, "NameError: Undefined variable '%s'.", STRING_VAL(variable));
             goto _runtime_error;
         }
         Value next;
@@ -3314,7 +3437,7 @@ _runtime_error:
         vm->fiber->exception = NULL;
         ip = frame->ip;
         sp = vm->fiber->stack.values + vm->fiber->stack.count;
-        if (exc) lpushObj(exc); else lpush(V_NIL_VAL);
+        lpush(exc ? objectToValue(exc) : V_NIL_VAL);
         DISPATCH();
     }
 #undef ReadByte

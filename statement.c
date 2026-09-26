@@ -374,6 +374,55 @@ void elseStatement(Compiler *compiler)
 //     OP_POP          ; SETV leaves the value on stack; discard
 //     <handler bytecode>
 //   end:
+// Is `name` spelled like an exception class (catch KeyError:) rather
+// than a variable to bind (catch e:)?
+static bool looksLikeExceptionClass(Token *name)
+{
+    static const char *suffixes[] = {"Error", "Exception", "Iteration", "Exit", NULL};
+    for (const char **suffix = suffixes; *suffix; suffix++)
+    {
+        int n = (int)strlen(*suffix);
+        if (name->length >= n && memcmp(name->token + name->length - n, *suffix, (size_t)n) == 0)
+            return true;
+    }
+    return false;
+}
+
+// `catch e:` binds everything to e; `catch KeyError:` is a typed clause.
+static bool isCatchBinding(Compiler *compiler)
+{
+    if (!checkToken(compiler, NAME) || looksLikeExceptionClass(&compiler->parser->current))
+        return false;
+    Lexer probe = *compiler->parser->lexer;
+    return getToken(&probe).type == COLON;
+}
+
+static void blockOrSimple(Compiler *compiler, size_t indent)
+{
+    if (matchToken(compiler, NEWLINE))
+        block(compiler, indent);
+    else
+        simpleStatement(compiler);
+}
+
+// try:
+//     body
+// catch KeyError as e:        (or catch (KeyError, IndexError) as e:,
+//     ...                      catch KeyError:, catch e:, catch:)
+// catch e:
+//     ...
+// final:
+//     cleanup (runs after the body/catch, and when an exception escapes)
+//
+//   OP_TRY H1; body; OP_ENDTRY; OP_NIL; JMP F
+//   H1: [exc] -> <exc> hidden local
+//       (with final: OP_TRY H2)
+//       per clause: [GETV <exc>; types; OP_EXCMATCH; JIF next; POP]
+//                   bind; body; (OP_ENDTRY); OP_NIL; JMP F
+//                   next: POP
+//       no clause matched: (OP_ENDTRY); GETV <exc>; JMP F   (OP_RAISE without final:)
+//   H2: [exc2] (falls into F)
+//   F:  [pending exception or Nil] final-body; OP_RERAISE
 void tryStatement(Compiler *compiler)
 {
     size_t indent = getIndent(compiler);
@@ -381,36 +430,105 @@ void tryStatement(Compiler *compiler)
     consumeToken(compiler, COLON, "expected ':' after try");
     int tryJump = emitJump(compiler, OP_TRY);
     compiler->tryDepth++;
-    if (matchToken(compiler, NEWLINE))
-        block(compiler, indent);
-    else
-        simpleStatement(compiler);
+    blockOrSimple(compiler, indent);
     compiler->tryDepth--;
     emitByte(compiler, OP_ENDTRY);
-    int afterCatch = emitJump(compiler, OP_JMP);
+
+    int jumpsToFinal[64];
+    int finalJumps = 0;
+    emitByte(compiler, OP_NIL);
+    jumpsToFinal[finalJumps++] = emitJump(compiler, OP_JMP);
     patchJump(compiler, tryJump);
-    // The catch arm. Optional `<name>` binding before the colon.
-    if (!matchToken(compiler, CATCH))
-    {
-        // No `catch` follows — equivalent to `catch _:` (discard
-        // the exception). Still need to consume the pushed value
-        // so the operand stack stays balanced.
-        emitByte(compiler, OP_POP);
-        patchJump(compiler, afterCatch);
-        return;
-    }
-    if (matchToken(compiler, NAME))
-    {
-        u32 nameIdx = identifierConstant(compiler, &compiler->parser->previous);
-        emitSetV(compiler, nameIdx);
-    }
+
+    // Handler: stash the exception in a hidden local.
+    static int tryCounter = 0;
+    char excBuf[32];
+    Token excTok = {.token = excBuf};
+    excTok.length = snprintf(excBuf, sizeof(excBuf), "<exc_%d>", tryCounter++);
+    u32 excName = identifierConstant(compiler, &excTok);
+    emitSetV(compiler, excName);
     emitByte(compiler, OP_POP);
-    consumeToken(compiler, COLON, "expected ':' after catch [name]");
-    if (matchToken(compiler, NEWLINE))
-        block(compiler, indent);
-    else
-        simpleStatement(compiler);
-    patchJump(compiler, afterCatch);
+
+    // Catch clauses run under their own handler so that a `final:` block
+    // still runs if a clause raises (without one, F just re-raises).
+    int innerTry = emitJump(compiler, OP_TRY);
+    bool catchAll = false;
+    while (!catchAll && checkToken(compiler, CATCH) && getIndent(compiler) == indent)
+    {
+        advanceToken(compiler); // `catch`
+        bool typed = false;
+        Token binding;
+        bool hasBinding = false;
+        if (isCatchBinding(compiler))
+        {
+            // `catch e:` — bind everything.
+            advanceToken(compiler);
+            binding = compiler->parser->previous;
+            hasBinding = true;
+        }
+        else if (!checkToken(compiler, COLON))
+        {
+            typed = true;
+            emitGetV(compiler, excName);
+            parsePrecedence(compiler, PREC_OR);
+            if (matchToken(compiler, AS))
+            {
+                consumeToken(compiler, NAME, "expected a name after 'as'.");
+                binding = compiler->parser->previous;
+                hasBinding = true;
+            }
+        }
+        int nextClause = -1;
+        if (typed)
+        {
+            emitByte(compiler, OP_EXCMATCH);
+            nextClause = emitJump(compiler, OP_JIF);
+            emitByte(compiler, OP_POP);
+        }
+        else
+            catchAll = true;
+        if (hasBinding)
+        {
+            emitGetV(compiler, excName);
+            emitStoreName(compiler, &binding);
+            emitByte(compiler, OP_POP);
+        }
+        consumeToken(compiler, COLON, "expected ':' after catch clause.");
+        compiler->tryDepth++; // the clause runs under the inner handler
+        blockOrSimple(compiler, indent);
+        compiler->tryDepth--;
+        emitByte(compiler, OP_ENDTRY);
+        emitByte(compiler, OP_NIL);
+        if (finalJumps < 64)
+            jumpsToFinal[finalJumps++] = emitJump(compiler, OP_JMP);
+        else
+            error(compiler, "too many catch clauses.");
+        if (nextClause >= 0)
+        {
+            patchJump(compiler, nextClause);
+            emitByte(compiler, OP_POP);
+        }
+    }
+    if (!catchAll)
+    {
+        // Nothing matched: carry the exception to the final block, which
+        // re-raises it after running.
+        emitByte(compiler, OP_ENDTRY);
+        emitGetV(compiler, excName);
+        jumpsToFinal[finalJumps++] = emitJump(compiler, OP_JMP);
+    }
+    // A clause raised: its exception is pending for the final block.
+    patchJump(compiler, innerTry);
+
+    for (int i = 0; i < finalJumps; i++)
+        patchJump(compiler, jumpsToFinal[i]);
+    if (checkToken(compiler, FINALLY) && getIndent(compiler) == indent)
+    {
+        advanceToken(compiler);
+        consumeToken(compiler, COLON, "expected ':' after final");
+        blockOrSimple(compiler, indent);
+    }
+    emitByte(compiler, OP_RERAISE);
 }
 
 // raise <expr>:

@@ -40,7 +40,7 @@ Value newStringMethod(MVM *vm, uint argc, Value args[])
 {
     if (argc > 1)
     {
-        runtimeError(vm, "str() takes  1 argument (%d given)", argc);
+        runtimeError(vm, "TypeError: str() takes 1 argument (%d given)", argc);
         return V_EMPTY_VAL;
     }
     if (argc == 0)

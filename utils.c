@@ -126,7 +126,7 @@ Value typefn(MVM *vm, uint argc, Value argv[])
     UNUSED(vm);
     if (argc != 1)
     {
-        runtimeError(vm, "type() only takes 1 argument");
+        runtimeError(vm, "TypeError: type() takes 1 argument");
         return V_EMPTY_VAL;
     }
     char *type = getType(pop(vm));

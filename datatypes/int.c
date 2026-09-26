@@ -31,7 +31,7 @@ Value newIntMethod(MVM *vm, uint argc, Value args[])
 {
     if (argc > 1)
     {
-        runtimeError(vm, "int() takes  1 argument (%d given)", argc);
+        runtimeError(vm, "TypeError: int() takes 1 argument (%d given)", argc);
         return V_EMPTY_VAL;
     }
     if (argc == 0)
@@ -51,12 +51,12 @@ Value newIntMethod(MVM *vm, uint argc, Value args[])
         long value = strtol(str, &end, 10);
         if (*str == '\0' || *end != '\0')
         {
-            runtimeError(vm, "invalid literal for int(): '%s'", str);
+            runtimeError(vm, "ValueError: invalid literal for int(): '%s'", str);
             return V_EMPTY_VAL;
         }
         return valueFromLong(vm, value);
     }
-    runtimeError(vm, "int() can't convert %s", valueTypeName(v));
+    runtimeError(vm, "TypeError: int() can't convert %s", valueTypeName(v));
     return V_EMPTY_VAL;
 }
 void defineIntMethods(MVM *vm)

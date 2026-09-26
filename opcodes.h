@@ -101,9 +101,13 @@ typedef enum
     //   OP_SET n                 [x0 .. xn-1] -> [set] (set literal)
     OP_SET,
     //   OP_FORMAT conv           [value, spec] -> [string] (f"{value!conv:spec}")
-    OP_FORMAT
+    OP_FORMAT,
+    //   OP_EXCMATCH              [exc, types] -> [bool] (catch Types)
+    OP_EXCMATCH,
+    //   OP_RERAISE               [pending] -> [] (end of final:; raises unless Nil)
+    OP_RERAISE
 } OpCode;
 
 // Number of opcodes (keep in sync with the last enum entry).
-#define OP_COUNT (OP_FORMAT + 1)
+#define OP_COUNT (OP_RERAISE + 1)
 #endif

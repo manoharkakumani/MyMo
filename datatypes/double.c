@@ -32,7 +32,7 @@ Value newDoubleMethod(MVM *vm, uint argc, Value args[])
 {
     if (argc > 1)
     {
-        runtimeError(vm, "double() takes  1 argument (%d given)", argc);
+        runtimeError(vm, "TypeError: double() takes 1 argument (%d given)", argc);
         return V_EMPTY_VAL;
     }
     if (argc == 0)
@@ -50,12 +50,12 @@ Value newDoubleMethod(MVM *vm, uint argc, Value args[])
         double value = strtod(str, &end);
         if (*str == '\0' || *end != '\0')
         {
-            runtimeError(vm, "invalid literal for double(): '%s'", str);
+            runtimeError(vm, "ValueError: invalid literal for double(): '%s'", str);
             return V_EMPTY_VAL;
         }
         return V_DOUBLE_VAL(value);
     }
-    runtimeError(vm, "double() can't convert %s", valueTypeName(v));
+    runtimeError(vm, "TypeError: double() can't convert %s", valueTypeName(v));
     return V_EMPTY_VAL;
 }
 

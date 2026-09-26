@@ -750,7 +750,7 @@ static bool classInherits(MyMoClass *klass, MyMoObject *target)
     return false;
 }
 
-static bool isInstanceOf(MVM *vm, Value x, Value cls)
+bool isInstanceOf(MVM *vm, Value x, Value cls)
 {
     if (!V_IS_OBJ(cls))
         return false;
@@ -786,6 +786,31 @@ static Value isinstancefn(MVM *vm, uint argc, Value argv[])
     bool result = isInstanceOf(vm, argv[0], argv[1]);
     popArgs(vm, argc);
     return V_BOOL_VAL(result);
+}
+
+// typename(x): the class name of an instance ("Point"), or the builtin
+// type's name ("int", "str", "list", ...).
+static Value typenamefn(MVM *vm, uint argc, Value argv[])
+{
+    if (!arity(vm, "typename", argc, 1, 1))
+        return V_EMPTY_VAL;
+    Value x = argv[0];
+    MyMoString *name = NULL;
+    if (V_IS_OBJ_TYPE(x, OBJ_INSTANCE))
+        name = AS_INSTANCE(V_AS_OBJ(x))->klass->name;
+    else
+    {
+        MyMoBuiltInClass *klass = vm->builtInClasses[valueObjType(x)];
+        if (klass)
+            name = klass->name;
+    }
+    popArgs(vm, argc);
+    if (name)
+        return V_OBJ_VAL(AS_OBJECT(name));
+    const char *type = valueTypeName(x); // "<object 'name'>"
+    const char *start = strchr(type, '\'');
+    int len = start ? (int)(strrchr(type, '\'') - start - 1) : (int)strlen(type);
+    return V_OBJ_VAL(AS_OBJECT(newString(vm, start ? start + 1 : type, len)));
 }
 
 static Value callablefn(MVM *vm, uint argc, Value argv[])
@@ -931,6 +956,7 @@ void defineBuiltInHelpers(MVM *vm)
     defineBuiltInFunction(vm, "chr", chrfn);
     defineBuiltInFunction(vm, "isinstance", isinstancefn);
     defineBuiltInFunction(vm, "callable", callablefn);
+    defineBuiltInFunction(vm, "typename", typenamefn);
     defineBuiltInFunction(vm, "exit", exitfn);
     defineBuiltInFunction(vm, "format", formatfn);
 

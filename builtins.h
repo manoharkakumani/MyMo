@@ -26,4 +26,8 @@ bool takeKeyword(MVM *vm, const char *name, Value *out);
 // Takes every remaining keyword argument: a dict of them, or NULL.
 MyMoDict *takeAllKeywords(MVM *vm);
 
+// isinstance(x, cls): cls is a class (inheritance counts), a builtin type
+// or a tuple of them.
+bool isInstanceOf(MVM *vm, Value x, Value cls);
+
 #endif

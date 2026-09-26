@@ -58,10 +58,10 @@ void arityError(MVM *vm, MyMoFunction *function, int argc)
 {
     int required = function->argc - function->defaultCount;
     if (required == function->argc)
-        runtimeError(vm, "TypeError : %s() takes %d argument%s but got %d.",
+        runtimeError(vm, "TypeError: %s() takes %d argument%s but got %d.",
                      function->name->value, function->argc, function->argc == 1 ? "" : "s", argc);
     else
-        runtimeError(vm, "TypeError : %s() takes %d to %d arguments but got %d.",
+        runtimeError(vm, "TypeError: %s() takes %d to %d arguments but got %d.",
                      function->name->value, required, function->argc, argc);
 }
 
