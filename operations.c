@@ -3,8 +3,41 @@
 #include "vm.h"
 #include "datatypes/datatypes.h"
 
+// Bytewise lexicographic order (like strcmp, but length-aware so
+// embedded NULs compare correctly): <0, 0 or >0.
+int compareStrings(MyMoString *a, MyMoString *b)
+{
+    int n = a->length < b->length ? a->length : b->length;
+    int c = memcmp(a->value, b->value, (size_t)n);
+    if (c != 0)
+        return c;
+    return a->length - b->length;
+}
+
+// New sequence holding a's elements followed by b's (list + list,
+// tuple + tuple). Operands are left untouched.
+static void concatArrays(MVM *vm, MyMoObjectArray *out, MyMoObjectArray *a, MyMoObjectArray *b)
+{
+    for (int i = 0; i < a->count; i++)
+        writeMyMoObjectArray(vm, out, a->objects[i]);
+    for (int i = 0; i < b->count; i++)
+        writeMyMoObjectArray(vm, out, b->objects[i]);
+}
+
 MyMoObject *addition(MVM *vm, MyMoObject *a, MyMoObject *b)
 {
+    if (IS_LIST(a) && IS_LIST(b))
+    {
+        MyMoList *out = newList(vm);
+        concatArrays(vm, &out->values, &AS_LIST(a)->values, &AS_LIST(b)->values);
+        return AS_OBJECT(out);
+    }
+    if (IS_TUPLE(a) && IS_TUPLE(b))
+    {
+        MyMoTuple *out = newTuple(vm);
+        concatArrays(vm, &out->values, &AS_TUPLE(a)->values, &AS_TUPLE(b)->values);
+        return AS_OBJECT(out);
+    }
     if (IS_BOOL(a) && IS_BOOL(b))
     {
         bool a_val = BOOL_VAL(a);

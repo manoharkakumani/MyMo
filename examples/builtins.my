@@ -1,0 +1,60 @@
+# List/string methods, string comparison, sequence +, 1-tuples, super().
+xs = [5, 3, 9, 1]
+xs.sort()
+print(xs, xs.pop(), xs.pop(0), xs)
+xs.insert(0, 7)
+xs.insert(-1, 8)
+xs.extend([10, 11])
+print(xs, xs.index(8), xs.contains(3), xs.contains(99))
+xs.remove(8)
+xs.reverse()
+print(xs)
+names = ["bo", "Ana", "cy", "ana"]
+names.sort()
+print(names)
+print([1, 2] + [3], (1, 2) + (3, 4))
+print("apple" < "banana", "b" > "a", "abc" < "abd", "ab" < "abc", "x" >= "x", "a" <= "b")
+s = "  Hello, World  "
+print(s.strip(), s.upper(), s.lower().strip())
+print("a,b,,c".split(","), "one  two\tthree".split(), "-".join(["x", "y", "z"]))
+print("hello".find("ll"), "hello".find("z"), "hello".contains("ell"))
+print("path/to/file.my".startswith("path"), "file.my".endswith(".my"))
+print("aaa".replace("a", "bb"), "hello world".replace("o", "0"))
+empty = []
+try:
+    empty.pop()
+catch e:
+    print("caught:", e)
+try:
+    [1, "a"].sort()
+catch e:
+    print("caught:", e)
+
+class Animal:
+    fn __init__(self, name):
+        self.name = name
+    fn speak(self):
+        return self.name + " makes a sound"
+    fn kind(self):
+        return "animal"
+
+class Dog(Animal):
+    fn __init__(self, name, breed):
+        super().__init__(name)
+        self.breed = breed
+    fn speak(self):
+        return super().speak() + " (woof)"
+
+class Puppy(Dog):
+    fn speak(self):
+        return super().speak() + " (tiny)"
+
+d = Dog("rex", "lab")
+print(d.name, d.breed, d.speak(), d.kind())
+p = Puppy("bit", "pug")
+print(p.name, p.breed, p.speak())
+print(type(p), d.speak())
+
+print((1,), (1,) + (2, 3), (5), type((5,)), (1, 2,), ())
+t = (7,)
+print(t.__len__(), t[0])

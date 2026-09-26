@@ -110,6 +110,11 @@ MyMoBoundMethod *newBoundMethod(MVM *vm, MyMoObject *self, MyMoFunction *method)
 
 void defineMethod(MVM *vm, MyMoObjectType type, const char *name, BuiltInfunction function);
 
+// For builtin methods: validate arity (min..max args), fetch the bound
+// receiver from the callee slot under the args, and pop the args (they
+// stay readable through argv[]). Returns NULL after raising on error.
+MyMoObject *methodEnter(MVM *vm, const char *name, uint argc, uint min, uint max);
+
 void printFunction(MyMoFunction *function);
 void printClouser(MyMoClouser *clouser);
 void printBuiltInFunction(MyMoBuiltInFunction *builtInFunction);

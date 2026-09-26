@@ -46,3 +46,12 @@ void printInstance(MyMoInstance *instance)
 {
     printf("<instance of %s at %p>", instance->klass->name->value, instance);
 }
+
+
+MyMoSuper *newSuper(MVM *vm, MyMoObject *self, MyMoClass *klass)
+{
+    MyMoSuper *super = AllocateObject(vm, MyMoSuper, OBJ_SUPER);
+    super->self = self;
+    super->klass = klass;
+    return super;
+}

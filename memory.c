@@ -106,6 +106,11 @@ void freeObject(MVM *vm, MyMoObject *object)
         Free(vm, MyMoFunction, object);
         break;
     }
+    case OBJ_SUPER:
+    {
+        Free(vm, MyMoSuper, object);
+        break;
+    }
     case OBJ_BOUND_METHOD:
     {
         Free(vm, MyMoBoundMethod, object);

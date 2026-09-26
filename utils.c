@@ -224,8 +224,23 @@ Value superfn(MVM *vm, uint argc, MyMoObject *argv[])
                 return objectToValue(klass);
             }
             else{
-                MyMoClass *superClass = AS_CLASS(klass);
-                return objectToValue(superClass->superClasses.objects[superClass->superClasses.count-1]);
+                // Inside a method: return a proxy that binds the parent's
+                // methods to this method's `self` (argv[0]), so
+                // `super().__init__(x)` / `super().name()` just work.
+                // `klass` is the class that defined the running method, so
+                // inherited methods resolve against *their* parent.
+                MyMoClass *defining = AS_CLASS(klass);
+                if (defining->superClasses.count == 0 || !IS_CLASS(defining->superClasses.objects[defining->superClasses.count - 1]))
+                {
+                    runtimeError(vm, "TypeError: super(): class '%s' has no user-defined parent class.", defining->name->value);
+                    return V_EMPTY_VAL;
+                }
+                CallFrame *frame = vm->fiber->callFrames[vm->fiber->frameCount];
+                MyMoObject *self = function->argc <= CALLFRAME_ARGS_INLINE
+                    ? valueToBoxedObject(vm, frame->args[0])
+                    : getEntry(vm, &frame->locals, AS_OBJECT(function->argv[0]));
+                MyMoClass *parent = AS_CLASS(defining->superClasses.objects[defining->superClasses.count - 1]);
+                return objectToValue(AS_OBJECT(newSuper(vm, self, parent)));
             }
         }
         case 1:{

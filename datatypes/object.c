@@ -132,6 +132,9 @@ void printObject(MyMoObject *object)
     case OBJ_WILDCARD:
         printf("_");
         break;
+    case OBJ_SUPER:
+        printf("<super of %s>", AS_SUPER(object)->klass->name->value);
+        break;
     default:
         printf("Unknown type %d", object->type);
         printf("%p", object);
@@ -183,6 +186,8 @@ char *getType(MyMoObject *object)
         return "<object 'code'>";
     case OBJ_ITER:
         return "<object 'iter'>";
+    case OBJ_SUPER:
+        return "<object 'super'>";
     default:
         return "<object 'unknown'>";
     }

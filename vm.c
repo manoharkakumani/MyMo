@@ -1020,6 +1020,11 @@ int runMVM(MVM *vm)
             if (inplace) UNUSED(ReadByte());
             OperatorOverLoad(a, b, inplace ? "<=" : ">");
         }
+        if (IS_STRING(a) && IS_STRING(b))
+        {
+            pushV(vm, V_BOOL_VAL(compareStrings(AS_STRING(a), AS_STRING(b)) > 0));
+            DISPATCH();
+        }
         if (!IS_NUMBER(a) || !IS_NUMBER(b))
         {
             runtimeError(vm, "Operands must be numbers.");
@@ -1064,6 +1069,11 @@ int runMVM(MVM *vm)
         {
             if (inplace) UNUSED(ReadByte());
             OperatorOverLoad(a, b, inplace ? ">=" : "<");
+        }
+        if (IS_STRING(a) && IS_STRING(b))
+        {
+            pushV(vm, V_BOOL_VAL(compareStrings(AS_STRING(a), AS_STRING(b)) < 0));
+            DISPATCH();
         }
         if (!IS_NUMBER(a) || !IS_NUMBER(b))
         {
@@ -2052,6 +2062,31 @@ int runMVM(MVM *vm)
             }
             runtimeError(vm, "Undefined property '%s'.", STRING_VAL(variable));
             goto _runtime_error;
+        }
+        case OBJ_SUPER:
+        {
+            MyMoSuper *super = AS_SUPER(peek(vm, 0));
+            MyMoObject *variable = ReadObject();
+            MyMoObject *method = getEntry(vm, super->klass->methods, variable);
+            if (!method || agp)
+            {
+                runtimeError(vm, agp ? "TypeError: can't assign through super()."
+                                     : "AttributeError: parent class '%s' has no method '%s'.",
+                             super->klass->name->value, STRING_VAL(variable));
+                goto _runtime_error;
+            }
+            if (IS_FUNCTION(method))
+            {
+                // A parent __init__ reached through super() returns `self`
+                // via OP_FRET's classCall path; balance the counter it
+                // decrements so the child's own __init__ still does.
+                if (AS_FUNCTION(method)->type == FN_INIT)
+                    vm->classCall++;
+                method = AS_OBJECT(newBoundMethod(vm, super->self, AS_FUNCTION(method)));
+            }
+            pop(vm); // pop the super proxy
+            push(vm, method);
+            DISPATCH();
         }
         case OBJ_CLASS:
         {

@@ -22,7 +22,7 @@ void printTuple(MyMoTuple *tuple)
         if (i != tuple->values.count - 1)
             printf(", ");
     }
-    printf(")");
+    printf(tuple->values.count == 1 ? ",)" : ")");
 }
 
 Value lenTupleMethod(MVM *vm, uint argc, MyMoObject *args[])

@@ -705,6 +705,7 @@ void grouping(Compiler *compiler, bool canAssign)
     else
     {
         u32 count = 0;
+        bool sawComma = false; // `(x,)` is a 1-tuple; `(x)` is grouping
         compiler->flags.tuple++;
         // Track element position per nesting level so `_name` bindings
         // can record a full subscript path. Max 4 levels of nesting;
@@ -733,9 +734,9 @@ void grouping(Compiler *compiler, bool canAssign)
                 if (trackPos && compiler->flags.casePatternDepth >= 1
                     && compiler->flags.casePatternDepth <= 4)
                     compiler->flags.casePatternStackPos[compiler->flags.casePatternDepth - 1]++;
-            } while (matchToken(compiler, COMMA));
+            } while (matchToken(compiler, COMMA) && (sawComma = true));
         }
-        if (count == 1)
+        if (count == 1 && !sawComma)
         {
             consumeToken(compiler, RPAR, "Expect ')' after expression.");
         }

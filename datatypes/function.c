@@ -61,6 +61,27 @@ void defineMethod(MVM *vm, MyMoObjectType type, const char *name, BuiltInfunctio
     setEntry(vm, vm->builtInClasses[type]->methods, methodName, method);
 }
 
+MyMoObject *methodEnter(MVM *vm, const char *name, uint argc, uint min, uint max)
+{
+    if (argc < min || argc > max)
+    {
+        if (min == max)
+            runtimeError(vm, "TypeError: %s() takes %u argument%s (%u given)", name, min, min == 1 ? "" : "s", argc);
+        else
+            runtimeError(vm, "TypeError: %s() takes %u to %u arguments (%u given)", name, min, max, argc);
+        return NULL;
+    }
+    MyMoObject *self = AS_BUILTIN_FUNCTION(peek(vm, argc))->self;
+    if (self == NULL)
+    {
+        runtimeError(vm, "TypeError: %s() can only be applied on instance", name);
+        return NULL;
+    }
+    for (uint i = 0; i < argc; i++)
+        pop(vm);
+    return self;
+}
+
 void printFunction(MyMoFunction *function)
 {
     switch (function->type)
