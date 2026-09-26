@@ -125,5 +125,6 @@ void freeCompiler(Compiler *compiler);
 Chunk *currentChunk(Compiler *compiler);
 
 MyMoFunction *compile(MVM *vm, const char *src, const char *path, CompileType type);
+void attachSource(MyMoFunction *function, const char *src);
 
 #endif

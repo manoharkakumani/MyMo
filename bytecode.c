@@ -7,9 +7,11 @@
 uint makeConstant(Compiler *compiler, MyMoObject *value)
 {
     int constant = addConstant(compiler->parser->vm, currentChunk(compiler), value);
-    if (constant > UINT16_MAX)
+    // Constant operands are one byte wide; a larger index would silently
+    // wrap and read the wrong constant.
+    if (constant > UINT8_MAX)
     {
-        error(compiler, "Too many constants in one chunk.");
+        error(compiler, "Too many distinct constants in one function (max 256); split it into smaller functions or modules.");
         return 0;
     }
     return (uint)constant;
@@ -18,9 +20,11 @@ uint makeConstant(Compiler *compiler, MyMoObject *value)
 uint makeConstantV(Compiler *compiler, Value v)
 {
     int constant = addConstantV(compiler->parser->vm, currentChunk(compiler), v);
-    if (constant > UINT16_MAX)
+    // Constant operands are one byte wide; a larger index would silently
+    // wrap and read the wrong constant.
+    if (constant > UINT8_MAX)
     {
-        error(compiler, "Too many constants in one chunk.");
+        error(compiler, "Too many distinct constants in one function (max 256); split it into smaller functions or modules.");
         return 0;
     }
     return (uint)constant;

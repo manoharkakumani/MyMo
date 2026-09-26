@@ -41,6 +41,7 @@ failed_names=()
 
 run_one() {
   local script="$1"
+  local label="${2:-}"
   local name
   name=$(basename "$script" .my)
   local out err rc
@@ -51,8 +52,8 @@ run_one() {
 
   if [ $rc -ne 0 ]; then
     fail=$((fail + 1))
-    failed_names+=("$script (exit $rc)")
-    printf '  FAIL  %-40s exit=%d\n' "$script" "$rc"
+    failed_names+=("$script$label (exit $rc)")
+    printf '  FAIL  %-40s exit=%d\n' "$script$label" "$rc"
     if [ -n "$err" ]; then
       printf '         stderr: %s\n' "$(echo "$err" | head -3 | tr '\n' ' ')"
     fi
@@ -69,14 +70,14 @@ run_one() {
     norm_golden=$(sed -E 's/0x[0-9a-fA-F]+/0xADDR/g' "$golden")
     if ! diff -u <(echo "$norm_golden") <(echo "$norm_out") >/dev/null; then
       fail=$((fail + 1))
-      failed_names+=("$script (output mismatch)")
-      printf '  DIFF  %-40s (vs %s)\n' "$script" "$golden"
+      failed_names+=("$script$label (output mismatch)")
+      printf '  DIFF  %-40s (vs %s)\n' "$script$label" "$golden"
       return
     fi
   fi
 
   pass=$((pass + 1))
-  printf '  ok    %-40s\n' "$script"
+  printf '  ok    %-40s\n' "$script$label"
 }
 
 echo "Running examples through $BIN ..."
@@ -89,6 +90,24 @@ for f in examples/*.my; do
   run_one "$f"
 done
 [ -f test.my ] && run_one test.my
+
+# Second pass: the first run wrote a .myc next to each script, so this one
+# loads bytecode from the cache instead of compiling. Output must be
+# identical (same goldens).
+echo
+echo "Re-running from the .myc bytecode cache ..."
+for f in examples/*.my test.my; do
+  [ -f "$f" ] || continue
+  if [ $STRICT -eq 0 ] && is_skipped "$f"; then continue; fi
+  if [ ! -f "${f}c" ]; then
+    fail=$((fail + 1))
+    failed_names+=("$f (no .myc cache written)")
+    printf '  FAIL  %-40s no .myc written\n' "$f"
+    continue
+  fi
+  run_one "$f" " [cached]"
+done
+/bin/rm -f examples/*.myc test.myc 2>/dev/null
 
 echo
 echo "Results: $pass passed, $fail failed"

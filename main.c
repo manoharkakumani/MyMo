@@ -475,9 +475,11 @@ int main(int argc, const char *argv[])
             fprintf(stderr, "Invalid MyMo file.\n");
             exit(74);
         }
-        else if (strcmp(extension, ".my") == 0)
+        else if (strcmp(extension, ".my") == 0 || strcmp(extension, ".myc") == 0)
         {
-            char *path = pathResolver(vm, (char *)argv[1]);
+            // A .myc is precompiled bytecode (see cache.c): load it as-is.
+            char *path = strcmp(extension, ".myc") == 0 ? strdup(actualpath)
+                                                        : pathResolver(vm, (char *)argv[1]);
             MyMoFunction *function = runFile(vm, path);
             size_t len = strlen(path);
             if (path[len - 1] == 'c')

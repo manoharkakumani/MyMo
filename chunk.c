@@ -51,12 +51,17 @@ void freeChunk(MVM *vm, Chunk *chunk)
 
 int addConstant(MVM *vm, Chunk *chunk, MyMoObject *object)
 {
-    writeValueArray(vm, &chunk->constants, V_OBJ_VAL(object));
-    return chunk->constants.count - 1;
+    return addConstantV(vm, chunk, V_OBJ_VAL(object));
 }
 
+// Reuse an identical constant when one exists. Strings are interned, so a
+// name referenced N times occupies one slot instead of N — this matters
+// because constant operands are a single byte (256 slots per chunk).
 int addConstantV(MVM *vm, Chunk *chunk, Value v)
 {
+    for (int i = 0; i < chunk->constants.count; i++)
+        if (chunk->constants.values[i] == v)
+            return i;
     writeValueArray(vm, &chunk->constants, v);
     return chunk->constants.count - 1;
 }

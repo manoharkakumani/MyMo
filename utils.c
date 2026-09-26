@@ -333,18 +333,24 @@ MyMoFunction *runFile(MVM *vm, char *path)
         return compile(vm, src, path, COMPILE_SCRIPT);
     }
     MyMoFunction *function;
+    int len = strlen(path);
+    if (path[len - 1] == 'c')
+    {
+        // A bare .myc (shipped without its source): no hash to check.
+        function = cacheRead(vm, path, 0);
+        if (function == NULL)
+        {
+            runtimeError(vm, "Module Error: '%s' is not a valid bytecode file for this MyMo version.", path);
+            exit(74);
+        }
+        return function;
+    }
     FILE *file = fopen(path, "rb");
     if (file == NULL)
     {
         runtimeError(vm, "Module Error: could not open module '%s'.", path);
         exit(74);
     }
-    int len = strlen(path);
-    if (path[len - 1] == 'c')
-    {
-        function = functionDeserialize(vm, file);
-    }
-    else
     {
         fseek(file, 0L, SEEK_END);
         size_t fileSize = ftell(file);
@@ -362,7 +368,24 @@ MyMoFunction *runFile(MVM *vm, char *path)
             exit(74);
         }
         buffer[bytesRead] = '\0';
-        function = compile(vm, buffer, path, COMPILE_SCRIPT);
+        // Reuse foo.myc when it was written for exactly this source;
+        // otherwise compile and refresh it. MYMO_NOCACHE=1 disables both.
+        bool useCache = getenv("MYMO_NOCACHE") == NULL;
+        uint64_t hash = cacheHash(buffer, bytesRead);
+        char *cachePath = New(char, len + 2);
+        memcpy(cachePath, path, len);
+        cachePath[len] = 'c';
+        cachePath[len + 1] = '\0';
+        function = useCache ? cacheRead(vm, cachePath, hash) : NULL;
+        if (function)
+            attachSource(function, buffer);
+        else
+        {
+            function = compile(vm, buffer, path, COMPILE_SCRIPT);
+            if (function && useCache)
+                cacheWrite(function, cachePath, hash);
+        }
+        free(cachePath);
         free(buffer);
     }
     fclose(file);
@@ -464,16 +487,8 @@ char *pathResolver(MVM *vm, char *_path)
     Stat cachefile;
     int havePath = (stat(path, &file) == 0);
     int haveCache = (stat(cachePath, &cachefile) == 0);
-    if (havePath && haveCache)
-    {
-        if (cachefile.st_mtime < file.st_mtime)
-        {
-            free(cachePath);
-            return path;
-        }
-        free(path);
-        return cachePath;
-    }
+    // Prefer the source whenever it exists: runFile checks the sibling
+    // .myc against the source's hash itself. A lone .myc still runs.
     if (havePath)
     {
         free(cachePath);

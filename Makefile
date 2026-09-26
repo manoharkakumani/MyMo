@@ -14,10 +14,7 @@
 CC          ?= cc
 CSTD        ?= -std=c11
 WARN        := -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function
-# NOCACHE: disable .myc bytecode-cache writes. The cache format predates the
-# Phase-1 redesign and cannot represent inline NaN-boxed Values; re-enable
-# after step 1.7 once the cache format is rev'd to tag inline values.
-COMMON      := $(CSTD) $(WARN) -fno-strict-aliasing -DNOCACHE
+COMMON      := $(CSTD) $(WARN) -fno-strict-aliasing
 RELEASE     := -O3 -DNDEBUG
 DEBUG       := -O0 -g3 -DDEBUG_PRINT_CODE -DDEBUG_STACK_TRACE
 LDFLAGS     := -lm -lcurl -lsqlite3
@@ -78,6 +75,14 @@ modules/stdlib_src.h: $(STDLIB_SRCS) scripts/gen_stdlib.sh
 	@scripts/gen_stdlib.sh $@ stdlib
 
 stdlib: modules/stdlib_src.h
+
+# Bytecode-cache build stamp (see cache.c): cache.o is rebuilt whenever any
+# other object changes, picking up a fresh MYMO_BUILD_ID, so .myc files
+# written by an older interpreter build are ignored instead of reused.
+BUILD_ID     = $(shell date +%s)
+cache.o:  $(filter-out cache.o,$(OBJ_REL))
+cache.do: $(filter-out cache.do,$(OBJ_DBG))
+cache.o cache.do: CFLAGS_EXTRA += -DMYMO_BUILD_ID='"$(BUILD_ID)"'
 
 # utils.c is the only consumer of the embedded sources, so depend
 # on the generated header there (both release + debug objects).

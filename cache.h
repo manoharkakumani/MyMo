@@ -2,8 +2,20 @@
 #define __CACHE_H__
 
 #include "vm.h"
+#include <stdint.h>
 
-void functionSerialize(MyMoFunction *function, FILE *stream);
-MyMoFunction *functionDeserialize(MVM *vm, FILE *stream);
+// .myc bytecode cache — format and invariants documented in cache.c.
+
+// Content hash of a source file (never 0; 0 means "unknown source").
+uint64_t cacheHash(const char *src, size_t len);
+
+// Persist `fn` to `cachePath` (atomically). False on any failure; the
+// caller just runs uncached.
+bool cacheWrite(MyMoFunction *fn, const char *cachePath, uint64_t sourceHash);
+
+// Load a cached function. With sourceHash != 0 the cache must have been
+// written for exactly that source; 0 skips the check (running a bare .myc).
+// NULL when missing, stale, from another format version, or corrupt.
+MyMoFunction *cacheRead(MVM *vm, const char *cachePath, uint64_t sourceHash);
 
 #endif
