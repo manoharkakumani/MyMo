@@ -37,6 +37,14 @@ struct vm
     MyMoObject **grayStack;
     int grayCount;
     int grayCapacity;
+    // Embedding (include/mymo.h). mymo_call runs a nested dispatch loop
+    // that returns when the call's frame returns: exitFrame/exitFiber
+    // mark that boundary (-1/NULL when not in a nested call). try
+    // handlers from outside the boundary are not used inside it.
+    int exitFrame;
+    struct fiber *exitFiber;
+    ValueArray hostRoots;       // values retained by the host (GC roots)
+    char lastError[512];        // message of the most recent runtime error
 };
 
 typedef enum
@@ -53,5 +61,6 @@ I_Result interpreter(MVM *vm, MyMoFunction *main_);
 void runtimeError(MVM *vm, const char *format, ...);
 
 bool caller(MVM *vm, MyMoObject *callee, u32 argc);
+void unwindFrames(MVM *vm, uint depth);
 
 #endif

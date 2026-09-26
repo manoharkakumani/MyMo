@@ -26,6 +26,10 @@ MVM *initVM()
     memset(vm->builtInClasses, 0, sizeof(vm->builtInClasses));
     vm->fiber = newFiber(vm, NULL);
     vm->rootFiber = vm->fiber;
+    vm->exitFrame = -1;
+    vm->exitFiber = NULL;
+    vm->lastError[0] = '\0';
+    initValueArray(vm, &vm->hostRoots);
     initDict(&vm->globals);
     initDict(&vm->builtins);
     initDict(&vm->strings);
@@ -59,6 +63,7 @@ void freeVM(MVM *vm)
     freeDict(vm, &vm->builtInModules);
     freeObjects(vm);
     freeRetiredFrames(vm); // after freeObjects: freeFiber retires captured frames
+    freeValueArray(vm, &vm->hostRoots);
     free(vm->grayStack);
     free(vm);
 }
@@ -87,6 +92,18 @@ static int extractSourceLine(const char *source, int lineNo, char *out, size_t o
     return (int)n;
 }
 
+// A try handler that may catch the current error: the fiber's innermost
+// one, unless it was installed outside the nested mymo_call we're in.
+static bool hasActiveHandler(MVM *vm)
+{
+    MyMoFiber *fiber = vm->fiber;
+    if (fiber->handlerCount == 0)
+        return false;
+    if (vm->exitFiber == fiber && (int)fiber->handlers[fiber->handlerCount - 1].frameCount <= vm->exitFrame)
+        return false;
+    return true;
+}
+
 void runtimeError(MVM *vm, const char *format, ...)
 {
     // Build the message into a single buffer so we can both stash
@@ -98,12 +115,16 @@ void runtimeError(MVM *vm, const char *format, ...)
     va_start(args, format);
     vsnprintf(msg, sizeof(msg), format, args);
     va_end(args);
+    memcpy(vm->lastError, msg, sizeof(msg));
 
     // If a `try` handler is in flight and OP_RAISE didn't already
     // set a concrete exception value, expose the error message as
     // the catch-bound value. Skip the noisy traceback print in
     // that case — the user is explicitly handling this.
-    if (vm->fiber->handlerCount > 0)
+    // Inside a mymo_call whose caller has a `try` further out, the error
+    // will propagate to it through the builtin; stash it without printing.
+    bool outerHandler = vm->exitFiber == vm->fiber && vm->fiber->handlerCount > 0;
+    if (hasActiveHandler(vm) || outerHandler)
     {
         if (vm->fiber->exception == NULL)
             vm->fiber->exception = AS_OBJECT(newString(vm, msg, (int)strlen(msg)));
@@ -1975,6 +1996,12 @@ int runMVM(MVM *vm)
         frame = vm->fiber->callFrames[--vm->fiber->frameCount];
         ip = frame->ip;
         push(vm, ret);
+        // mymo_call boundary: the host-invoked frame just returned.
+        if ((int)vm->fiber->frameCount == vm->exitFrame && vm->fiber == vm->exitFiber)
+        {
+            SAVE();
+            return OK;
+        }
         DISPATCH();
     }
     OP_CLASS:
@@ -2969,7 +2996,7 @@ _runtime_error:
     // exception value (the message string, or whatever
     // OP_RAISE put on the fiber), and resume dispatching at the
     // catch arm. Otherwise propagate up to interpreter().
-    if (vm->fiber->handlerCount > 0)
+    if (hasActiveHandler(vm))
     {
         TryHandler h = vm->fiber->handlers[--vm->fiber->handlerCount];
         // Drop any frames pushed since the try-block started.
@@ -3008,7 +3035,31 @@ _runtime_error:
 #undef BitwiseOp
 #undef UnaryOp
 #undef OperatorOverLoad
-    return OK;
+    // Only reached from _runtime_error with no handler to jump to.
+    SAVE();
+    return RUNTIME_ERROR;
+}
+
+// Drop every frame above `depth` on the current fiber (after an error
+// escaped them), returning them to the frame pool or the GC.
+void unwindFrames(MVM *vm, uint depth)
+{
+    MyMoFiber *fiber = vm->fiber;
+    while (fiber->frameCount > depth)
+    {
+        CallFrame *dead = fiber->callFrames[fiber->frameCount--];
+        if (dead->function->type == FN_MODULE || dead->captured)
+            retireFrame(vm, dead);
+        else
+        {
+            if (dead->locals.count > 0 || dead->locals.entries != NULL)
+                freeDict(vm, &dead->locals);
+            dead->function = (MyMoFunction *)fiber->freeFramesHead;
+            fiber->freeFramesHead = dead;
+        }
+    }
+    while (fiber->handlerCount > 0 && fiber->handlers[fiber->handlerCount - 1].frameCount > depth)
+        fiber->handlerCount--;
 }
 
 I_Result interpreter(MVM *vm, MyMoFunction *main_)
@@ -3024,5 +3075,15 @@ I_Result interpreter(MVM *vm, MyMoFunction *main_)
     vm->runDepth++;
     I_Result i = runMVM(vm);
     vm->runDepth--;
+    if (i == RUNTIME_ERROR)
+    {
+        // Leave the VM usable for the next script / REPL line: back on
+        // the root fiber with an empty stack and no stale frames.
+        vm->fiber = vm->rootFiber;
+        unwindFrames(vm, 0);
+        vm->fiber->stack.count = 0;
+        vm->fiber->handlerCount = 0;
+        vm->fiber->exception = NULL;
+    }
     return i;
 }

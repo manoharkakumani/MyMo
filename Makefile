@@ -62,7 +62,7 @@ BIN_DEBUG   := mymo-debug
 
 .DEFAULT_GOAL := all
 
-.PHONY: all debug test bench clean ext-hello ext-strings ext-mymath ext-all stdlib
+.PHONY: all debug test bench clean lib embed-example ext-hello ext-strings ext-mymath ext-all stdlib
 
 # Embedded MyMo-source stdlib modules. Every .my file in stdlib/
 # becomes importable via `from "name" use ...` from any script.
@@ -123,7 +123,7 @@ bench: $(BIN)
 	@./scripts/bench.sh
 
 clean:
-	rm -f $(BIN) $(BIN_DEBUG) $(OBJ_REL) $(OBJ_DBG) \
+	rm -f $(BIN) $(BIN_DEBUG) $(OBJ_REL) $(OBJ_DBG) $(LIB) examples/embed/host \
 	      $(addsuffix .d,$(OBJ_REL) $(OBJ_DBG)) \
 	      examples/ext/hellomod.* examples/ext/stringsmod.* examples/ext/mymathmod.*
 
@@ -160,3 +160,18 @@ examples/ext/mymathmod.$(EXT_DYLIB): examples/ext/mymath.c
 	$(CC) $(COMMON) $(RELEASE) -shared -fPIC -I. -Iinclude -o $@ $< $(EXT_LDFLAGS)
 
 ext-all: ext-hello ext-strings ext-mymath
+
+# Embedding: libmymo.a is the interpreter without main.o, for C programs
+# that host MyMo through include/mymo.h. The example host links it.
+LIB         := libmymo.a
+LIB_LDFLAGS := -lm -lcurl -lsqlite3 $(if $(filter Linux,$(UNAME_S)),-ldl,)
+
+lib: $(LIB)
+
+$(LIB): $(filter-out main.o,$(OBJ_REL))
+	ar rcs $@ $^
+
+embed-example: examples/embed/host
+
+examples/embed/host: examples/embed/host.c $(LIB)
+	$(CC) $(COMMON) $(RELEASE) -Iinclude -I. -o $@ $< $(LIB) $(LIB_LDFLAGS)

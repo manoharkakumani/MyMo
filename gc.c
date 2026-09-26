@@ -8,8 +8,9 @@
 //
 // Roots: the current and root fibers (with their stacks and frames),
 // globals, builtins, the module tables, built-in classes, the current
-// class/module, and the process-wide singletons (nil, true, false, the
-// empty sentinel, the `_` wildcard).
+// class/module, values retained by an embedding host, and the
+// process-wide singletons (nil, true, false, the empty sentinel, the `_`
+// wildcard).
 //
 // Weak tables: the intern tables (strings, ints, doubles, numbers) don't
 // keep their entries alive. After marking, dead entries are dropped and
@@ -203,6 +204,9 @@ static void markRoots(MVM *vm)
     markObject(vm, AS_OBJECT(TrueBool));
     markObject(vm, AS_OBJECT(FalseBool));
     markObject(vm, AS_OBJECT(EmptyObject));
+    // Values the embedding host retained (mymo_retain).
+    for (int i = 0; i < vm->hostRoots.count; i++)
+        markValue(vm, vm->hostRoots.values[i]);
 }
 
 // Drop unmarked keys from an intern table and rebuild it without

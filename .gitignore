@@ -13,3 +13,5 @@ Claude.md
 *.do.d
 *.do
 mymo-debug
+libmymo.a
+examples/embed/host

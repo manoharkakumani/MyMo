@@ -621,6 +621,12 @@ void variable(Compiler *compiler, bool canAssign)
             }
             else
             {
+                // Inside call args / a list / dict / tuple, a comma ends the
+                // arrow body (`f(x => x * 3, 2)`) instead of making a tuple.
+                arrowCompiler->flags.argv = compiler->flags.argv;
+                arrowCompiler->flags.list = compiler->flags.list;
+                arrowCompiler->flags.dict = compiler->flags.dict;
+                arrowCompiler->flags.tuple = compiler->flags.tuple;
                 expression(arrowCompiler);
                 emitByte(arrowCompiler, OP_FRET);
             }
@@ -696,6 +702,12 @@ void grouping(Compiler *compiler, bool canAssign)
         }
         else
         {
+            // Inside call args / a list / dict / tuple, a comma ends the
+            // arrow body (`f(x => x * 3, 2)`) instead of making a tuple.
+            arrowCompiler->flags.argv = compiler->flags.argv;
+            arrowCompiler->flags.list = compiler->flags.list;
+            arrowCompiler->flags.dict = compiler->flags.dict;
+            arrowCompiler->flags.tuple = compiler->flags.tuple;
             expression(arrowCompiler);
             emitByte(arrowCompiler, OP_FRET);
         }
