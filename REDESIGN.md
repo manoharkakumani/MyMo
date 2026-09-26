@@ -898,13 +898,28 @@ Introduce a tagged-union AST. Parser builds AST → resolver pass → codegen.
 fall out of the resolver). New syntax (e.g. pattern matching) becomes
 straightforward to add.
 
-### Phase 7 — Real GC
-Mark-sweep collector with the fiber stack, frames, globals, interned
-strings, and `currentClass` as roots. Allocate-triggered with grow factor.
-Delete dead `refCount` field from `MyMoObject`.
+### Phase 7 — Real GC  ✓ done
+Mark-sweep collector (`gc.c`). Differences from the original plan:
+- Triggered at dispatch-loop safe points (OP_LOOP back-edges, OP_CALL /
+  OP_INVOKE_GLOBAL entry) rather than inside allocation, and only at the
+  outermost runMVM depth. At those points every live value is on a fiber
+  stack, in a frame or in a VM root, so C builtins never root temporaries.
+- Threshold is object-count based (collect when the live count doubles,
+  min 10k) because `reallocate` callers don't pass reliable sizes.
+- Interned strings/ints/doubles are weak; the intern tables are rebuilt
+  without tombstones after each sweep (their find* probes stop at empty
+  keys).
+- `refCount` is repurposed as the mark bit instead of deleted.
+- Closure-captured and module frames are retired off the call stack and
+  freed once unreachable (epoch-marked).
+- `MYMO_GC_STRESS=1` collects at every safe point.
 
-**Exit criterion:** `make test` runs under ASan/UBSan without leaks; long-
-running scripts don't grow unboundedly.
+Results: every example passes under GC stress + ASan; a 2M-iteration
+allocation loop peaks at 11 MB (was unbounded); a mono server stays flat
+over 6000 requests; loop.my benchmark 0.61s -> 0.31s.
+
+The `.myc` cache (disabled during step 1.3) is back with a new tagged
+format; see `cache.c`.
 
 ### Phase 8 — Cleanups
 - `linenoise` for the REPL (replaces 150 lines of hand-rolled bracket

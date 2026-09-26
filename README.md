@@ -8,7 +8,9 @@ bytecode VM written in C. It is inspired by
 The syntax is indentation-based and Python-like, with a few ideas borrowed
 from elsewhere: arrow functions, a `|>` pipe operator, LISP-style `cond`,
 pattern-matching `case`, fibers for cooperative concurrency, and decorators
-for building web backends Hono/Express-style.
+for building web backends Hono/Express-style. It has a garbage collector, a
+bytecode cache, a C API for extensions and for embedding, and a concurrent
+web framework (`mono`) in its standard library.
 
 ```python
 from "mono" use get, post, start
@@ -44,6 +46,7 @@ Source files use `.my`.
 - [Built-in functions](#built-in-functions)
 - [Standard modules](#standard-modules)
 - [Writing C extensions](#writing-c-extensions)
+- [Embedding MyMo in C](#embedding-mymo-in-c)
 - [How it works](#how-it-works)
 - [Development](#development)
 - [Known limitations](#known-limitations)
@@ -69,7 +72,13 @@ Other targets:
 | `make debug` | Build `./mymo-debug` with bytecode disassembly and stack traces |
 | `make test`  | Run every `examples/*.my` and diff against `tests/golden/`      |
 | `make bench` | Time the scripts in `benchmarks/`                              |
+| `make lib`   | Build `libmymo.a` for [embedding](#embedding-mymo-in-c)        |
 | `make clean` | Remove binaries and object files                               |
+
+Running `foo.my` writes a bytecode cache, `foo.myc`, next to it. Later runs
+skip compiling while the source (and the interpreter build) are unchanged.
+A `.myc` can also be run on its own (`./mymo foo.myc`). Set `MYMO_NOCACHE=1`
+to disable the cache.
 
 ---
 
@@ -100,7 +109,9 @@ print("comments are ignored")   # trailing comment
 Operators: `+ - * / // % **`, comparisons `== != < <= > >=`, bitwise
 `& | ^ << >>`, and logical `and or not`. `/` on two ints gives an int when
 the result is whole (`6 / 2` is `3`) and a double otherwise (`7 / 2` is
-`3.5`).
+`3.5`). `//` and `%` follow Python: `-7 // 2` is `-4`, `-7 % 3` is `2`, and
+both raise `ZeroDivisionError` on zero. Ints and doubles compare by value
+(`0 == 0.0`). Convert with `int(x)`, `float(x)` (or `double(x)`) and `str(x)`.
 
 ### Strings
 
@@ -118,6 +129,14 @@ print(f"x = {x}, x squared = {x * x}")
 # Escapes: \n \t \r \0 \\ \' \" \` \xHH, plus \{ \} for literal braces
 print("line one\nline two\ttabbed \"quoted\"")
 print(f"literal \{braces\} next to {x}")
+
+# Methods
+s = "  Hello, World  "
+print(s.strip(), s.upper(), s.lower())
+print("a,b,,c".split(","), "one  two".split(), "-".join(["x", "y"]))
+print("hello".find("ll"), "hello".contains("ell"), "hello".replace("l", "L"))
+print("file.my".startswith("file"), "file.my".endswith(".my"))
+print("apple" < "banana")   # strings compare lexicographically
 ```
 
 Unknown escapes keep their backslash, so `"C:\dir"` stays as written.
@@ -125,12 +144,20 @@ Unknown escapes keep their backslash, so `"C:\dir"` stays as written.
 ### Collections
 
 ```python
-nums = [1, 2, 3]
+nums = [3, 1, 2]
 nums.append(4)
-print(nums, nums[0], len(nums), nums.copy())
+nums.sort()
+print(nums, nums[0], len(nums), nums + [5, 6])
+print(nums.pop(), nums.index(2), nums.contains(3))
+nums.insert(0, 9)
+nums.remove(9)
+nums.extend([7, 8])
+nums.reverse()
+print(nums)
 
 point = (3, 4)            # tuple; the parentheses are optional: 3, 4
-print(point[0], point.__len__())
+single = (5,)             # one-element tuple
+print(point[0], len(point), point + single)
 
 ages = {"ana": 31, "bo": 27}
 ages["cy"] = 40
@@ -329,6 +356,26 @@ q = p + Point(1, 1)
 print(p.norm2(), q.x, q.y, Point3(1, 2).describe())
 ```
 
+`super()` inside a method reaches the parent class's methods, bound to the
+same `self`:
+
+```python
+class Animal:
+    fn __init__(self, name):
+        self.name = name
+    fn speak(self):
+        return self.name + " makes a sound"
+
+class Dog(Animal):
+    fn __init__(self, name, breed):
+        super().__init__(name)
+        self.breed = breed
+    fn speak(self):
+        return super().speak() + " (woof)"
+
+print(Dog("rex", "lab").speak())
+```
+
 ### Errors: `try` / `catch` / `raise`
 
 ```python
@@ -348,7 +395,9 @@ catch:
     print("runtime errors are catchable too")
 ```
 
-`catch e` binds the error message. Plain `catch:` discards it.
+`catch e` binds the error message. Plain `catch:` discards it. `return`,
+`break` and `continue` work normally inside `try` blocks, and runaway
+recursion raises a catchable `RecursionError`.
 
 ### Fibers
 
@@ -366,6 +415,10 @@ print(f.run())
 print(f.resume(42))
 print(f.alive())
 ```
+
+`run(args...)` passes arguments to the fiber's function. `yield` can also be
+called from a helper function the fiber calls: it suspends the whole fiber.
+That is how `mono`'s `sleep()` works.
 
 ### Modules
 
@@ -454,7 +507,34 @@ Details:
 - A handler that raises is turned into a `500` JSON response, so one bad request can't take the server down.
 - The decorator-free form still works: `get("/", handler)`.
 
-Complete apps: `examples/modules/mono_app.my` (decorators) and
+### Concurrency
+
+`start()` runs an event loop that serves many connections at once on a
+single thread. Requests are read without blocking, so a slow client doesn't
+hold up anyone else. Each request's handler runs in its own
+[fiber](#fibers), and a handler can wait without blocking the server:
+
+```python
+from "mono" use get, start, sleep
+
+@get("/slow")
+fn slow(req):
+    sleep(1000)          # other requests keep being served meanwhile
+    return {"done": True}
+
+@get("/fast")
+fn fast(req):
+    return "fast"
+
+start("127.0.0.1", 8080)
+```
+
+Five concurrent `/slow` requests finish together in about one second, and
+`/fast` answers immediately while they wait. `wait_readable(fd)` does the
+same for handlers that talk to their own sockets.
+
+Complete apps: `examples/modules/mono_app.my` (decorators),
+`examples/modules/mono_async.my` (concurrency) and
 `examples/modules/mono_demo.my` (explicit registration).
 
 ---
@@ -468,6 +548,7 @@ Complete apps: `examples/modules/mono_app.my` (decorators) and
 | `type(v)`                 | Type name, e.g. `<object 'int'>`                  |
 | `len(v)`                  | Length of a string, list, tuple or dict           |
 | `str(v)`                  | Convert to string                                 |
+| `int(v)` / `float(v)`     | Convert to int (truncates) / double; `double` = `float` |
 | `clock()`                 | CPU time in seconds                               |
 | `fiber(fn)`               | Create a fiber (see [Fibers](#fibers))            |
 | `yield(v)`                | Pause the current fiber                           |
@@ -476,8 +557,8 @@ Complete apps: `examples/modules/mono_app.my` (decorators) and
 
 Methods on built-in types:
 
-- **string**: `__len__()`
-- **list**: `append(v)`, `copy()`, `__len__()`
+- **string**: `split(sep?)`, `join(list)`, `upper()`, `lower()`, `strip()`, `find(sub)`, `contains(sub)`, `replace(old, new)`, `startswith(p)`, `endswith(p)`, `__len__()`
+- **list**: `append(v)`, `extend(seq)`, `insert(i, v)`, `pop(i?)`, `remove(v)`, `index(v)`, `contains(v)`, `sort()`, `reverse()`, `clear()`, `copy()`, `__len__()`
 - **tuple**: `__len__()`
 - **dict**: `get(k)`, `put(k, v)`, `has(k)`, `delete(k)`, `keys()`, `values()`, `__len__()`
 - **fiber**: `run(...)`, `resume(v)`, `alive()`, `kill()`
@@ -501,10 +582,10 @@ demo in `examples/modules/`.
 | `sqlite`  | `open`, `run`, `query`, `close`                                         |
 | `http`    | `get`, `post`, `request` (client, via libcurl)                          |
 | `socket`  | `connect`, `listen`, `accept`, `send`, `recv`, `close`, `gethostname`, `resolve` |
-| `server`  | `listen`, `accept`, `respond`, `respond_json`, `close` (HTTP/1.1)       |
-| `runloop` | `nonblock`, `readable`, `writable`, `select` (non-blocking I/O)         |
+| `server`  | `listen`, `accept`, `accept_nb`, `read_request`, `respond`, `respond_json`, `close` (HTTP/1.1) |
+| `runloop` | `nonblock`, `readable`, `writable`, `select`, `ready` (non-blocking I/O) |
 | `nodes`   | `spawn`, `send`, `recv`, `kill`, `self_id`, `is_coordinator`, `children` (multi-process messaging) |
-| `mono`    | web framework, see above (written in MyMo)                              |
+| `mono`    | web framework with routing, `sleep`, `wait_readable`; see above (written in MyMo) |
 | `strutil` | string helpers such as `starts_with` (written in MyMo)                  |
 
 ---
@@ -552,6 +633,67 @@ and return `MYMO_ERROR` after `runtimeError()`. The full guide is in
 
 ---
 
+## Embedding MyMo in C
+
+`include/mymo.h` lets a C program host MyMo, as you would host Lua. You can
+run scripts, call MyMo functions and closures, expose C functions, and pass
+values back and forth.
+
+```c
+#include "mymo.h"
+#include <stdio.h>
+
+static Value host_add(MVM *vm, uint argc, MyMoObject *argv[])
+{
+    long a, b;
+    if (!mymo_parse(vm, "host_add", argc, argv, "ii", &a, &b))
+        return MYMO_ERROR;
+    return MYMO_INT(a + b);
+}
+
+int main(void)
+{
+    MVM *vm = mymo_new();
+    mymo_define_function(vm, "host_add", host_add);
+    mymo_run_string(vm, "fn twice(x):\n    return host_add(x, x)\n", "setup");
+
+    Value twice, out, arg = MYMO_INT(21);
+    mymo_get_global(vm, "twice", &twice);
+    if (mymo_call(vm, twice, 1, &arg, &out) == MYMO_OK)
+    {
+        long n;
+        mymo_val_as_long(out, &n);
+        printf("%ld\n", n);                      // 42
+    }
+    else
+        printf("error: %s\n", mymo_last_error(vm));
+    mymo_free(vm);
+}
+```
+
+```sh
+make lib
+cc -Iinclude -I. host.c libmymo.a -lm -lcurl -lsqlite3 -o host
+```
+
+- `mymo_run_string` / `mymo_run_file` run top-level code. Globals persist
+  between runs.
+- `mymo_call` calls any callable and returns when it finishes. It also works
+  from inside a C builtin, to invoke a MyMo callback. Errors come back as
+  `MYMO_RUNTIME_ERROR`, with the message in `mymo_last_error`. After an
+  error the VM is still usable.
+- Values are NaN-boxed: ints, doubles, nil and bools are stored inline, and
+  everything else is a GC-managed object. The collector only runs while MyMo
+  code executes. To keep a value across calls, `mymo_retain` it (and
+  `mymo_release` it when done).
+- Values can be built with `mymo_string`, `mymo_list`, `mymo_dict` and
+  `MYMO_INT`, and read with the `mymo_val_*` functions.
+
+`examples/embed/host.c` (`make embed-example`) shows all of this, including
+callbacks, closures kept across garbage collections, and error handling.
+
+---
+
 ## How it works
 
 ```
@@ -570,8 +712,12 @@ source ──► lexer ──► single-pass Pratt compiler ──► bytecode c
   fibers swaps `vm->fiber`.
 - **Closures** are per-call copies of a function bound to their defining
   frame. A captured frame outlives its call.
-- **Memory**: every object is linked into `vm->objects` and freed when the
-  VM exits. There is no garbage collector yet.
+- **Garbage collection** is mark-sweep (`gc.c`). It runs at safe points in
+  the dispatch loop (loop back-edges and calls) once the live object count
+  doubles, so C code never has to protect its temporaries. Intern tables
+  are weak. A long-running server stays at constant memory.
+- **Bytecode cache**: `cache.c` writes `.myc` files, which are keyed on a
+  hash of the source and the interpreter build.
 
 `REDESIGN.md` tracks the ongoing performance redesign (NaN-boxing, inline
 caches, and next steps).
@@ -593,6 +739,10 @@ make clean && make && make test && make bench
   `modules/modules.h` and register it in `modules/modules.c`.
 - Standard-library modules written in MyMo live in `stdlib/` and are
   embedded into the binary at build time.
+- `make test` runs every example twice: once compiled, and once loaded
+  from the `.myc` cache.
+- `MYMO_GC_STRESS=1` collects garbage at every safe point. Combine it with
+  an AddressSanitizer build to catch GC bugs.
 
 ---
 
@@ -600,14 +750,15 @@ make clean && make && make test && make bench
 
 MyMo is an experimental language. Current gaps:
 
-- No garbage collector: memory is reclaimed only when the program exits.
+- A single function (including a script's top level) can hold at most 256
+  distinct constants (names and literals), which is roughly 128 top-level
+  `fn`s per file. Beyond that there is a compile error; split the code into
+  modules.
 - Ints are 32-bit when stored inline. Wider values fall back to slower heap
   objects.
 - Functions have no default parameter values.
-- Strings can't be compared with `<` / `>`, and lists can't be joined with
-  `+`.
-- Lists only have `append`, `copy` and `__len__`.
 - Decorators can't be applied to class methods.
-- `super` is not reliable yet; call inherited methods through `self`.
-- The `.myc` bytecode cache is disabled during the value-representation
-  redesign.
+- `mono` speaks HTTP/1.1 with `Connection: close`: no keep-alive and no
+  HTTPS (put a reverse proxy in front for TLS). Non-blocking I/O isn't
+  implemented on Windows yet.
+- A fiber can't `yield` across a C→MyMo `mymo_call` boundary.
