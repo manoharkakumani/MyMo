@@ -180,14 +180,14 @@ void runtimeError(MVM *vm, const char *format, ...)
 // (function->frame, then that frame's function's frame, ...). Each frame
 // is checked in its locals dict and then its inline parameter slots —
 // params live in frame->args[] (OP_GETARG), not in the locals dict.
-static MyMoObject *lookupEnclosing(MVM *vm, CallFrame *parent, MyMoObject *name)
+static bool lookupEnclosing(MVM *vm, CallFrame *parent, MyMoObject *name, Value *out)
 {
+    UNUSED(vm);
     MyMoString *key = AS_STRING(name);
     for (; parent; parent = parent->function->frame)
     {
-        MyMoObject *value = getEntry(vm, &parent->locals, name);
-        if (value)
-            return value;
+        if (getEntryV(&parent->locals, name, out))
+            return true;
         MyMoFunction *fn = parent->function;
         if (fn->isargs || fn->argc > CALLFRAME_ARGS_INLINE)
             continue;
@@ -195,10 +195,13 @@ static MyMoObject *lookupEnclosing(MVM *vm, CallFrame *parent, MyMoObject *name)
         {
             MyMoString *arg = fn->argv[i];
             if (arg->length == key->length && memcmp(arg->value, key->value, key->length) == 0)
-                return valueToBoxedObject(vm, parent->args[i]);
+            {
+                *out = parent->args[i];
+                return true;
+            }
         }
     }
-    return NULL;
+    return false;
 }
 
 // An integer result: inline when it fits in 32 bits, else a heap int.
@@ -1708,19 +1711,17 @@ int runMVM(MVM *vm)
             }
         }
         // ---- Slow path: full lookup chain (existing semantics) --------
-        MyMoObject *value = NULL;
+        Value val;
         if (vm->currentClass)
         {
-            value = getEntry(vm, vm->currentClass->variables, variable);
-            if (value)
+            if (getEntryV(vm->currentClass->variables, variable, &val))
             {
-                push(vm, value);
+                pushV(vm, val);
                 DISPATCH();
             }
-            value = getEntry(vm, vm->currentClass->methods, variable);
-            if (value)
+            if (getEntryV(vm->currentClass->methods, variable, &val))
             {
-                push(vm, value);
+                pushV(vm, val);
                 DISPATCH();
             }
         }
@@ -1747,46 +1748,41 @@ int runMVM(MVM *vm)
             } while (0)
         if ((IS_FIBER_ROOT(vm->fiber)) && vm->fiber->frameCount == 0)
         {
-            value = getEntry(vm, &vm->globals, variable);
-            if (value)
+            if (getEntryV(&vm->globals, variable, &val))
             {
                 FILL_IC(IC_TAG_GLOBALS, &vm->globals, variable);
-                push(vm, value);
+                pushV(vm, val);
                 DISPATCH();
             }
             goto builtinvars;
         }
         else
         {
-            value = getEntry(vm, &frame->locals, variable);
-            if (value)
+            if (getEntryV(&frame->locals, variable, &val))
             {
                 FILL_IC(IC_TAG_LOCALS, &frame->locals, variable);
-                push(vm, value);
+                pushV(vm, val);
                 DISPATCH();
             }
-            value = lookupEnclosing(vm, frame->function->frame, variable);
-            if (value)
+            if (lookupEnclosing(vm, frame->function->frame, variable, &val))
             {
-                push(vm, value);
-                setEntry(vm, &frame->locals, variable, value);
+                pushV(vm, val);
+                setEntryV(vm, &frame->locals, variable, val);
                 DISPATCH();
             }
         }
-        value = getEntry(vm, &vm->globals, variable);
-        if (value)
+        if (getEntryV(&vm->globals, variable, &val))
         {
             FILL_IC(IC_TAG_GLOBALS, &vm->globals, variable);
-            push(vm, value);
+            pushV(vm, val);
             DISPATCH();
         }
         else
         {
         builtinvars:
-            value = getEntry(vm, &vm->builtins, variable);
-            if (value)
+            if (getEntryV(&vm->builtins, variable, &val))
             {
-                push(vm, value);
+                pushV(vm, val);
                 DISPATCH();
             }
         }
@@ -2713,44 +2709,35 @@ int runMVM(MVM *vm)
         // Slow path: walk the same lookup chain OP_GETV uses, fill cache.
         if (!found)
         {
-            MyMoObject *value = NULL;
+            Value val;
+            bool have = false;
             u8 hitTag = IC_TAG_COLD;
             MyMoDict *hitDict = NULL;
             if (vm->currentClass)
-            {
-                value = getEntry(vm, vm->currentClass->variables, variable);
-                if (!value) value = getEntry(vm, vm->currentClass->methods, variable);
-            }
-            if (!value)
+                have = getEntryV(vm->currentClass->variables, variable, &val)
+                    || getEntryV(vm->currentClass->methods, variable, &val);
+            if (!have)
             {
                 if ((IS_FIBER_ROOT(vm->fiber)) && vm->fiber->frameCount == 0)
                 {
-                    value = getEntry(vm, &vm->globals, variable);
-                    if (value) { hitTag = IC_TAG_GLOBALS; hitDict = &vm->globals; }
+                    if ((have = getEntryV(&vm->globals, variable, &val))) { hitTag = IC_TAG_GLOBALS; hitDict = &vm->globals; }
                 }
                 else
                 {
-                    value = getEntry(vm, &frame->locals, variable);
-                    if (value) { hitTag = IC_TAG_LOCALS; hitDict = &frame->locals; }
-                    if (!value)
-                    {
-                        value = lookupEnclosing(vm, frame->function->frame, variable);
-                    }
-                    if (!value)
-                    {
-                        value = getEntry(vm, &vm->globals, variable);
-                        if (value) { hitTag = IC_TAG_GLOBALS; hitDict = &vm->globals; }
-                    }
+                    if ((have = getEntryV(&frame->locals, variable, &val))) { hitTag = IC_TAG_LOCALS; hitDict = &frame->locals; }
+                    if (!have)
+                        have = lookupEnclosing(vm, frame->function->frame, variable, &val);
+                    if (!have && (have = getEntryV(&vm->globals, variable, &val))) { hitTag = IC_TAG_GLOBALS; hitDict = &vm->globals; }
                 }
-                if (!value) value = getEntry(vm, &vm->builtins, variable);
+                if (!have) have = getEntryV(&vm->builtins, variable, &val);
             }
-            if (!value)
+            if (!have)
             {
                 SAVE();
                 runtimeError(vm, "Name Error: Undefined variable '%s'.", STRING_VAL(variable));
                 goto _runtime_error;
             }
-            calleeV = V_OBJ_VAL(value);
+            calleeV = val;
             // Refresh IC if this came from a cacheable dict.
             if (hitDict)
             {

@@ -186,10 +186,24 @@ green):
   under ASan; the release build only started crashing (SIGBUS in
   `fiber.my`) once memory layout shifted. 19/19 tests green; bench
   identical to HEAD (loop 0.81 s, fib 0.07 s).
-- [ ] **1.5b (final)** Delete `MyMoNil` / `MyMoBool` structs and the
-  `NilObject` / `TrueBool` / `FalseBool` global singletons. Drop the
-  cross-form branches in `valuesEqual` (`valueIsNilAny`,
-  `valueIsBoolAny`) and `OP_IS`. ~36 remaining cold-path sites.
+- [~] **1.5b (final)** Staged migration off heap nil/bool:
+  - stage 1 ✓ list/tuple elements are `ValueArray`s (inline values);
+  - stage 2 ✓ builtins take `Value argv[]` (no per-argument boxing);
+  - stage 3 ✓ operators, property get/set/`?.`, variable lookup
+    (`OP_GETV`, `OP_INVOKE_GLOBAL`, closures) use the Value API; legacy
+    `push()` and `setEntry()` normalize heap nil/bool to inline Values,
+    so those singletons are never stored on the stack or as dict values.
+  - Remaining: `MyMoNil`/`MyMoBool` still exist as **interned dict
+    keys** (`{True: 1}`, `d[Nil]`) and as transient views inside legacy
+    C code (`pop()`/`peek()`/`getEntry()`). Dict keys are
+    `MyMoObject*` compared by identity, which is exactly why inline
+    values need interned heap forms — the same reason `MyMoInt`/
+    `MyMoDouble` survive (1.6). **Gating item:** make `Entry.key` a
+    `Value` (hash inline values directly). Then delete `MyMoNil`,
+    `MyMoBool`, `MyMoInt` and `MyMoDouble` together and drop the
+    cross-form branches in `valuesEqual`/`OP_IS`.
+  - Perf from stages 1-3: loop.my 0.31s → 0.15s (OP_POP no longer
+    boxes), builtin-heavy code ~1.7x faster (no argv boxing).
 - [x] **1.6 (partial)** Arithmetic OPs (OP_ADD/SUB/MUL/LESS/GREATER) all
   produce inline V_INT_VAL results — heap-int fallback removed from the
   hot path. Hottest path is `V_IS_INT(va) && V_IS_INT(vb)` — three
