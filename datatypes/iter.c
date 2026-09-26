@@ -56,6 +56,13 @@ Value nextIter(MVM *vm, MyMoIter *object)
     }
     return tuple->values.values[object->index++];
   }
+  case OBJ_RANGE:
+  {
+    MyMoRange *range = AS_RANGE(iterator);
+    if (object->index >= rangeLength(range))
+      return V_EMPTY_VAL;
+    return valueFromLong(vm, rangeAt(range, object->index++));
+  }
   default:
     return V_EMPTY_VAL;
   }

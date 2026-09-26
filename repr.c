@@ -273,6 +273,15 @@ static bool formatObject(MVM *vm, StrBuf *b, MyMoObject *o, bool repr, int depth
     case OBJ_WILDCARD:
         strbufAppend(b, "_", 1);
         return true;
+    case OBJ_RANGE:
+    {
+        MyMoRange *r = AS_RANGE(o);
+        if (r->step == 1)
+            appendf(b, "range(%ld, %ld)", r->start, r->stop);
+        else
+            appendf(b, "range(%ld, %ld, %ld)", r->start, r->stop, r->step);
+        return true;
+    }
     default:
         strbufAppendC(b, getType(o));
         return true;

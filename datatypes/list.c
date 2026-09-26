@@ -1,4 +1,5 @@
 #include "list.h"
+#include "../builtins.h"
 #include "nil.h"
 #include "../memory.h"
 #include "../vm.h"
@@ -30,64 +31,21 @@ void printList(MyMoList *list)
 
 Value newListMethod(MVM *vm, uint argc, Value args[])
 {
-
-    if (argc == 0)
+    // list() -> [], list(iterable) -> its elements, list(a, b, ...) -> [a, b, ...]
+    MyMoList *list = newList(vm);
+    if (argc == 1)
     {
-        return objectToValue(AS_OBJECT(newList(vm)));
-    }
-    else if (argc > 1)
-    {
-        MyMoList *list = newList(vm);
-        for (int i = 0; i < argc; i++)
-        {
-            writeValueArray(vm, &list->values, args[i]);
-        }
-        for (int i = 0; i < argc; i++)
-        {
-            pop(vm);
-        }
-        return objectToValue(AS_OBJECT(list));
+        if (!appendIterable(vm, "list", args[0], &list->values))
+            return V_EMPTY_VAL;
     }
     else
     {
-        MyMoObject *object = pop(vm);
-        if (IS_LIST(object))
-        {
-            MyMoList *copyList = newList(vm);
-            MyMoList *list = AS_LIST(object);
-            for (int i = 0; i < list->values.count; i++)
-            {
-                writeValueArray(vm, &copyList->values, list->values.values[i]);
-            }
-            return objectToValue(AS_OBJECT(copyList));
-        }
-        else if (IS_TUPLE(object))
-        {
-            MyMoTuple *tuple = AS_TUPLE(object);
-            MyMoList *list = newList(vm);
-            for (int i = 0; i < tuple->values.count; i++)
-            {
-                writeValueArray(vm, &list->values, tuple->values.values[i]);
-            }
-            return objectToValue(AS_OBJECT(list));
-        }
-        else if (IS_STRING(object))
-        {
-            MyMoString *string = AS_STRING(object);
-            MyMoList *list = newList(vm);
-            for (int i = 0; i < string->length; i++)
-            {
-                writeValueArrayObject(vm, &list->values, NEW_STRING(vm, &string->value[i], 1));
-            }
-            return objectToValue(AS_OBJECT(list));
-        }
-        else
-        {
-            MyMoList *list = newList(vm);
-            writeValueArrayObject(vm, &list->values, object);
-            return objectToValue(AS_OBJECT(list));
-        }
+        for (uint i = 0; i < argc; i++)
+            writeValueArray(vm, &list->values, args[i]);
     }
+    for (uint i = 0; i < argc; i++)
+        popV(vm);
+    return objectToValue(AS_OBJECT(list));
 }
 
 Value lenListMethod(MVM *vm, uint argc, Value args[])
@@ -313,41 +271,15 @@ static bool isStringValue(Value v)
     return V_IS_OBJ(v) && V_AS_OBJ(v)->type == OBJ_STRING;
 }
 
-static int compareForSort(Value a, Value b, bool *ok)
-{
-    if (valueLooksLikeNumber(a) && valueLooksLikeNumber(b))
-    {
-        double x = valueAsNumber(a), y = valueAsNumber(b);
-        return (x > y) - (x < y);
-    }
-    if (isStringValue(a) && isStringValue(b))
-        return compareStrings(AS_STRING(V_AS_OBJ(a)), AS_STRING(V_AS_OBJ(b)));
-    *ok = false;
-    return 0;
-}
-
+// xs.sort([key[, reverse]]) — stable; key may be Nil.
 Value sortListMethod(MVM *vm, uint argc, Value args[])
 {
-    MyMoObject *self = methodEnter(vm, "sort", argc, 0, 0);
+    MyMoObject *self = methodEnter(vm, "sort", argc, 0, 2);
     if (!self) return V_EMPTY_VAL;
-    ValueArray *values = &AS_LIST(self)->values;
-    bool ok = true;
-    for (int i = 1; i < values->count && ok; i++)
-    {
-        Value key = values->values[i];
-        int j = i - 1;
-        while (j >= 0 && compareForSort(values->values[j], key, &ok) > 0 && ok)
-        {
-            values->values[j + 1] = values->values[j];
-            j--;
-        }
-        values->values[j + 1] = key;
-    }
-    if (!ok)
-    {
-        runtimeError(vm, "TypeError: sort() needs all numbers or all strings");
+    Value key = argc > 0 ? args[0] : V_NIL_VAL;
+    bool reverse = argc > 1 && !valueIsFalsey(args[1]);
+    if (!sortValues(vm, &AS_LIST(self)->values, key, reverse))
         return V_EMPTY_VAL;
-    }
     return V_NIL_VAL;
 }
 

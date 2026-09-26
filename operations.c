@@ -2,6 +2,7 @@
 #include "memory.h"
 #include "vm.h"
 #include "datatypes/datatypes.h"
+#include "include/mymo.h"
 
 // Slow paths of + - * / (the dispatch loop handles plain numbers inline
 // first). Operands and results are Values; errors raise and return
@@ -186,6 +187,10 @@ Value containsValue(MVM *vm, Value container, Value item)
                     return V_TRUE_VAL;
             return V_FALSE_VAL;
         }
+        case OBJ_RANGE:
+            if (!valueLooksLikeInt(item))
+                return V_FALSE_VAL;
+            return V_BOOL_VAL(rangeContains(AS_RANGE(c), valueToLong(item)));
         case OBJ_DICT:
         {
             // Keys are interned objects; box inline keys to find them.
@@ -199,4 +204,60 @@ Value containsValue(MVM *vm, Value container, Value item)
     }
     runtimeError(vm, "TypeError: argument of type %s is not iterable", valueTypeName(container));
     return V_EMPTY_VAL;
+}
+
+static bool isSequence(Value v)
+{
+    return V_IS_OBJ_TYPE(v, OBJ_LIST) || V_IS_OBJ_TYPE(v, OBJ_TUPLE);
+}
+
+static ValueArray *sequenceValues(Value v)
+{
+    MyMoObject *o = V_AS_OBJ(v);
+    return o->type == OBJ_LIST ? &AS_LIST(o)->values : &AS_TUPLE(o)->values;
+}
+
+bool lessThan(MVM *vm, Value a, Value b, bool *out)
+{
+    a = boolAsInt(a);
+    b = boolAsInt(b);
+    if (valueLooksLikeInt(a) && valueLooksLikeInt(b))
+    {
+        *out = valueToLong(a) < valueToLong(b);
+        return true;
+    }
+    if (valueLooksLikeNumber(a) && valueLooksLikeNumber(b))
+    {
+        *out = valueAsNumber(a) < valueAsNumber(b);
+        return true;
+    }
+    if (isType(a, OBJ_STRING) && isType(b, OBJ_STRING))
+    {
+        *out = compareStrings(AS_STRING(V_AS_OBJ(a)), AS_STRING(V_AS_OBJ(b))) < 0;
+        return true;
+    }
+    if (isSequence(a) && isSequence(b) && V_AS_OBJ(a)->type == V_AS_OBJ(b)->type)
+    {
+        // Lexicographic: the first unequal pair decides, else the shorter.
+        ValueArray *x = sequenceValues(a), *y = sequenceValues(b);
+        for (int i = 0; i < x->count && i < y->count; i++)
+            if (!valuesEqual(x->values[i], y->values[i]))
+                return lessThan(vm, x->values[i], y->values[i], out);
+        *out = x->count < y->count;
+        return true;
+    }
+    if (isType(a, OBJ_INSTANCE))
+    {
+        MyMoObject *method = getMethod(vm, V_AS_OBJ(a), "<");
+        if (!IS_EMPTY(method))
+        {
+            Value args[2] = {a, b}, result;
+            if (mymo_call(vm, V_OBJ_VAL(method), 2, args, &result) != MYMO_OK)
+                return false;
+            *out = !valueIsFalsey(result);
+            return true;
+        }
+    }
+    runtimeError(vm, "TypeError: '<' not supported between %s and %s", valueTypeName(a), valueTypeName(b));
+    return false;
 }

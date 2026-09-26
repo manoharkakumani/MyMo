@@ -1214,6 +1214,21 @@ int runMVM(MVM *vm)
             pushV(vm, V_BOOL_VAL(compareStrings(AS_STRING(V_AS_OBJ(a)), AS_STRING(V_AS_OBJ(b))) > 0));
             DISPATCH();
         }
+        if ((V_IS_OBJ_TYPE(a, OBJ_LIST) && V_IS_OBJ_TYPE(b, OBJ_LIST)) ||
+            (V_IS_OBJ_TYPE(a, OBJ_TUPLE) && V_IS_OBJ_TYPE(b, OBJ_TUPLE)))
+        {
+            // Lexicographic. a and b stay on the stack while an
+            // element's "<" method may run.
+            lpush(a);
+            lpush(b);
+            SAVE();
+            bool result;
+            if (!lessThan(vm, b, a, &result))
+                goto _runtime_error;
+            sp -= 2;
+            pushV(vm, V_BOOL_VAL(result));
+            DISPATCH();
+        }
         if (!valueLooksLikeNumber(a) || !valueLooksLikeNumber(b))
         {
             runtimeError(vm, "Operands must be numbers.");
@@ -1262,6 +1277,21 @@ int runMVM(MVM *vm)
         if (V_IS_OBJ_TYPE(a, OBJ_STRING) && V_IS_OBJ_TYPE(b, OBJ_STRING))
         {
             pushV(vm, V_BOOL_VAL(compareStrings(AS_STRING(V_AS_OBJ(a)), AS_STRING(V_AS_OBJ(b))) < 0));
+            DISPATCH();
+        }
+        if ((V_IS_OBJ_TYPE(a, OBJ_LIST) && V_IS_OBJ_TYPE(b, OBJ_LIST)) ||
+            (V_IS_OBJ_TYPE(a, OBJ_TUPLE) && V_IS_OBJ_TYPE(b, OBJ_TUPLE)))
+        {
+            // Lexicographic. a and b stay on the stack while an
+            // element's "<" method may run.
+            lpush(a);
+            lpush(b);
+            SAVE();
+            bool result;
+            if (!lessThan(vm, a, b, &result))
+                goto _runtime_error;
+            sp -= 2;
+            pushV(vm, V_BOOL_VAL(result));
             DISPATCH();
         }
         if (!valueLooksLikeNumber(a) || !valueLooksLikeNumber(b))
@@ -1725,6 +1755,7 @@ int runMVM(MVM *vm)
         case OBJ_LIST:
         case OBJ_TUPLE:
         case OBJ_DICT:
+        case OBJ_RANGE:
             // case OBJ_INSTANCE: TODO
             {
                 push(vm, AS_OBJECT(newIter(vm, iterator)));

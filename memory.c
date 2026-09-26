@@ -94,6 +94,11 @@ void freeObject(MVM *vm, MyMoObject *object)
         Free(vm, MyMoIter, object);
         break;
     }
+    case OBJ_RANGE:
+    {
+        Free(vm, MyMoRange, object);
+        break;
+    }
     case OBJ_CLOUSER:
     {
         Free(vm, MyMoClouser, object);

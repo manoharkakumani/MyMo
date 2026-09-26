@@ -1,4 +1,5 @@
 #include "repr.h"
+#include "builtins.h"
 #include "memory.h"
 #include "compiler.h"
 #include "utils.h"
@@ -189,6 +190,8 @@ Value lenfn(MVM *vm, uint argc, Value argv[])
         return objectToValue(NEW_INT(vm, AS_TUPLE(obj)->values.count));
     case OBJ_DICT:
         return objectToValue(NEW_INT(vm, AS_DICT(obj)->count));
+    case OBJ_RANGE:
+        return valueFromLong(vm, rangeLength(AS_RANGE(obj)));
     default:
         runtimeError(vm, "TypeError: %s has no len()", getType(obj));
         return V_EMPTY_VAL;
@@ -342,6 +345,7 @@ void defineBuiltInFunctions(MVM *vm)
     defineBuiltInFunction(vm, "yield", yieldfn);
     // defineBuiltInFunction(vm,"await",awaitfn);
     defineBuiltInFunction(vm,"super",superfn);
+    defineBuiltInHelpers(vm);
 }
 
 MyMoFunction *runFile(MVM *vm, char *path)

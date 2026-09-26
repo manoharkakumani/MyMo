@@ -1,0 +1,58 @@
+# Builtin functions: aggregates, sorting, map/filter/zip, numbers, conversions, range.
+xs = [5, 3, 8, 1]
+print(min(xs), max(xs), min(4, 2, 9), max("pear", "apple"), sum(xs), sum([0.5, 0.25]), sum([[1], [2]], []))
+print(sorted(xs), sorted(xs, Nil, True), sorted(["bb", "a", "ccc"], len), sorted("hello"))
+people = [("bo", 30), ("al", 25), ("cy", 30)]
+print(sorted(people, p => p[1]), sorted(people, p => p[1], True))
+print(reversed([1, 2, 3]), enumerate(["a", "b"]), enumerate("xy", 1), zip([1, 2, 3], "ab"))
+print(map(x => x * x, range(5)), map(str, [1, 2]), map((a, b) => a + b, [1, 2], [10, 20]))
+print(filter(x => x % 2 == 0, range(10)), filter(Nil, [0, 1, "", "a", Nil]))
+print(any([0, "", 1]), all([1, "a"]), all([]), any([]))
+print(abs(-5), abs(-2.5), round(2.5), round(3.5), round(2.675, 2), round(-0.5))
+print(divmod(7, 2), divmod(-7, 2), divmod(7.5, 2), pow(2, 10), pow(2, -1), pow(3, 200, 7), pow(2, 70))
+print(hex(255), oct(8), bin(5), hex(-255), ord("A"), chr(97), ord("é"), chr(8364))
+class A:
+    fn __init__(self):
+        self.x = 1
+class B(A):
+    fn __init__(self):
+        self.x = 2
+print(isinstance(B(), A), isinstance(A(), B), isinstance(1, int), isinstance(True, int), isinstance("s", (int, str)), isinstance([], list), isinstance(1.5, float))
+print(callable(print), callable(A), callable(1), callable(x => x))
+print(list("abc"), list((1, 2)), list({"a": 1, "b": 2}), list(range(3)), tuple([1, 2]), tuple("ab"), tuple())
+print(dict([("a", 1), ("b", 2)]), dict({"x": 1}), dict(), dict(zip(["k", "v"], [1, 2])))
+ys = [3, 1, 2]
+ys.sort()
+print(ys)
+ys.sort(x => -x)
+print(ys)
+ys.sort(Nil, True)
+print(ys)
+print(float("1.5"), float(2))
+words = ["banana", "Apple", "cherry"]
+print(sorted(words, w => w.lower()))
+print(sorted([(1, "b"), (1, "a"), (0, "z")]))
+try:
+    sorted([1, "a"])
+catch e:
+    print(e)
+try:
+    min([])
+catch e:
+    print(e)
+try:
+    map(x => x / 0, [1])
+catch e:
+    print("caught:", e)
+for i in range(3):
+    print(i)
+print(range(5), range(1, 10, 2), len(range(1, 10, 2)), len(range(10, 0, -3)))
+for i in range(10, 0, -3):
+    print(i)
+print(4 in range(0, 10, 2), 5 in range(0, 10, 2), list(range(4)))
+s = 0
+for i in range(1000000):
+    s += i
+print(s)
+print(len(range(5, 1)), type(range(1)))
+print([1,2] < [1,3], (1,2) > (1,), [2] < [1, 5], ("a", 2) < ("a", 10), [1,2] <= [1,2], (3,) >= (4,))

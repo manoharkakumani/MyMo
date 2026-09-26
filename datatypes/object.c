@@ -132,6 +132,9 @@ void printObject(MyMoObject *object)
     case OBJ_WILDCARD:
         printf("_");
         break;
+    case OBJ_RANGE:
+        printf("range(%ld, %ld, %ld)", AS_RANGE(object)->start, AS_RANGE(object)->stop, AS_RANGE(object)->step);
+        break;
     case OBJ_SUPER:
         printf("<super of %s>", AS_SUPER(object)->klass->name->value);
         break;
@@ -188,6 +191,8 @@ char *getType(MyMoObject *object)
         return "<object 'iter'>";
     case OBJ_SUPER:
         return "<object 'super'>";
+    case OBJ_RANGE:
+        return "<object 'range'>";
     default:
         return "<object 'unknown'>";
     }

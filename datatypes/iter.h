@@ -12,7 +12,7 @@ typedef struct MyMoIter
 {
     MyMoObject object;
     MyMoObject *iterator;
-    int index;
+    long index;
 } MyMoIter;
 
 MyMoIter *newIter(MVM *vm, MyMoObject *object);

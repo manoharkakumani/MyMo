@@ -17,4 +17,9 @@ Value divValues(MVM *vm, Value a, Value b);
 // or V_EMPTY_VAL after raising (container type not supported).
 Value containsValue(MVM *vm, Value container, Value item);
 
+// a < b for ordering (sorted, min, max, and < on lists/tuples): numbers,
+// strings, lists/tuples lexicographically, instances through their "<"
+// method. False after raising a TypeError (or if "<" raised).
+bool lessThan(MVM *vm, Value a, Value b, bool *out);
+
 #endif
