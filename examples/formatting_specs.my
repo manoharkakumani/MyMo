@@ -27,3 +27,10 @@ s = "hello"
 print(s[1:3], s[::-1], s[-3:], (1, 2, 3)[1:])
 x = 3.14159
 print(f"{x}")
+print("%d items" % 3, "%s=%r" % ("k", "v"), "%5.2f|%-6s|%06d|%x|%X|%o|%e|%+d|%c|%%" % (3.14159, "ab", 42, 255, 255, 8, 12345.678, 5, 65))
+print("%(name)s is %(age)d" % {"name": "Bo", "age": 7}, "%s" % [1, 2], "%s %s" % (Nil, True), "%.3s" % "abcdef", "%i" % 3.9)
+for bad in [() => "%d %d" % (1,), () => "%d" % (1, 2), () => "%q" % 1, () => "%d" % "x"]:
+    try:
+        bad()
+    catch e:
+        print(e)

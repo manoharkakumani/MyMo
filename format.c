@@ -427,3 +427,138 @@ fail:
     strbufFree(&out);
     return V_EMPTY_VAL;
 }
+
+Value percentFormat(MVM *vm, MyMoString *fmt, Value args)
+{
+    ValueArray single = {.values = &args, .count = 1};
+    ValueArray *values = V_IS_OBJ_TYPE(args, OBJ_TUPLE) ? &AS_TUPLE(V_AS_OBJ(args))->values : &single;
+    MyMoDict *mapping = V_IS_OBJ_TYPE(args, OBJ_DICT) ? AS_DICT(V_AS_OBJ(args)) : NULL;
+    int next = 0;
+    StrBuf out;
+    strbufInit(&out);
+    const char *s = fmt->value;
+    int len = fmt->length;
+    for (int i = 0; i < len; i++)
+    {
+        if (s[i] != '%')
+        {
+            strbufAppend(&out, s + i, 1);
+            continue;
+        }
+        if (++i >= len)
+        {
+            runtimeError(vm, "ValueError: incomplete format at the end of the string");
+            goto fail;
+        }
+        if (s[i] == '%')
+        {
+            strbufAppend(&out, "%", 1);
+            continue;
+        }
+        Value value;
+        bool haveValue = false;
+        if (s[i] == '(')
+        {
+            int close = i + 1;
+            while (close < len && s[close] != ')')
+                close++;
+            if (!mapping || close >= len)
+            {
+                runtimeError(vm, mapping ? "ValueError: unclosed '(' in format" : "TypeError: format requires a dict for %%(name)");
+                goto fail;
+            }
+            MyMoObject *key = AS_OBJECT(newString(vm, s + i + 1, close - i - 1));
+            if (!getEntryV(mapping, key, &value))
+            {
+                runtimeError(vm, "KeyError: \"%.*s\"", close - i - 1, s + i + 1);
+                goto fail;
+            }
+            haveValue = true;
+            i = close + 1;
+        }
+        // flags, width, precision -> a format spec
+        char spec[64];
+        int k = 0;
+        char align = 0, sign = 0;
+        bool zero = false, alternate = false;
+        for (; i < len && strchr("-+ 0#", s[i]); i++)
+        {
+            if (s[i] == '-') align = '<';
+            else if (s[i] == '+') sign = '+';
+            else if (s[i] == ' ' && sign != '+') sign = ' ';
+            else if (s[i] == '0') zero = true;
+            else alternate = true;
+        }
+        if (align)
+            spec[k++] = align;
+        if (sign)
+            spec[k++] = sign;
+        if (alternate)
+            spec[k++] = '#';
+        if (zero && !align)
+            spec[k++] = '0';
+        while (i < len && isdigit((unsigned char)s[i]) && k < 40)
+            spec[k++] = s[i++];
+        if (i < len && s[i] == '.')
+        {
+            spec[k++] = s[i++];
+            while (i < len && isdigit((unsigned char)s[i]) && k < 60)
+                spec[k++] = s[i++];
+        }
+        if (i >= len)
+        {
+            runtimeError(vm, "ValueError: incomplete format at the end of the string");
+            goto fail;
+        }
+        char type = s[i];
+        if (!haveValue)
+        {
+            if (mapping || next >= values->count)
+            {
+                runtimeError(vm, "TypeError: not enough arguments for format string");
+                goto fail;
+            }
+            value = values->values[next++];
+        }
+        switch (type)
+        {
+        case 'r':
+            value = valueToRepr(vm, value);
+            if (V_IS_EMPTY(value))
+                goto fail;
+            type = 's';
+            break;
+        case 'i':
+        case 'u':
+            type = 'd';
+            /* fall through */
+        case 'd':
+            if (valueLooksLikeDouble(value))
+                value = valueFromLong(vm, (long)valueToDouble(value));
+            break;
+        case 's':
+        case 'f': case 'F': case 'e': case 'E': case 'g': case 'G':
+        case 'x': case 'X': case 'o': case 'c':
+            break;
+        default:
+            runtimeError(vm, "ValueError: unsupported format character '%c'", type);
+            goto fail;
+        }
+        spec[k++] = type;
+        if (!formatWithSpec(vm, &out, value, spec, k))
+            goto fail;
+    }
+    if (!mapping && next < values->count && values != &single)
+    {
+        runtimeError(vm, "TypeError: not all arguments converted during string formatting");
+        goto fail;
+    }
+    {
+        Value result = V_OBJ_VAL(AS_OBJECT(newString(vm, out.data ? out.data : "", out.length)));
+        strbufFree(&out);
+        return result;
+    }
+fail:
+    strbufFree(&out);
+    return V_EMPTY_VAL;
+}

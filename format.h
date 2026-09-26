@@ -15,4 +15,8 @@ Value formatValueToString(MVM *vm, Value v, const char *spec, int specLen);
 // str.format(): fills "{}", "{0}", "{name}", "{x!r}", "{:spec}" fields.
 Value formatTemplate(MVM *vm, MyMoString *pattern, int argc, Value *args, MyMoDict *keywords);
 
+// printf-style "fmt % args": args is a tuple, a single value, or a dict
+// for %(name)s fields.
+Value percentFormat(MVM *vm, MyMoString *fmt, Value args);
+
 #endif

@@ -1878,8 +1878,22 @@ int runMVM(MVM *vm)
         {
             OperatorOverLoad(a, b, inplace ? "%=" : "%");
         }
+        if (V_IS_OBJ_TYPE(a, OBJ_STRING))
+        {
+            // "%d items" % n, "%s=%r" % (k, v), "%(name)s" % {"name": x}
+            lpush(a); // keep the operands rooted while formatting
+            lpush(b);
+            SAVE();
+            Value text = percentFormat(vm, AS_STRING(V_AS_OBJ(a)), b);
+            if (V_IS_EMPTY(text))
+                goto _runtime_error;
+            sp -= 2;
+            lpush(text);
+            DISPATCH();
+        }
         if (!valueLooksLikeNumber(a) || !valueLooksLikeNumber(b))
         {
+            SAVE();
             runtimeError(vm, "TypeError: operands must be numbers");
             goto _runtime_error;
         }
