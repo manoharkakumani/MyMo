@@ -458,6 +458,23 @@ int main(int argc, const char *argv[])
     {
         return repl(vm);
     }
+    else if (argc == 2 && (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-v") == 0))
+    {
+        printf("MyMo %s\n", VERSION);
+        return 0;
+    }
+    else if (argc == 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0))
+    {
+        printf("usage: mymo [file.my | file.myc]\n"
+               "       mymo              start the REPL\n"
+               "       mymo --version    print the version\n"
+               "\n"
+               "environment:\n"
+               "  MYMO_HOME        install root; extension modules load from $MYMO_HOME/lib\n"
+               "  MYMO_NOCACHE=1   don't read or write __mycache__/ bytecode caches\n"
+               "  MYMO_GC_STRESS=1 collect garbage at every safe point (debugging)\n");
+        return 0;
+    }
     else if (argc == 2)
     {
         char actualpath[10000];

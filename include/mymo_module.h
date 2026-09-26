@@ -25,12 +25,16 @@
 // Build (from the directory holding your .c file, with mymo's source
 // tree at $MYMO_SRC):
 //
-//     macOS: cc -shared -fPIC -undefined dynamic_lookup \
-//                -I$MYMO_SRC -I$MYMO_SRC/include \
+//     macOS: cc -shared -fPIC -undefined dynamic_lookup
+//                -I$MYMO_SRC -I$MYMO_SRC/include
 //                -o myextmod.dylib myext.c
-//     Linux: cc -shared -fPIC \
-//                -I$MYMO_SRC -I$MYMO_SRC/include \
+//     Linux: cc -shared -fPIC
+//                -I$MYMO_SRC -I$MYMO_SRC/include
 //                -o myextmod.so myext.c
+//
+// With an installed MyMo (install.sh), mymo-config supplies the flags:
+//     cc $(mymo-config --cflags) $(mymo-config --ext-ldflags)
+//        -o $(mymo-config --moddir)/myextmod.$(mymo-config --ext) myext.c
 //
 // Filename MUST be `<name>mod.<ext>`. Search path at runtime:
 //   $MYMO_HOME/lib/<name>mod.<ext>

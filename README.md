@@ -28,6 +28,7 @@ Source files use `.my`.
 
 ## Contents
 
+- [Install](#install)
 - [Build and run](#build-and-run)
 - [Language tour](#language-tour)
   - [Values and variables](#values-and-variables)
@@ -52,6 +53,51 @@ Source files use `.my`.
 - [Known limitations](#known-limitations)
 
 ---
+
+## Install
+
+On Linux or macOS, from a checkout:
+
+```sh
+git clone https://github.com/manoharkakumani/MyMo.git
+cd MyMo
+./install.sh            # user install into ~/.mymo, no sudo
+```
+
+The script checks build dependencies (and prints the install command for
+your package manager if something is missing), builds MyMo, installs it,
+and adds `PATH` and `MYMO_HOME` to your shell startup files. Open a new
+terminal, then run `mymo --version`.
+
+| Option              | Effect                                                         |
+| ------------------- | -------------------------------------------------------------- |
+| `--system`          | Install into `/opt/mymo` and link `/usr/local/bin/mymo` (uses sudo) |
+| `--prefix DIR`      | Install into `DIR`                                              |
+| `--with-examples`   | Also install the example extension modules                      |
+| `--no-modify-path`  | Don't edit shell startup files (source `$MYMO_HOME/env` yourself) |
+| `--uninstall`       | Remove the install and the shell-file lines (same `--prefix`/`--system`) |
+
+What gets installed (`$MYMO_HOME`):
+
+| Path              | Contents                                                        |
+| ----------------- | --------------------------------------------------------------- |
+| `bin/mymo`        | the interpreter                                                 |
+| `bin/mymo-config` | compiler flags for extensions and embedding                      |
+| `lib/`            | `libmymo.a`, plus extension modules (`<name>mod.so`/`.dylib`), which `use` finds here |
+| `include/mymo/`   | headers: `include/mymo_module.h` (extensions), `include/mymo.h` (embedding) |
+| `env`             | sets `MYMO_HOME` and `PATH`                                      |
+
+Build against an installed MyMo with `mymo-config`:
+
+```sh
+# an extension module, installed where `from "shout" use ...` finds it
+cc $(mymo-config --cflags) $(mymo-config --ext-ldflags) \
+   -o $(mymo-config --moddir)/shoutmod.$(mymo-config --ext) shout.c
+# a C program embedding MyMo
+cc $(mymo-config --cflags) -o host host.c $(mymo-config --libs)
+```
+
+Tested on macOS, Ubuntu 24.04 (glibc) and Alpine 3.20 (musl).
 
 ## Build and run
 

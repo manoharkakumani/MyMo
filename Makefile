@@ -39,6 +39,9 @@ ifeq ($(UNAME_S),Linux)
   # modules loaded via dlopen. Without -rdynamic the .so resolves OK at
   # build time but the dynamic loader can't bind the references.
   LDFLAGS += -ldl -rdynamic
+  # -std=c11 makes glibc/musl hide POSIX APIs (clock_gettime, setenv,
+  # strdup, realpath, poll, ...) unless a feature macro is set.
+  COMMON  += -D_DEFAULT_SOURCE
 endif
 
 # Enumerate sources, skipping test.c (scratch) and unregistered module sources
