@@ -1,0 +1,55 @@
+# global / nonlocal, and closures seeing the current value of outer variables.
+count = 0
+fn inc():
+    global count
+    count += 1
+    return count
+print(inc(), inc(), count)
+fn set_many():
+    global a, b
+    a, b = 1, 2
+    for c_ in range(1):
+        pass
+set_many()
+print(a, b)
+fn make_counter():
+    n = 0
+    fn bump(step=1):
+        nonlocal n
+        n += step
+        return n
+    return bump
+c = make_counter()
+print(c(), c(), c(5))
+fn outer(total):
+    fn add(x):
+        nonlocal total
+        total = total + x
+    add(3)
+    add(4)
+    return total
+print(outer(10))
+fn reads_global():
+    return count * 10
+print(reads_global())
+fn bad():
+    nonlocal zzz
+    zzz = 1
+try:
+    bad()
+catch NameError as e:
+    print(e)
+cache = {}
+fn memo(k):
+    global cache
+    cache[k] = True
+    return len(cache)
+print(memo("a"), memo("b"))
+fn outer():
+    x = 1
+    fn get():
+        return x
+    a = get()
+    x = 2
+    return (a, get())
+print(outer())

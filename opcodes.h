@@ -110,9 +110,12 @@ typedef enum
     OP_LEXTEND, //                [list, iterable] -> [list]
     OP_DADD,    //                [dict, name, value] -> [dict]
     OP_DMERGE,  //                [dict, mapping] -> [dict]
-    OP_CALLEX   //                [callee, list, dict] -> [result]
+    OP_CALLEX,  //                [callee, list, dict] -> [result]
+    OP_GETG,    // name           [] -> [globals[name]]    (`global name`)
+    OP_SETG,    // name           [v] -> [v]              globals[name] = v
+    OP_SETNL    // name           [v] -> [v]              enclosing function's name = v (`nonlocal`)
 } OpCode;
 
 // Number of opcodes (keep in sync with the last enum entry).
-#define OP_COUNT (OP_CALLEX + 1)
+#define OP_COUNT (OP_SETNL + 1)
 #endif

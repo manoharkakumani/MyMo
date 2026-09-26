@@ -86,6 +86,9 @@ void *dispatchTable[] = {
     &&OP_LEXTEND,
     &&OP_DADD,
     &&OP_DMERGE,
-    &&OP_CALLEX
+    &&OP_CALLEX,
+    &&OP_GETG,
+    &&OP_SETG,
+    &&OP_SETNL
     };
 #endif

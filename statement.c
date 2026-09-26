@@ -277,6 +277,31 @@ void deleteStatement(Compiler *compiler)
     compiler->flags.dontSetVar--;
 }
 
+// global a, b / nonlocal a, b: later assignments in this function go to
+// the module global / the enclosing function's variable.
+static void scopeStatement(Compiler *compiler, u8 kind)
+{
+    do
+    {
+        consumeToken(compiler, NAME, kind == SCOPE_GLOBAL ? "expected a name after 'global'."
+                                                          : "expected a name after 'nonlocal'.");
+        if (compiler->flags.compileType != COMPILE_FUNCTION && kind == SCOPE_NONLOCAL)
+        {
+            error(compiler, "nonlocal is only allowed inside a function.");
+            return;
+        }
+        if (compiler->scopeCount == 64)
+        {
+            error(compiler, "too many global/nonlocal names in one function.");
+            return;
+        }
+        Token *t = &compiler->parser->previous;
+        compiler->scopeNames[compiler->scopeCount] = newString(compiler->parser->vm, t->token, t->length);
+        compiler->scopeKinds[compiler->scopeCount++] = kind;
+    } while (matchToken(compiler, COMMA));
+    emitByte(compiler, OP_NOP);
+}
+
 // assert cond[, message] — raises "AssertionError[: message]" when cond
 // is falsy. The message is only evaluated on failure.
 void assertStatement(Compiler *compiler)
@@ -878,6 +903,14 @@ void simpleStatement(Compiler *compiler)
     else if (matchToken(compiler, ASSERT))
     {
         assertStatement(compiler);
+    }
+    else if (matchToken(compiler, GLOBAL))
+    {
+        scopeStatement(compiler, SCOPE_GLOBAL);
+    }
+    else if (matchToken(compiler, NONLOCAL))
+    {
+        scopeStatement(compiler, SCOPE_NONLOCAL);
     }
     else if (matchToken(compiler, PASS))
     {

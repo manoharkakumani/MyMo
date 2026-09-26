@@ -2400,8 +2400,9 @@ int runMVM(MVM *vm)
             }
             if (lookupEnclosing(vm, frame->function->frame, variable, &val))
             {
+                // Not copied into our locals: the enclosing variable may
+                // change (nonlocal, or the outer function reassigning it).
                 pushV(vm, val);
-                setEntryV(vm, &frame->locals, variable, val);
                 DISPATCH();
             }
         }
@@ -2691,6 +2692,61 @@ int runMVM(MVM *vm)
         if (!callWithKeywords(vm, calleeV, argc, kwc, names))
             goto _runtime_error;
         LOAD();
+        DISPATCH();
+    }
+    OP_GETG:
+    {
+        MyMoObject *name = ReadObject();
+        Value value;
+        if (!getEntryV(&vm->globals, name, &value) && !getEntryV(&vm->builtins, name, &value))
+        {
+            SAVE();
+            runtimeError(vm, "NameError: Undefined variable '%s'.", AS_STRING(name)->value);
+            goto _runtime_error;
+        }
+        lpush(value);
+        DISPATCH();
+    }
+    OP_SETG:
+    {
+        MyMoObject *name = ReadObject();
+        setEntryV(vm, &vm->globals, name, lpeek(0));
+        DISPATCH();
+    }
+    OP_SETNL:
+    {
+        // Assign in the nearest enclosing function that has the variable
+        // (as a local or a parameter).
+        MyMoObject *name = ReadObject();
+        MyMoString *key = AS_STRING(name);
+        Value value = lpeek(0), unused;
+        bool done = false;
+        for (CallFrame *f = frame->function->frame; f && !done; f = f->function->frame)
+        {
+            if (getEntryV(&f->locals, name, &unused))
+            {
+                setEntryV(vm, &f->locals, name, value);
+                done = true;
+                break;
+            }
+            MyMoFunction *fn = f->function;
+            if (fn->argc > CALLFRAME_ARGS_INLINE)
+                continue;
+            for (int i = 0; i < fn->argc; i++)
+                if (fn->argv[i] && fn->argv[i]->length == key->length &&
+                    memcmp(fn->argv[i]->value, key->value, (size_t)key->length) == 0)
+                {
+                    f->args[i] = value;
+                    done = true;
+                    break;
+                }
+        }
+        if (!done)
+        {
+            SAVE();
+            runtimeError(vm, "NameError: no enclosing variable '%s' for nonlocal", key->value);
+            goto _runtime_error;
+        }
         DISPATCH();
     }
     OP_LEXTEND:

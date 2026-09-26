@@ -86,7 +86,16 @@ typedef struct Compiler
     // compiled starts (set by parsePrecedence). `a if c else b` moves a's
     // code behind the condition so `a` only runs when `c` holds.
     int infixLeftStart;
+    // Names this function declared `global` (kind 1) or `nonlocal`
+    // (kind 2): assignments go to the module globals / the enclosing
+    // function's variable instead of a new local.
+    MyMoString *scopeNames[64];
+    u8 scopeKinds[64];
+    int scopeCount;
 } Compiler;
+
+#define SCOPE_GLOBAL 1
+#define SCOPE_NONLOCAL 2
 
 typedef enum
 {

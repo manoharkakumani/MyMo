@@ -239,7 +239,7 @@ static int looksLikeBareExpression(const char *src)
     static const char *KW[] = {
         "if ", "else", "elif", "while", "for ", "fn ", "class", "case",
         "cond", "return", "break", "continue", "raise", "try", "del",
-        "use ", "from ", "yield", "pass", "fall", "catch", "final", "assert ",
+        "use ", "from ", "yield", "pass", "fall", "catch", "final", "assert ", "global ", "nonlocal ",
         NULL
     };
     // Trim leading whitespace and reject statement keywords up-front.

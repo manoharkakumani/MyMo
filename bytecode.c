@@ -76,18 +76,49 @@ static void emitNameOpWithIC(Compiler *compiler, u8 op, uint nameIdx)
     for (int i = 1; i < IC_BYTES; i++) emitByte(compiler, 0);
 }
 
+// SCOPE_GLOBAL / SCOPE_NONLOCAL if the function declared the name, else 0.
+static int nameScope(Compiler *compiler, uint nameIdx)
+{
+    if (compiler->scopeCount == 0)
+        return 0;
+    Value v = currentChunk(compiler)->constants.values[nameIdx];
+    MyMoString *name = AS_STRING(V_AS_OBJ(v));
+    for (int i = 0; i < compiler->scopeCount; i++)
+        if (compiler->scopeNames[i] == name)
+            return compiler->scopeKinds[i];
+    return 0;
+}
+
 void emitGetV(Compiler *compiler, uint nameIdx)
 {
-    emitNameOpWithIC(compiler, OP_GETV, nameIdx);
+    if (nameScope(compiler, nameIdx) == SCOPE_GLOBAL)
+        emitConstOp(compiler, OP_GETG, nameIdx);
+    else
+        emitNameOpWithIC(compiler, OP_GETV, nameIdx); // nonlocal reads find the enclosing variable
 }
 
 void emitSetV(Compiler *compiler, uint nameIdx)
 {
-    emitNameOpWithIC(compiler, OP_SETV, nameIdx);
+    int scope = nameScope(compiler, nameIdx);
+    if (scope == SCOPE_GLOBAL)
+        emitConstOp(compiler, OP_SETG, nameIdx);
+    else if (scope == SCOPE_NONLOCAL)
+        emitConstOp(compiler, OP_SETNL, nameIdx);
+    else
+        emitNameOpWithIC(compiler, OP_SETV, nameIdx);
 }
 
 void emitIncrVar(Compiler *compiler, uint nameIdx, int32_t delta)
 {
+    if (nameScope(compiler, nameIdx))
+    {
+        // No super-instruction for global/nonlocal names: name = name + delta.
+        emitGetV(compiler, nameIdx);
+        emitConstantV(compiler, V_INT_VAL(delta));
+        emitBytes(compiler, OP_ADD, 1);
+        emitSetV(compiler, nameIdx); // leaves the value, like OP_INCR_VAR
+        return;
+    }
     emitConstOp(compiler, OP_INCR_VAR, nameIdx);
     // 8 IC scratch bytes (same layout as OP_GETV/OP_SETV — first byte cold).
     emitByte(compiler, IC_TAG_COLD);

@@ -153,6 +153,8 @@ ParseRule rules[] = {
     [PASS] = {NULL, NULL, PREC_NONE},
     [DEL] = {NULL, NULL, PREC_NONE},
     [ASSERT] = {NULL, NULL, PREC_NONE},
+    [GLOBAL] = {NULL, NULL, PREC_NONE},
+    [NONLOCAL] = {NULL, NULL, PREC_NONE},
     [ERROR] = {NULL, NULL, PREC_NONE},
     [END] = {NULL, NULL, PREC_NONE},
     [YIELD] = {yeild, NULL, PREC_NONE},
@@ -221,6 +223,7 @@ Compiler *initCompiler(MVM *vm, Parser *parser, FunctionType type)
     compiler->tryDepth = 0;
     compiler->lastWideTarget = -1;
     compiler->infixLeftStart = 0;
+    compiler->scopeCount = 0;
     compiler->flags.cl_fn = false;
     compiler->flags.dontSetVar = 0;
     compiler->flags.pithru = 0;

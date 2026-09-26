@@ -66,6 +66,12 @@ int disassembleInstruction(Chunk *chunk, int offset)
         return simpleInstruction("OP_SUBSCRK", offset);
     case OP_DELSUBSCR:
         return simpleInstruction("OP_DELSUBSCR", offset);
+    case OP_GETG:
+        return constantInstruction("OP_GETG", chunk, offset);
+    case OP_SETG:
+        return constantInstruction("OP_SETG", chunk, offset);
+    case OP_SETNL:
+        return constantInstruction("OP_SETNL", chunk, offset);
     case OP_LEXTEND:
         return simpleInstruction("OP_LEXTEND", offset);
     case OP_DADD:
@@ -123,37 +129,37 @@ int disassembleInstruction(Chunk *chunk, int offset)
     case OP_GETI:
         return simpleInstruction("OP_GETI", offset);
     case OP_EQUAL:
-        return simpleInstruction("OP_EQUAL", offset);
+        return byteInstruction("OP_EQUAL", chunk, offset); // operand: in-place flag
     case OP_GREATER:
-        return simpleInstruction("OP_GREATER", offset);
+        return byteInstruction("OP_GREATER", chunk, offset); // operand: in-place flag
     case OP_LESS:
-        return simpleInstruction("OP_LESS", offset);
+        return byteInstruction("OP_LESS", chunk, offset); // operand: in-place flag
     case OP_NOT:
         return simpleInstruction("OP_NOT", offset);
     case OP_ADD:
-        return simpleInstruction("OP_ADD", offset);
+        return byteInstruction("OP_ADD", chunk, offset); // operand: in-place flag
     case OP_SUB:
-        return simpleInstruction("OP_SUB", offset);
+        return byteInstruction("OP_SUB", chunk, offset); // operand: in-place flag
     case OP_MUL:
-        return simpleInstruction("OP_MUL", offset);
+        return byteInstruction("OP_MUL", chunk, offset); // operand: in-place flag
     case OP_DIV:
-        return simpleInstruction("OP_DIV", offset);
+        return byteInstruction("OP_DIV", chunk, offset); // operand: in-place flag
     case OP_IDIV:
-        return simpleInstruction("OP_IDIV", offset);
+        return byteInstruction("OP_IDIV", chunk, offset); // operand: in-place flag
     case OP_POW:
-        return simpleInstruction("OP_POW", offset);
+        return byteInstruction("OP_POW", chunk, offset); // operand: in-place flag
     case OP_MOD:
-        return simpleInstruction("OP_MOD", offset);
+        return byteInstruction("OP_MOD", chunk, offset); // operand: in-place flag
     case OP_LSFT:
-        return simpleInstruction("OP_LSFT", offset);
+        return byteInstruction("OP_LSFT", chunk, offset); // operand: in-place flag
     case OP_RSFT:
-        return simpleInstruction("OP_RSFT", offset);
+        return byteInstruction("OP_RSFT", chunk, offset); // operand: in-place flag
     case OP_BAND:
-        return simpleInstruction("OP_BAND", offset);
+        return byteInstruction("OP_BAND", chunk, offset); // operand: in-place flag
     case OP_BOR:
-        return simpleInstruction("OP_BOR", offset);
+        return byteInstruction("OP_BOR", chunk, offset); // operand: in-place flag
     case OP_BXOR:
-        return simpleInstruction("OP_BXOR", offset);
+        return byteInstruction("OP_BXOR", chunk, offset); // operand: in-place flag
     case OP_NEG:
         return simpleInstruction("OP_NEG", offset);
     case OP_POS:
