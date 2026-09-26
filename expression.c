@@ -217,7 +217,13 @@ void unary(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);
     TokenType operatorType = compiler->parser->previous.type;
-    parsePrecedence(compiler, PREC_UNARY);
+    // `not` binds looser than comparisons, like Python:
+    // `not a == b` is `not (a == b)`, `not x in xs` is `not (x in xs)`;
+    // it stops at `and`/`or`. Unary `-`/`+` bind looser than `**`
+    // (`-2 ** 2` is -4); `!` binds tightly.
+    parsePrecedence(compiler, operatorType == NOT ? PREC_BAND
+                              : (operatorType == MINUS || operatorType == PLUS) ? PREC_INDICES
+                              : PREC_UNARY);
     switch (operatorType)
     {
     case EXCMARK:
@@ -466,6 +472,23 @@ void isOp(Compiler *compiler, bool canAssign)
     int negate = matchToken(compiler, NOT) ? 1 : 0;
     parsePrecedence(compiler, (Precedence)(PREC_EQUALITY + 1));
     emitBytes(compiler, OP_IS, (u32)negate);
+}
+
+// `item in container` / `item not in container` (comparison precedence).
+void inOp(Compiler *compiler, bool canAssign)
+{
+    UNUSED(canAssign);
+    parsePrecedence(compiler, (Precedence)(PREC_COMPARISON + 1));
+    emitByte(compiler, OP_IN);
+}
+
+void notInOp(Compiler *compiler, bool canAssign)
+{
+    UNUSED(canAssign);
+    consumeToken(compiler, IN, "expected 'in' after 'not'.");
+    parsePrecedence(compiler, (Precedence)(PREC_COMPARISON + 1));
+    emitByte(compiler, OP_IN);
+    emitByte(compiler, OP_NOT);
 }
 
 void dot(Compiler *compiler, bool canAssign)

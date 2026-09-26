@@ -618,6 +618,20 @@ int runMVM(MVM *vm)
         if (vm->fiber->handlerCount > 0) vm->fiber->handlerCount--;
         DISPATCH();
     }
+    OP_IN:
+    {
+        // [item, container] -> [bool]; instances use __contains__.
+        Value container = popV(vm);
+        Value item = popV(vm);
+        if (V_IS_OBJ_TYPE(container, OBJ_INSTANCE))
+            OperatorOverLoad(container, item, "__contains__");
+        SAVE();
+        Value result = containsValue(vm, container, item);
+        if (V_IS_EMPTY(result))
+            goto _runtime_error;
+        pushV(vm, result);
+        DISPATCH();
+    }
     OP_METV:
     {
         // Install a decorated method: [class, value, original] -> [class].

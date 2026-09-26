@@ -13,4 +13,8 @@ Value subValues(MVM *vm, Value a, Value b);
 Value mulValues(MVM *vm, Value a, Value b);
 Value divValues(MVM *vm, Value a, Value b);
 
+// `item in container` for built-in containers: V_TRUE_VAL/V_FALSE_VAL,
+// or V_EMPTY_VAL after raising (container type not supported).
+Value containsValue(MVM *vm, Value container, Value item);
+
 #endif

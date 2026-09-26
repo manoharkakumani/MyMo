@@ -16,6 +16,8 @@ void dot(Compiler *compiler, bool canAssign);
 u8 argumentList(Compiler *compiler);
 void optDot(Compiler *compiler, bool canAssign);
 void isOp(Compiler *compiler, bool canAssign);
+void inOp(Compiler *compiler, bool canAssign);
+void notInOp(Compiler *compiler, bool canAssign);
 void expression(Compiler *compiler);
 void call(Compiler *compiler, bool canAssign);
 void subScript(Compiler *compiler, bool canAssign);

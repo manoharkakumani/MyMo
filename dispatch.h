@@ -74,6 +74,7 @@ void *dispatchTable[] = {
     &&OP_RAISE,
     &&OP_WIDE,
     &&OP_DEFAULTS,
-    &&OP_METV
+    &&OP_METV,
+    &&OP_IN
     };
 #endif

@@ -154,3 +154,49 @@ Value divValues(MVM *vm, Value a, Value b)
     }
     return typeError(vm, "/", a, b);
 }
+
+Value containsValue(MVM *vm, Value container, Value item)
+{
+    if (V_IS_OBJ(container))
+    {
+        MyMoObject *c = V_AS_OBJ(container);
+        switch (c->type)
+        {
+        case OBJ_LIST:
+        case OBJ_TUPLE:
+        {
+            ValueArray *values = c->type == OBJ_LIST ? &AS_LIST(c)->values : &AS_TUPLE(c)->values;
+            for (int i = 0; i < values->count; i++)
+                if (valuesEqual(values->values[i], item))
+                    return V_TRUE_VAL;
+            return V_FALSE_VAL;
+        }
+        case OBJ_STRING:
+        {
+            if (!isType(item, OBJ_STRING))
+            {
+                runtimeError(vm, "TypeError: 'in <string>' requires a string, not %s", valueTypeName(item));
+                return V_EMPTY_VAL;
+            }
+            MyMoString *hay = AS_STRING(c), *needle = AS_STRING(V_AS_OBJ(item));
+            if (needle->length == 0)
+                return V_TRUE_VAL;
+            for (int i = 0; i + needle->length <= hay->length; i++)
+                if (memcmp(hay->value + i, needle->value, (size_t)needle->length) == 0)
+                    return V_TRUE_VAL;
+            return V_FALSE_VAL;
+        }
+        case OBJ_DICT:
+        {
+            // Keys are interned objects; box inline keys to find them.
+            Value unused;
+            MyMoObject *key = valueToBoxedObject(vm, item);
+            return V_BOOL_VAL(getEntryV(AS_DICT(c), key, &unused));
+        }
+        default:
+            break;
+        }
+    }
+    runtimeError(vm, "TypeError: argument of type %s is not iterable", valueTypeName(container));
+    return V_EMPTY_VAL;
+}

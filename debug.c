@@ -211,6 +211,8 @@ int disassembleInstruction(Chunk *chunk, int offset)
         return byteInstruction("OP_DEFAULTS", chunk, offset);
     case OP_METV:
         return constantInstruction("OP_METV", chunk, offset);
+    case OP_IN:
+        return simpleInstruction("OP_IN", offset);
     default:
         printf("Unknown opcode %d\n", instruction);
         return offset + 1;

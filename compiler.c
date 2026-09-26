@@ -107,7 +107,9 @@ ParseRule rules[] = {
     [ECAP] = {NULL, NULL, PREC_NONE},
     [EQUAL] = {NULL, NULL, PREC_NONE},
     [EXCMARK] = {unary, NULL, PREC_UNARY},
-    [NOT] = {unary, NULL, PREC_UNARY},
+    // Prefix `not x`; infix only as `x not in y` (comparison level).
+    [NOT] = {unary, notInOp, PREC_COMPARISON},
+    [IN] = {NULL, inOp, PREC_COMPARISON},
     [IS] = {NULL, isOp, PREC_EQUALITY},
     [DEQUAL] = {NULL, binary, PREC_EQUALITY},
     [NEQUAL] = {NULL, binary, PREC_EQUALITY},

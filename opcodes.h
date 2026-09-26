@@ -87,9 +87,11 @@ typedef enum
     //   OP_METV <name>           [class, value, original] -> [class]:
     //                            install a decorated method (value = the
     //                            decorators' result) and bind the original
-    OP_METV
+    OP_METV,
+    //   OP_IN                    [item, container] -> [bool] (`in`)
+    OP_IN
 } OpCode;
 
 // Number of opcodes (keep in sync with the last enum entry).
-#define OP_COUNT (OP_METV + 1)
+#define OP_COUNT (OP_IN + 1)
 #endif
