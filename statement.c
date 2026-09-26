@@ -735,7 +735,82 @@ bool operatorMethod(Compiler *compiler, u32 *argc)
     return false;
 }
 
+// Upper bound on stacked `@decorator` lines above one fn.
+#define MAX_DECORATORS 16
+
+static void functionStatementDecorated(Compiler *compiler, const u8 *decoratorArgc, int decoratorCount);
+
 void functionStatement(Compiler *compiler)
+{
+    functionStatementDecorated(compiler, NULL, 0);
+}
+
+// Decorators:
+//
+//     @get("/todos/:id")
+//     @log
+//     fn show(req): ...
+//
+// compiles to `show = get("/todos/:id", log(show))`: the decorated fn is
+// appended as the LAST argument of each decorator call (a bare `@log` is
+// `log(show)`), applied bottom-up. Appending instead of Python's
+// `get(path)(show)` keeps route helpers plain two-arg functions that
+// also work undecorated (`get("/x", handler)`). Each decorator's callee and args are evaluated top-down
+// before the fn is created, leaving the stack as
+// [callee1, args1.., callee2, args2..]; the fn is then pushed and each
+// OP_CALL (innermost first) consumes one callee + its args + the value
+// below it.
+void decoratedStatement(Compiler *compiler)
+{
+    size_t indent = getIndent(compiler);
+    u8 argcs[MAX_DECORATORS];
+    int count = 0;
+    while (matchToken(compiler, AT))
+    {
+        if (count == MAX_DECORATORS)
+        {
+            errorAtCurrent(compiler, "too many decorators on one function.");
+            return;
+        }
+        // Callee: NAME ('.' NAME)* — a variable or property chain.
+        consumeToken(compiler, NAME, "expected decorator name after '@'.");
+        variable(compiler, false);
+        while (matchToken(compiler, DOT))
+            dot(compiler, false);
+        u8 argc = 0;
+        if (matchToken(compiler, LPAR))
+        {
+            compiler->flags.argv++;
+            argc = argumentList(compiler);
+            compiler->flags.argv--;
+        }
+        if (argc == 255)
+        {
+            error(compiler, "Can't have more than 255 arguments.");
+            return;
+        }
+        argcs[count++] = argc + 1;
+        consumeToken(compiler, NEWLINE, "expected newline after decorator.");
+        if (getIndent(compiler) != indent)
+        {
+            errorAtCurrent(compiler, "decorator and fn must share the same indentation.");
+            return;
+        }
+    }
+    if (!checkToken(compiler, FN))
+    {
+        errorAtCurrent(compiler, "expected 'fn' after decorator.");
+        return;
+    }
+    if (compiler->flags.cl_fn)
+    {
+        errorAtCurrent(compiler, "decorators on methods are not supported.");
+        return;
+    }
+    functionStatementDecorated(compiler, argcs, count);
+}
+
+static void functionStatementDecorated(Compiler *compiler, const u8 *decoratorArgc, int decoratorCount)
 {
     size_t indent = getIndent(compiler);
     advanceToken(compiler);
@@ -820,6 +895,8 @@ void functionStatement(Compiler *compiler)
         break;
     case FN_FUNCTION:
         emitBytes(compiler, OP_FN, makeConstant(compiler, AS_OBJECT(function)));
+        for (int i = decoratorCount - 1; i >= 0; i--)
+            emitBytes(compiler, OP_CALL, decoratorArgc[i]);
         emitSetV(compiler, name);
         emitByte(compiler, OP_POP);
         break;
@@ -1034,6 +1111,8 @@ void statement(Compiler *compiler)
         flowStatement(compiler);
     else if (checkToken(compiler, CLASS) || checkToken(compiler, FN))
         compoundStatement(compiler);
+    else if (checkToken(compiler, AT))
+        decoratedStatement(compiler);
     else if (checkToken(compiler, TRY))
         tryStatement(compiler);
     else if (checkToken(compiler, USE) || checkToken(compiler, FROM))

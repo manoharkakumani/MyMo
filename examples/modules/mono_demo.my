@@ -23,7 +23,7 @@ fn home(req):
 fn list_todos(req):
     items = []
     for k in app_state["todos"]:
-        items.append(app_state["todos"][k])
+        items.append(app_state.todos[k])
     json(req, 200, items)
 
 fn create_todo(req):

@@ -1,0 +1,55 @@
+# Decorators: `@deco(args)` above `fn name` compiles to
+# `name = deco(args, name)`, and a bare `@deco` to `name = deco(name)`.
+# Stacked decorators apply bottom-up.
+registry = {}
+
+fn register(name, f):
+    registry[name] = f
+    return f
+
+fn trace(f):
+    print("trace applied")
+    return f
+
+fn tag(label, f):
+    print("tag", label)
+    return f
+
+@register("greet")
+fn greet(who):
+    return "hello " + who
+
+print(greet("a"), registry["greet"]("b"))
+
+@tag("outer")
+@tag("inner")
+@trace
+fn double(x):
+    return x * 2
+
+print(double(21))
+
+# Property-chain callees work too, e.g. a router object.
+class Router:
+    fn __init__(self):
+        self.routes = []
+    fn get(self, path, h):
+        self.routes.append(path)
+        return h
+
+app = Router()
+
+@app.get("/users")
+fn users(req):
+    return "users"
+
+print(app.routes, users(1))
+
+# Decorated fns inside a function bind locally.
+fn outer():
+    @register("helper")
+    fn helper(v):
+        return v + 1
+    return helper(1)
+
+print(outer(), registry["helper"](10))

@@ -29,6 +29,7 @@ void continueStatement(Compiler *compiler);
 void deleteStatement(Compiler *compiler);
 
 void functionStatement(Compiler *compiler);
+void decoratedStatement(Compiler *compiler);
 void arrowFunctionStatement(Compiler *compiler);
 
 void ClassStatement(Compiler *compiler);

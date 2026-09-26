@@ -5,11 +5,32 @@
 # (MyMo's pathResolver looks for module files relative to the
 # running script, so colocation works without any install step.)
 #
-# Quick start:
-#   from "mono" use get, post, start, text, json
-#   get("/",          req => text(req, 200, "hello"))
-#   get("/todos/:id", req => json(req, 200, {"id": req["params"]["id"]}))
+# Quick start (decorator style):
+#   from "mono" use get, post, start
+#
+#   @get("/")
+#   fn home(req):
+#       return "hello"                        # string -> text/plain 200
+#
+#   @get("/todos/:id")
+#   fn show(req):
+#       return {"id": req["params"]["id"]}    # dict/list -> JSON 200
+#
+#   @post("/todos")
+#   fn create(req):
+#       return (201, req["json"])             # (status, body) tuple
+#
 #   start("127.0.0.1", 8080)
+#
+# `@get("/x")` above `fn h` is compiler sugar for `h = get("/x", h)`,
+# so the plain call form `get("/x", handler)` works too.
+#
+# Handler return values (Hono-style):
+#   - string            -> 200 text/plain
+#   - dict / list / ... -> 200 JSON
+#   - (status, body)    -> that status; body encoded as above
+#   - Nil               -> nothing, if the handler already called
+#                          text()/json(); otherwise 204 No Content
 #
 # - Any `:name` segment binds the matching request segment into
 #   `req["params"][name]`.
@@ -97,10 +118,12 @@ fn __match(route_segs, req_segs):
     return bindings
 
 # --- public route registration ---------------------------------------
+# Returns `handler` so the decorator form (`@get(path)` rebinds the
+# fn name to the route helper's result) leaves the fn callable.
 fn route(method, path, handler):
     segs = __split_path(path)
     __state["routes"].append({"method": method, "segs": segs, "handler": handler})
-    return Nil
+    return handler
 
 get    = (path, handler) => route("GET",    path, handler)
 post   = (path, handler) => route("POST",   path, handler)
@@ -109,13 +132,36 @@ delete = (path, handler) => route("DELETE", path, handler)
 patch  = (path, handler) => route("PATCH",  path, handler)
 
 # Override the 404 handler. `handler` receives the request dict.
+# Also usable as a bare decorator: `@not_found`.
 fn not_found(handler):
     __state["not_found"] = handler
-    return Nil
+    return handler
 
 # --- response helpers (call from inside a handler) -------------------
-text = (req, status, body) => respond(req["client_fd"], status, body)
-json = (req, status, value) => respond_json(req["client_fd"], status, encode(value))
+# Both mark the request as answered so the return-value auto-response
+# in __dispatch_handler doesn't send a second reply.
+fn text(req, status, body):
+    req["__sent"] = True
+    return respond(req["client_fd"], status, body)
+
+fn json(req, status, value):
+    req["__sent"] = True
+    return respond_json(req["client_fd"], status, encode(value))
+
+# Turn a handler's return value into a response (see header).
+fn __auto_respond(req, result):
+    if result == Nil:
+        text(req, 204, "")
+        return Nil
+    status = 200
+    body = result
+    if type(result) == type(()):
+        status = result[0]
+        body = result[1]
+    if type(body) == type(""):
+        text(req, status, body)
+    else:
+        json(req, status, body)
 
 # --- main loop --------------------------------------------------------
 # Body decoding now uses try/catch instead of the __is_jsonish
@@ -136,7 +182,9 @@ fn __decode_body(body):
 # tear down the whole server.
 fn __dispatch_handler(handler, req):
     try:
-        handler(req)
+        result = handler(req)
+        if req.get("__sent") != True:
+            __auto_respond(req, result)
     catch e:
         try:
             body = encode({"error": "internal server error", "detail": e})
