@@ -75,23 +75,24 @@ void printFiber(MyMoFiber *fiber)
     printf("<object fiber of %s at %p>", fiber->callFrames[0]->function->name->value, fiber);
 }
 
-Value newFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value newFiberMethod(MVM *vm, uint argc, Value args[])
 {
     if (argc != 1)
     {
         runtimeError(vm, "__new__() takes exactly 1 argument (%d given)", argc);
         return V_EMPTY_VAL;
     }
-    MyMoObject *function = pop(vm);
-    if (!IS_FUNCTION(args[0]))
+    Value arg = args[0];
+    popV(vm);
+    if (!V_IS_OBJ_TYPE(arg, OBJ_FUNCTION))
     {
-        runtimeError(vm, "fiber() takes a <object 'function'> as argument but %s is given", getType(function));
+        runtimeError(vm, "fiber() takes a <object 'function'> as argument but %s is given", valueTypeName(arg));
         return V_EMPTY_VAL;
     }
-    return objectToValue(NEW_FIBER(vm, AS_FUNCTION(function)));
+    return objectToValue(NEW_FIBER(vm, AS_FUNCTION(V_AS_OBJ(arg))));
 }
 
-Value runFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value runFiberMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoBuiltInFunction *function = AS_BUILTIN_FUNCTION(peek(vm, argc));
     if (function->self == NULL)
@@ -144,7 +145,7 @@ Value runFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
     return objectToValue(AS_OBJECT(fiberFunction));
 }
 
-Value resumFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value resumFiberMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoBuiltInFunction *function = AS_BUILTIN_FUNCTION(peek(vm, argc));
     if (function->self == NULL)
@@ -184,7 +185,7 @@ Value resumFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
     return objectToValue(value);
 }
 
-Value aliveFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value aliveFiberMethod(MVM *vm, uint argc, Value args[])
 {
     if (argc != 0)
     {
@@ -201,7 +202,7 @@ Value aliveFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
     return V_BOOL_VAL(fiber->state != FIBER_DEAD);
 }
 
-Value killFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value killFiberMethod(MVM *vm, uint argc, Value args[])
 {
     if (argc != 0)
     {

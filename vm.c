@@ -319,10 +319,12 @@ static bool callerEx(MVM *vm, MyMoObject *callee, u32 argc, bool calleeSlot)
         // Built-ins still take MyMoObject** (their signature migrates in a
         // later step). All values on the stack are heap objects today, so
         // unwrap each Value via V_AS_OBJ into a temporary argv.
-        MyMoObject *legacy_argv[256];
+        // A copy, not a pointer into the stack: a builtin that calls back
+        // into MyMo (mymo_call) pushes over these slots.
+        Value argCopy[256];
         Value *vargs = vm->fiber->stack.values + vm->fiber->stack.count - argc;
-        for (u32 i = 0; i < argc; i++) legacy_argv[i] = valueToBoxedObject(vm, vargs[i]);
-        Value result = function(vm, argc, legacy_argv);
+        memcpy(argCopy, vargs, sizeof(Value) * argc);
+        Value result = function(vm, argc, argCopy);
         if (V_IS_EMPTY(result))
             return false;
         pop(vm);
@@ -355,7 +357,8 @@ static bool callerEx(MVM *vm, MyMoObject *callee, u32 argc, bool calleeSlot)
         BuiltInfunction function = AS_BUILTIN_FUNCTION(__new__)->function;
         push(vm, callee);
         // __new__ always returns a fresh instance object.
-        Value resultV = function(vm, 1, &callee);
+        Value calleeArg = V_OBJ_VAL(callee);
+        Value resultV = function(vm, 1, &calleeArg);
         if (V_IS_EMPTY(resultV))
             return false;
         MyMoObject *result = V_AS_OBJ(resultV);
@@ -383,10 +386,12 @@ static bool callerEx(MVM *vm, MyMoObject *callee, u32 argc, bool calleeSlot)
         MyMoObject *newMethed = NEW_STRING(vm, "__new__", 7);
         MyMoObject *__new__ = getEntry(vm, klass->methods, newMethed);
         BuiltInfunction function = AS_BUILTIN_FUNCTION(__new__)->function;
-        MyMoObject *legacy_argv[256];
+        // A copy, not a pointer into the stack: a builtin that calls back
+        // into MyMo (mymo_call) pushes over these slots.
+        Value argCopy[256];
         Value *vargs = vm->fiber->stack.values + vm->fiber->stack.count - argc;
-        for (u32 i = 0; i < argc; i++) legacy_argv[i] = valueToBoxedObject(vm, vargs[i]);
-        Value result = function(vm, argc, legacy_argv);
+        memcpy(argCopy, vargs, sizeof(Value) * argc);
+        Value result = function(vm, argc, argCopy);
         if (V_IS_EMPTY(result))
             return false;
         pop(vm);
@@ -2539,7 +2544,7 @@ int runMVM(MVM *vm)
         }
         else if (V_IS_DOUBLE(v))
         {
-            srclen = snprintf(buf, sizeof(buf), "%g", V_AS_DOUBLE(v));
+            srclen = snprintf(buf, sizeof(buf), "%.16g", V_AS_DOUBLE(v)); // like print()
             src = buf;
         }
         else if (V_IS_NIL(v))   { src = "Nil"; srclen = 3; }
@@ -2899,7 +2904,9 @@ int runMVM(MVM *vm)
         if (cobj->type == OBJ_BUILTIN_FUNCTION || cobj->type == OBJ_BUILTIN_METHOD)
         {
             BuiltInfunction fn = AS_BUILTIN_FUNCTION(cobj)->function;
-            MyMoObject *legacy_argv[256];
+            // A copy, not a pointer into the stack: a builtin that calls back
+        // into MyMo (mymo_call) pushes over these slots.
+        Value argCopy[256];
             // Insert callee UNDER the args so any peek(argc) inside
             // the builtin (used by methods to find their `self`)
             // finds the right object. Without this insert, calling a
@@ -2921,10 +2928,9 @@ int runMVM(MVM *vm)
             }
             SAVE();
             Value *vargs = vm->fiber->stack.values + vm->fiber->stack.count - argCount;
-            for (u32 i = 0; i < argCount; i++)
-                legacy_argv[i] = valueToBoxedObject(vm, vargs[i]);
+            memcpy(argCopy, vargs, sizeof(Value) * argCount);
             MyMoFiber *callerFiber = vm->fiber;
-            Value result = fn(vm, argCount, legacy_argv);
+            Value result = fn(vm, argCount, argCopy);
             if (V_IS_EMPTY(result)) goto _runtime_error;
             if (vm->fiber != callerFiber)
             {

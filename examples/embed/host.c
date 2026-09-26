@@ -11,7 +11,7 @@
 #include <stdio.h>
 
 // host_log(msg) — a C function MyMo code can call.
-static Value host_log(MVM *vm, uint argc, MyMoObject *argv[])
+static Value host_log(MVM *vm, uint argc, Value argv[])
 {
     const char *msg;
     if (!mymo_parse(vm, "host_log", argc, argv, "s", &msg))
@@ -21,17 +21,17 @@ static Value host_log(MVM *vm, uint argc, MyMoObject *argv[])
 }
 
 // apply_twice(fn, x) — calls a MyMo callable from C: fn(fn(x)).
-static Value apply_twice(MVM *vm, uint argc, MyMoObject *argv[])
+static Value apply_twice(MVM *vm, uint argc, Value argv[])
 {
     if (argc != 2)
     {
         runtimeError(vm, "apply_twice() takes 2 arguments (%u given)", argc);
         return MYMO_ERROR;
     }
-    Value fn = objectToValue(argv[0]);
-    Value x = objectToValue(argv[1]);
+    Value fn = argv[0];
+    Value x = argv[1];
     for (uint i = 0; i < argc; i++) // builtins pop their own arguments
-        pop(vm);
+        popV(vm);
     Value once, twice;
     if (mymo_call(vm, fn, 1, &x, &once) != MYMO_OK || mymo_call(vm, fn, 1, &once, &twice) != MYMO_OK)
         return MYMO_ERROR; // the error was already reported

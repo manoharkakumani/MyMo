@@ -2,7 +2,7 @@
 //
 //     #include "mymo.h"
 //
-//     static Value host_add(MVM *vm, uint argc, MyMoObject *argv[]) {
+//     static Value host_add(MVM *vm, uint argc, Value argv[]) {
 //         long a, b;
 //         if (!mymo_parse(vm, "host_add", argc, argv, "ii", &a, &b))
 //             return MYMO_ERROR;

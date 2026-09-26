@@ -5,6 +5,7 @@
 #include "datatypes/double.h"
 #include "datatypes/nil.h"
 #include "datatypes/bool.h"
+#include "datatypes/string.h"
 
 MyMoObject *valueToBoxedObject(MVM *vm, Value v) {
     if (V_IS_OBJ(v))    return V_AS_OBJ(v);
@@ -77,6 +78,24 @@ static inline bool valueAsBoolBit(Value v) {
     return ((MyMoBool *)V_AS_OBJ(v))->value;
 }
 
+bool valueIsNil(Value v)  { return valueIsNilAny(v); }
+bool valueIsBool(Value v) { return valueIsBoolAny(v); }
+bool valueAsBool(Value v) { return valueAsBoolBit(v); }
+
+bool valueIsFalsey(Value v) {
+    if (valueIsNil(v)) return true;
+    if (valueIsBool(v)) return !valueAsBool(v);
+    if (valueLooksLikeNumber(v)) return valueAsNumber(v) == 0;
+    if (V_IS_OBJ(v) && V_AS_OBJ(v)->type == OBJ_STRING)
+        return ((MyMoString *)V_AS_OBJ(v))->length == 0;
+    return false;
+}
+
+Value valueFromLong(MVM *vm, long n) {
+    if (n >= INT32_MIN && n <= INT32_MAX) return V_INT_VAL((int32_t)n);
+    return V_OBJ_VAL(AS_OBJECT(newInt(vm, n)));
+}
+
 static bool isWildcard(Value v) {
     return V_IS_OBJ(v) && V_AS_OBJ(v)->type == OBJ_WILDCARD;
 }
@@ -130,10 +149,11 @@ void printValue(Value v) {
 }
 
 const char *valueTypeName(Value v) {
-    if (V_IS_NIL(v))    return "nil";
-    if (V_IS_BOOL(v))   return "bool";
-    if (V_IS_INT(v))    return "int";
-    if (V_IS_DOUBLE(v)) return "double";
+    // Same spelling as type() / getType().
+    if (V_IS_NIL(v))    return "<object 'nil'>";
+    if (V_IS_BOOL(v))   return "<object 'bool'>";
+    if (V_IS_INT(v))    return "<object 'int'>";
+    if (V_IS_DOUBLE(v)) return "<object 'double'>";
     if (V_IS_OBJ(v))    return getType(V_AS_OBJ(v));
     return "unknown";
 }

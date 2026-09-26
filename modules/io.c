@@ -21,7 +21,7 @@
   #define F_OK_COMPAT F_OK
 #endif
 
-static Value io_read(MVM *vm, uint argc, MyMoObject *argv[])
+static Value io_read(MVM *vm, uint argc, Value argv[])
 {
     const char *path;
     if (!mymo_parse(vm, "io.read", argc, argv, "s", &path)) return MYMO_ERROR;
@@ -53,7 +53,7 @@ static Value io_read(MVM *vm, uint argc, MyMoObject *argv[])
 }
 
 static Value io_write_mode(MVM *vm, const char *funcname,
-                           uint argc, MyMoObject *argv[],
+                           uint argc, Value argv[],
                            const char *mode)
 {
     const char *path, *content;
@@ -76,24 +76,24 @@ static Value io_write_mode(MVM *vm, const char *funcname,
     return MYMO_NIL;
 }
 
-static Value io_write(MVM *vm, uint argc, MyMoObject *argv[])
+static Value io_write(MVM *vm, uint argc, Value argv[])
 {
     return io_write_mode(vm, "io.write", argc, argv, "wb");
 }
 
-static Value io_append(MVM *vm, uint argc, MyMoObject *argv[])
+static Value io_append(MVM *vm, uint argc, Value argv[])
 {
     return io_write_mode(vm, "io.append", argc, argv, "ab");
 }
 
-static Value io_exists(MVM *vm, uint argc, MyMoObject *argv[])
+static Value io_exists(MVM *vm, uint argc, Value argv[])
 {
     const char *path;
     if (!mymo_parse(vm, "io.exists", argc, argv, "s", &path)) return MYMO_ERROR;
     return MYMO_BOOL(access_compat(path, F_OK_COMPAT) == 0);
 }
 
-static Value io_remove(MVM *vm, uint argc, MyMoObject *argv[])
+static Value io_remove(MVM *vm, uint argc, Value argv[])
 {
     const char *path;
     if (!mymo_parse(vm, "io.remove", argc, argv, "s", &path)) return MYMO_ERROR;

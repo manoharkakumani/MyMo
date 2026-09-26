@@ -37,7 +37,7 @@ static sqlite3 *get_slot(MVM *vm, const char *fn, long h)
     return db_pool[h];
 }
 
-static Value sql_open(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sql_open(MVM *vm, uint argc, Value argv[])
 {
     const char *path;
     if (!mymo_parse(vm, "sqlite.open", argc, argv, "s", &path)) return MYMO_ERROR;
@@ -59,7 +59,7 @@ static Value sql_open(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(mymo_int(vm, slot));
 }
 
-static Value sql_run(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sql_run(MVM *vm, uint argc, Value argv[])
 {
     long h;
     const char *sql;
@@ -103,7 +103,7 @@ static MyMoObject *column_to_object(MVM *vm, sqlite3_stmt *st, int i)
     }
 }
 
-static Value sql_query(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sql_query(MVM *vm, uint argc, Value argv[])
 {
     long h;
     const char *sql;
@@ -132,7 +132,7 @@ static Value sql_query(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(AS_OBJECT(rows));
 }
 
-static Value sql_close(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sql_close(MVM *vm, uint argc, Value argv[])
 {
     long h;
     if (!mymo_parse(vm, "sqlite.close", argc, argv, "i", &h)) return MYMO_ERROR;

@@ -21,7 +21,7 @@
   #define getcwd_compat(buf, size) getcwd((buf), (size))
 #endif
 
-static Value os_getenv(MVM *vm, uint argc, MyMoObject *argv[])
+static Value os_getenv(MVM *vm, uint argc, Value argv[])
 {
     const char *name;
     if (!mymo_parse(vm, "os.getenv", argc, argv, "s", &name)) return MYMO_ERROR;
@@ -29,7 +29,7 @@ static Value os_getenv(MVM *vm, uint argc, MyMoObject *argv[])
     return v ? objectToValue(mymo_str(vm, v)) : MYMO_NIL;
 }
 
-static Value os_setenv(MVM *vm, uint argc, MyMoObject *argv[])
+static Value os_setenv(MVM *vm, uint argc, Value argv[])
 {
     const char *name, *value;
     if (!mymo_parse(vm, "os.setenv", argc, argv, "ss", &name, &value))
@@ -48,7 +48,7 @@ static Value os_setenv(MVM *vm, uint argc, MyMoObject *argv[])
     return MYMO_NIL;
 }
 
-static Value os_unsetenv(MVM *vm, uint argc, MyMoObject *argv[])
+static Value os_unsetenv(MVM *vm, uint argc, Value argv[])
 {
     const char *name;
     if (!mymo_parse(vm, "os.unsetenv", argc, argv, "s", &name))
@@ -61,7 +61,7 @@ static Value os_unsetenv(MVM *vm, uint argc, MyMoObject *argv[])
     return MYMO_NIL;
 }
 
-static Value os_getcwd(MVM *vm, uint argc, MyMoObject *argv[])
+static Value os_getcwd(MVM *vm, uint argc, Value argv[])
 {
     if (!mymo_check_args(vm, "os.getcwd", argc, 0)) return MYMO_ERROR;
     char buf[4096];
@@ -72,7 +72,7 @@ static Value os_getcwd(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(mymo_str(vm, buf));
 }
 
-static Value os_exit(MVM *vm, uint argc, MyMoObject *argv[])
+static Value os_exit(MVM *vm, uint argc, Value argv[])
 {
     long code = 0;
     if (argc > 1) {

@@ -248,7 +248,7 @@ bool isEqual(MyMoObject *a, MyMoObject *b)
     }
 }
 
-Value newObjectMethod(MVM *vm, uint argc, MyMoObject **argv)
+Value newObjectMethod(MVM *vm, uint argc, Value argv[])
 {
     if (argc != 1)
     {
@@ -265,7 +265,7 @@ Value newObjectMethod(MVM *vm, uint argc, MyMoObject **argv)
     return objectToValue(AS_OBJECT(instance));
 }
 
-Value strObjectMethod(MVM *vm, uint argc, MyMoObject **argv)
+Value strObjectMethod(MVM *vm, uint argc, Value argv[])
 {
     UNUSED(vm);
     UNUSED(argv);
@@ -278,7 +278,7 @@ Value strObjectMethod(MVM *vm, uint argc, MyMoObject **argv)
     return objectToValue(NEW_STRING(vm, type, strlen(type)));
 }
 
-Value initObjectMethod(MVM *vm, uint argc, MyMoObject **argv)
+Value initObjectMethod(MVM *vm, uint argc, Value argv[])
 {
     UNUSED(vm);
     UNUSED(argv);

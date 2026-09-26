@@ -13,7 +13,7 @@
 //
 //     #include "mymo_module.h"
 //
-//     static Value greet(MVM *vm, uint argc, MyMoObject *argv[]) {
+//     static Value greet(MVM *vm, uint argc, Value argv[]) {
 //         const char *name;
 //         if (!mymo_parse(vm, "greet", argc, argv, "s", &name))
 //             return MYMO_ERROR;
@@ -67,30 +67,32 @@
 #define MYMO_BOOL(b) V_BOOL_VAL(b)
 
 // ---------------------------------------------------------------------
-// TYPE PREDICATES — `o` is MyMoObject*; safe against NULL
+// TYPE PREDICATES — `v` is a Value (builtins receive `Value argv[]`)
 // ---------------------------------------------------------------------
 
-#define mymo_is_int(o)    ((o) && (o)->type == OBJ_INT)
-#define mymo_is_double(o) ((o) && (o)->type == OBJ_DOUBLE)
-#define mymo_is_string(o) ((o) && (o)->type == OBJ_STRING)
-#define mymo_is_bool(o)   ((o) && (o)->type == OBJ_BOOL)
-#define mymo_is_list(o)   ((o) && (o)->type == OBJ_LIST)
-#define mymo_is_tuple(o)  ((o) && (o)->type == OBJ_TUPLE)
-#define mymo_is_dict(o)   ((o) && (o)->type == OBJ_DICT)
-#define mymo_is_nil(o)    ((o) && (o)->type == OBJ_NIL)
-#define mymo_is_number(o) (mymo_is_int(o) || mymo_is_double(o))
+#define mymo_is_int(v)    valueLooksLikeInt(v)
+#define mymo_is_double(v) valueLooksLikeDouble(v)
+#define mymo_is_number(v) valueLooksLikeNumber(v)
+#define mymo_is_bool(v)   valueIsBool(v)
+#define mymo_is_nil(v)    valueIsNil(v)
+#define mymo_is_string(v) V_IS_OBJ_TYPE(v, OBJ_STRING)
+#define mymo_is_list(v)   V_IS_OBJ_TYPE(v, OBJ_LIST)
+#define mymo_is_tuple(v)  V_IS_OBJ_TYPE(v, OBJ_TUPLE)
+#define mymo_is_dict(v)   V_IS_OBJ_TYPE(v, OBJ_DICT)
 
 // ---------------------------------------------------------------------
 // UNCHECKED ACCESSORS — pair with predicates above
 // ---------------------------------------------------------------------
 
-#define mymo_as_int(o)    (((MyMoInt *)(o))->value)
-#define mymo_as_double(o) (((MyMoDouble *)(o))->value)
-#define mymo_as_string(o) (((MyMoString *)(o))->value)
-#define mymo_as_strlen(o) (((MyMoString *)(o))->length)
+#define mymo_as_int(v)    valueToLong(v)
+#define mymo_as_double(v) valueToDouble(v)
+#define mymo_as_bool(v)   valueAsBool(v)
+#define mymo_as_string(v) (((MyMoString *)V_AS_OBJ(v))->value)
+#define mymo_as_strlen(v) (((MyMoString *)V_AS_OBJ(v))->length)
+#define mymo_as_object(v) V_AS_OBJ(v)  // list/tuple/dict/... pointer
 // mymo_as_number coerces ints to double — useful when you want one
 // uniform numeric path.
-#define mymo_as_number(o) (mymo_is_int(o) ? (double)mymo_as_int(o) : mymo_as_double(o))
+#define mymo_as_number(v) valueAsNumber(v)
 
 // ---------------------------------------------------------------------
 // CONSTRUCTORS — implemented in mymo_api.c, exported by the main binary
@@ -120,8 +122,9 @@ MyMoObject *mymo_strf(MVM *vm, const char *fmt, ...);              // printf-sty
 //         d — double *out        (double; accepts OBJ_DOUBLE or OBJ_INT — ints widen)
 //         s — const char **out   (string contents; OBJ_STRING)
 //         n — int *out           (string length, paired with s; advances past)
-//         b — int *out           (bool; accepts OBJ_BOOL)
-//         o — MyMoObject **out   (any object — useful for polymorphic args)
+//         b — int *out           (bool)
+//         v — Value *out         (any value, unconverted — for polymorphic args)
+//         o — MyMoObject **out   (any value as an object; inline ints/doubles boxed)
 //         S — MyMoString **out
 //         L — MyMoList **out
 //         T — MyMoTuple **out
@@ -132,7 +135,7 @@ MyMoObject *mymo_strf(MVM *vm, const char *fmt, ...);              // printf-sty
 //                         &a, &b, &s, &slen)) return MYMO_ERROR;
 
 bool mymo_check_args(MVM *vm, const char *funcname, uint argc, uint expected);
-bool mymo_parse(MVM *vm, const char *funcname, uint argc, MyMoObject *argv[],
+bool mymo_parse(MVM *vm, const char *funcname, uint argc, Value argv[],
                 const char *fmt, ...);
 
 // ---------------------------------------------------------------------

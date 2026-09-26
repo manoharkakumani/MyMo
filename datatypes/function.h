@@ -98,7 +98,7 @@ typedef struct MyMoClouser
 
 // Builtins return a Value so nil/bool/int results stay inline on the
 // operand stack. V_EMPTY_VAL signals "runtimeError already raised".
-typedef Value (*BuiltInfunction)(MVM *vm, uint argc, MyMoObject *argv[]);
+typedef Value (*BuiltInfunction)(MVM *vm, uint argc, Value argv[]);
 
 typedef struct MyMoBuiltInFunction
 {

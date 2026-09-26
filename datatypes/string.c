@@ -33,44 +33,35 @@ void printString(MyMoString *string)
     printf("%s", string->value);
 }
 
-Value newStringMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value newStringMethod(MVM *vm, uint argc, Value args[])
 {
     if (argc > 1)
     {
         runtimeError(vm, "str() takes  1 argument (%d given)", argc);
         return V_EMPTY_VAL;
     }
-    else if (argc == 0)
-    {
+    if (argc == 0)
         return objectToValue(NEW_STRING(vm, "", 0));
-    }
+    Value v = args[0];
+    popV(vm);
+    if (V_IS_OBJ_TYPE(v, OBJ_STRING))
+        return v;
+    char buf[64];
+    const char *text;
+    if (valueLooksLikeInt(v))
+        snprintf(buf, sizeof(buf), "%ld", valueToLong(v)), text = buf;
+    else if (valueLooksLikeDouble(v))
+        snprintf(buf, sizeof(buf), "%.16g", valueToDouble(v)), text = buf; // like print()
+    else if (valueIsNil(v))
+        text = "Nil";
+    else if (valueIsBool(v))
+        text = valueAsBool(v) ? "True" : "False";
     else
-    {
-        if (IS_STRING(args[0]))
-        {
-            return objectToValue(pop(vm));
-        }
-        else if (IS_INT(args[0]))
-        {
-            char x[1000];
-            sprintf(x, "%ld", INT_VAL(pop(vm)));
-            return objectToValue(NEW_STRING(vm, x, strlen(x)));
-        }
-        else if (IS_DOUBLE(args[0]))
-        {
-            char x[1000];
-            sprintf(x, "%g", DOUBLE_VAL(pop(vm)));
-            return objectToValue(NEW_STRING(vm, x, strlen(x)));
-        }
-        else
-        {
-            char *a = getType(pop(vm));
-            return objectToValue(NEW_STRING(vm, a, strlen(a)));
-        }
-    }
+        text = valueTypeName(v);
+    return objectToValue(NEW_STRING(vm, text, (int)strlen(text)));
 }
 
-Value stringLengthMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value stringLengthMethod(MVM *vm, uint argc, Value args[])
 {
     if (argc != 0)
     {
@@ -86,11 +77,11 @@ Value stringLengthMethod(MVM *vm, uint argc, MyMoObject *args[])
         
     return objectToValue(NEW_INT(vm, AS_STRING(function->self)->length));
 }
-static bool needString(MVM *vm, const char *fn, MyMoObject *arg)
+static bool needString(MVM *vm, const char *fn, Value arg)
 {
-    if (IS_STRING(arg))
+    if (V_IS_OBJ_TYPE(arg, OBJ_STRING))
         return true;
-    runtimeError(vm, "TypeError: %s() expects a string, got %s", fn, getType(arg));
+    runtimeError(vm, "TypeError: %s() expects a string, got %s", fn, valueTypeName(arg));
     return false;
 }
 
@@ -105,7 +96,7 @@ static int findSub(MyMoString *hay, MyMoString *needle, int from)
     return -1;
 }
 
-Value upperStringMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value upperStringMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "upper", argc, 0, 0);
     if (!self) return V_EMPTY_VAL;
@@ -118,7 +109,7 @@ Value upperStringMethod(MVM *vm, uint argc, MyMoObject *args[])
     return objectToValue(out);
 }
 
-Value lowerStringMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value lowerStringMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "lower", argc, 0, 0);
     if (!self) return V_EMPTY_VAL;
@@ -131,7 +122,7 @@ Value lowerStringMethod(MVM *vm, uint argc, MyMoObject *args[])
     return objectToValue(out);
 }
 
-Value stripStringMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value stripStringMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "strip", argc, 0, 0);
     if (!self) return V_EMPTY_VAL;
@@ -142,43 +133,43 @@ Value stripStringMethod(MVM *vm, uint argc, MyMoObject *args[])
     return objectToValue(NEW_STRING(vm, s->value + start, end - start));
 }
 
-Value findStringMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value findStringMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "find", argc, 1, 1);
     if (!self || !needString(vm, "find", args[0])) return V_EMPTY_VAL;
-    return V_INT_VAL(findSub(AS_STRING(self), AS_STRING(args[0]), 0));
+    return V_INT_VAL(findSub(AS_STRING(self), AS_STRING(V_AS_OBJ(args[0])), 0));
 }
 
-Value containsStringMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value containsStringMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "contains", argc, 1, 1);
     if (!self || !needString(vm, "contains", args[0])) return V_EMPTY_VAL;
-    return V_BOOL_VAL(findSub(AS_STRING(self), AS_STRING(args[0]), 0) >= 0);
+    return V_BOOL_VAL(findSub(AS_STRING(self), AS_STRING(V_AS_OBJ(args[0])), 0) >= 0);
 }
 
-Value startswithStringMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value startswithStringMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "startswith", argc, 1, 1);
     if (!self || !needString(vm, "startswith", args[0])) return V_EMPTY_VAL;
-    MyMoString *s = AS_STRING(self), *p = AS_STRING(args[0]);
+    MyMoString *s = AS_STRING(self), *p = AS_STRING(V_AS_OBJ(args[0]));
     return V_BOOL_VAL(p->length <= s->length && memcmp(s->value, p->value, (size_t)p->length) == 0);
 }
 
-Value endswithStringMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value endswithStringMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "endswith", argc, 1, 1);
     if (!self || !needString(vm, "endswith", args[0])) return V_EMPTY_VAL;
-    MyMoString *s = AS_STRING(self), *p = AS_STRING(args[0]);
+    MyMoString *s = AS_STRING(self), *p = AS_STRING(V_AS_OBJ(args[0]));
     return V_BOOL_VAL(p->length <= s->length
                       && memcmp(s->value + s->length - p->length, p->value, (size_t)p->length) == 0);
 }
 
-Value replaceStringMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value replaceStringMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "replace", argc, 2, 2);
     if (!self || !needString(vm, "replace", args[0]) || !needString(vm, "replace", args[1]))
         return V_EMPTY_VAL;
-    MyMoString *s = AS_STRING(self), *from = AS_STRING(args[0]), *to = AS_STRING(args[1]);
+    MyMoString *s = AS_STRING(self), *from = AS_STRING(V_AS_OBJ(args[0])), *to = AS_STRING(V_AS_OBJ(args[1]));
     if (from->length == 0)
         return objectToValue(self);
     // Count first so the output buffer is sized exactly.
@@ -204,7 +195,7 @@ Value replaceStringMethod(MVM *vm, uint argc, MyMoObject *args[])
 
 // split(): on runs of whitespace (dropping empties); split(sep): on
 // every occurrence of sep (keeping empties), like Python.
-Value splitStringMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value splitStringMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "split", argc, 0, 1);
     if (!self || (argc && !needString(vm, "split", args[0]))) return V_EMPTY_VAL;
@@ -223,7 +214,7 @@ Value splitStringMethod(MVM *vm, uint argc, MyMoObject *args[])
         }
         return objectToValue(AS_OBJECT(out));
     }
-    MyMoString *sep = AS_STRING(args[0]);
+    MyMoString *sep = AS_STRING(V_AS_OBJ(args[0]));
     if (sep->length == 0)
     {
         runtimeError(vm, "ValueError: split() separator must not be empty");
@@ -240,16 +231,17 @@ Value splitStringMethod(MVM *vm, uint argc, MyMoObject *args[])
 }
 
 // sep.join(list_of_strings)
-Value joinStringMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value joinStringMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "join", argc, 1, 1);
     if (!self) return V_EMPTY_VAL;
-    if (!IS_LIST(args[0]) && !IS_TUPLE(args[0]))
+    if (!V_IS_OBJ_TYPE(args[0], OBJ_LIST) && !V_IS_OBJ_TYPE(args[0], OBJ_TUPLE))
     {
-        runtimeError(vm, "TypeError: join() expects a list or tuple, got %s", getType(args[0]));
+        runtimeError(vm, "TypeError: join() expects a list or tuple, got %s", valueTypeName(args[0]));
         return V_EMPTY_VAL;
     }
-    ValueArray *items = IS_LIST(args[0]) ? &AS_LIST(args[0])->values : &AS_TUPLE(args[0])->values;
+    MyMoObject *seq = V_AS_OBJ(args[0]);
+    ValueArray *items = IS_LIST(seq) ? &AS_LIST(seq)->values : &AS_TUPLE(seq)->values;
     MyMoString *sep = AS_STRING(self);
     int len = 0;
     for (int i = 0; i < items->count; i++)

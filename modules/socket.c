@@ -43,7 +43,7 @@ static int resolve_ipv4(const char *host, struct in_addr *out)
     return 0;
 }
 
-static Value sock_connect(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_connect(MVM *vm, uint argc, Value argv[])
 {
     const char *host;
     long port;
@@ -73,7 +73,7 @@ static Value sock_connect(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(mymo_int(vm, fd));
 }
 
-static Value sock_listen(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_listen(MVM *vm, uint argc, Value argv[])
 {
     const char *host;
     long port, backlog;
@@ -113,7 +113,7 @@ static Value sock_listen(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(mymo_int(vm, fd));
 }
 
-static Value sock_accept(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_accept(MVM *vm, uint argc, Value argv[])
 {
     long fd;
     if (!mymo_parse(vm, "socket.accept", argc, argv, "i", &fd))
@@ -128,7 +128,7 @@ static Value sock_accept(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(mymo_int(vm, cfd));
 }
 
-static Value sock_send(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_send(MVM *vm, uint argc, Value argv[])
 {
     long fd;
     const char *data; int dlen;
@@ -142,7 +142,7 @@ static Value sock_send(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(mymo_int(vm, (long)n));
 }
 
-static Value sock_recv(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_recv(MVM *vm, uint argc, Value argv[])
 {
     long fd, max_bytes;
     if (!mymo_parse(vm, "socket.recv", argc, argv, "ii", &fd, &max_bytes))
@@ -167,7 +167,7 @@ static Value sock_recv(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(s);
 }
 
-static Value sock_close(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_close(MVM *vm, uint argc, Value argv[])
 {
     long fd;
     if (!mymo_parse(vm, "socket.close", argc, argv, "i", &fd))
@@ -176,7 +176,7 @@ static Value sock_close(MVM *vm, uint argc, MyMoObject *argv[])
     return MYMO_NIL;
 }
 
-static Value sock_gethostname(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_gethostname(MVM *vm, uint argc, Value argv[])
 {
     if (!mymo_check_args(vm, "socket.gethostname", argc, 0)) return MYMO_ERROR;
     char buf[256];
@@ -188,7 +188,7 @@ static Value sock_gethostname(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(mymo_str(vm, buf));
 }
 
-static Value sock_resolve(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_resolve(MVM *vm, uint argc, Value argv[])
 {
     const char *host;
     if (!mymo_parse(vm, "socket.resolve", argc, argv, "s", &host))

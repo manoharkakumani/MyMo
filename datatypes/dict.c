@@ -307,7 +307,7 @@ static MyMoDict *dictSelf(MVM *vm, const char *fn, int self_idx)
     return AS_DICT(function->self);
 }
 
-Value dictGetMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value dictGetMethod(MVM *vm, uint argc, Value args[])
 {
     if (argc < 1 || argc > 2)
     {
@@ -323,7 +323,7 @@ Value dictGetMethod(MVM *vm, uint argc, MyMoObject *args[])
     return objectToValue(value ? value : def);
 }
 
-Value dictPutMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value dictPutMethod(MVM *vm, uint argc, Value args[])
 {
     if (argc != 2)
     {
@@ -338,7 +338,7 @@ Value dictPutMethod(MVM *vm, uint argc, MyMoObject *args[])
     return objectToValue(value);
 }
 
-Value dictHasMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value dictHasMethod(MVM *vm, uint argc, Value args[])
 {
     if (argc != 1)
     {
@@ -351,7 +351,7 @@ Value dictHasMethod(MVM *vm, uint argc, MyMoObject *args[])
     return V_BOOL_VAL(getEntry(vm, dict, key) != NULL);
 }
 
-Value dictDeleteMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value dictDeleteMethod(MVM *vm, uint argc, Value args[])
 {
     if (argc != 1)
     {
@@ -365,7 +365,7 @@ Value dictDeleteMethod(MVM *vm, uint argc, MyMoObject *args[])
     return V_BOOL_VAL(existed);
 }
 
-Value dictKeysMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value dictKeysMethod(MVM *vm, uint argc, Value args[])
 {
     if (argc != 0)
     {
@@ -384,7 +384,7 @@ Value dictKeysMethod(MVM *vm, uint argc, MyMoObject *args[])
     return objectToValue(AS_OBJECT(out));
 }
 
-Value dictValuesMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value dictValuesMethod(MVM *vm, uint argc, Value args[])
 {
     if (argc != 0)
     {
@@ -407,7 +407,7 @@ Value dictValuesMethod(MVM *vm, uint argc, MyMoObject *args[])
     return objectToValue(AS_OBJECT(out));
 }
 
-Value dictLenMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value dictLenMethod(MVM *vm, uint argc, Value args[])
 {
     if (argc != 0)
     {

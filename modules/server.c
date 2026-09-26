@@ -50,7 +50,7 @@
 #include <errno.h>
 #include <ctype.h>
 
-static Value srv_listen(MVM *vm, uint argc, MyMoObject *argv[])
+static Value srv_listen(MVM *vm, uint argc, Value argv[])
 {
     const char *host;
     long port, backlog;
@@ -223,7 +223,7 @@ static bool would_block(void)
 
 // ---- blocking accept ------------------------------------------------------
 
-static Value srv_accept(MVM *vm, uint argc, MyMoObject *argv[])
+static Value srv_accept(MVM *vm, uint argc, Value argv[])
 {
     long sfd;
     if (!mymo_parse(vm, "server.accept", argc, argv, "i", &sfd))
@@ -324,7 +324,7 @@ static void conn_drop(int fd)
     }
 }
 
-static Value srv_accept_nb(MVM *vm, uint argc, MyMoObject *argv[])
+static Value srv_accept_nb(MVM *vm, uint argc, Value argv[])
 {
     long sfd;
     if (!mymo_parse(vm, "server.accept_nb", argc, argv, "i", &sfd))
@@ -349,7 +349,7 @@ static Value srv_accept_nb(MVM *vm, uint argc, MyMoObject *argv[])
 #endif
 }
 
-static Value srv_read_request(MVM *vm, uint argc, MyMoObject *argv[])
+static Value srv_read_request(MVM *vm, uint argc, Value argv[])
 {
     long fd;
     if (!mymo_parse(vm, "server.read_request", argc, argv, "i", &fd))
@@ -481,7 +481,7 @@ static Value do_respond(MVM *vm, const char *fn,
     return MYMO_BOOL(keep);
 }
 
-static Value srv_respond(MVM *vm, uint argc, MyMoObject *argv[])
+static Value srv_respond(MVM *vm, uint argc, Value argv[])
 {
     long cfd, status;
     const char *body; int blen;
@@ -492,7 +492,7 @@ static Value srv_respond(MVM *vm, uint argc, MyMoObject *argv[])
                       "text/plain; charset=utf-8");
 }
 
-static Value srv_respond_json(MVM *vm, uint argc, MyMoObject *argv[])
+static Value srv_respond_json(MVM *vm, uint argc, Value argv[])
 {
     long cfd, status;
     const char *body; int blen;
@@ -503,7 +503,7 @@ static Value srv_respond_json(MVM *vm, uint argc, MyMoObject *argv[])
                       "application/json");
 }
 
-static Value srv_close(MVM *vm, uint argc, MyMoObject *argv[])
+static Value srv_close(MVM *vm, uint argc, Value argv[])
 {
     long fd;
     if (!mymo_parse(vm, "server.close", argc, argv, "i", &fd)) return MYMO_ERROR;

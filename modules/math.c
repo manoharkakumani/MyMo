@@ -1,3 +1,4 @@
+#include "../include/mymo_module.h"
 #include "modules.h"
 #include <math.h>
 
@@ -5,94 +6,52 @@
 #define FLOAT_TOLERANCE 0.00001
 
 
-Value floorfn(MVM *vm, uint argc, MyMoObject *argv[])
+// One numeric argument (int or double) in, result out as an inline value.
+static bool mathArg(MVM *vm, const char *name, uint argc, Value argv[], double *x)
 {
-    if (argc != 1)
-    {
-        runtimeError(vm, "TypeError: math.floor()  takes 1 argument (%d given).", argc);
-        return V_EMPTY_VAL;
-    }
-    if (!IS_NUMBER(argv[0]))
-    {
-        runtimeError(vm, "TypeError: must be <object 'int'> or <object 'double'>, not (%s)",getType(argv[0]));
-        return V_EMPTY_VAL;
-    }
-    // NUMBER_VAL is a macro that expands its argument three times,
-    // so `NUMBER_VAL(pop(vm))` used to pop three values off the
-    // stack and segfault. Pop once into a local, then read it.
-    MyMoObject *object = pop(vm);
-    return objectToValue(NEW_INT(vm, floor(NUMBER_VAL(object))));
+    return mymo_parse(vm, name, argc, argv, "d", x);
 }
 
-Value ceilfn(MVM *vm, uint argc, MyMoObject *argv[]) 
+Value floorfn(MVM *vm, uint argc, Value argv[])
 {
-    if (argc != 1) 
-    {
-        runtimeError(vm, "TypeError: math.ceil() takes 1 argument (%d given).", argc);
-        return V_EMPTY_VAL;
-    }
-
-    if (!IS_NUMBER(argv[0])) 
-    {
-        runtimeError(vm, "TypeError: must be <object 'int'> or <object 'double'>, not (%s)",getType(argv[0]));
-        return V_EMPTY_VAL;
-    }
-    MyMoObject *object = pop(vm);
-    return objectToValue(NEW_INT(vm, ceil(NUMBER_VAL(object))));
+    double x;
+    if (!mathArg(vm, "math.floor", argc, argv, &x)) return V_EMPTY_VAL;
+    return valueFromLong(vm, (long)floor(x));
 }
 
-Value sqrtfn(MVM *vm, uint argc, MyMoObject *argv[]) {
-    if (argc != 1) {
-        runtimeError(vm, "TypeError: math.sqrt() takes 1 argument (%d given).", argc);
-        return V_EMPTY_VAL;
-    }
-    if (!IS_NUMBER(argv[0])) {
-        runtimeError(vm, "TypeError: must be <object 'int'> or <object 'double'>, not (%s)",getType(argv[0]));
-        return V_EMPTY_VAL;
-    }
-    MyMoObject *object = pop(vm);
-    return objectToValue(NEW_DOUBLE(vm, sqrt(NUMBER_VAL(object))));
+Value ceilfn(MVM *vm, uint argc, Value argv[])
+{
+    double x;
+    if (!mathArg(vm, "math.ceil", argc, argv, &x)) return V_EMPTY_VAL;
+    return valueFromLong(vm, (long)ceil(x));
 }
 
-Value sinfn(MVM *vm, uint argc, MyMoObject *argv[]) {
-    if (argc != 1) {
-        runtimeError(vm, "TypeError: math.sin() takes 1 argument (%d given).", argc);
-        return V_EMPTY_VAL;
-    }
-    if (!IS_NUMBER(argv[0])) {
-        runtimeError(vm, "A non-number value passed to sin()");
-        return V_EMPTY_VAL;
-    }
-    MyMoObject *object = pop(vm);
-    return objectToValue(NEW_DOUBLE(vm, sin(NUMBER_VAL(object))));
+Value sqrtfn(MVM *vm, uint argc, Value argv[])
+{
+    double x;
+    if (!mathArg(vm, "math.sqrt", argc, argv, &x)) return V_EMPTY_VAL;
+    return V_DOUBLE_VAL(sqrt(x));
 }
 
-Value cosfn(MVM *vm, uint argc, MyMoObject *argv[]) {
-    if (argc != 1) {
-        runtimeError(vm, "TypeError: math.cos() takes 1 argument (%d given).", argc);
-        return V_EMPTY_VAL;
-    }
-
-    if (!IS_NUMBER(argv[0])) {
-        runtimeError(vm, "A non-number value passed to cos()");
-        return V_EMPTY_VAL;
-    }
-    MyMoObject *object = pop(vm);
-    return objectToValue(NEW_DOUBLE(vm, cos(NUMBER_VAL(object))));
+Value sinfn(MVM *vm, uint argc, Value argv[])
+{
+    double x;
+    if (!mathArg(vm, "math.sin", argc, argv, &x)) return V_EMPTY_VAL;
+    return V_DOUBLE_VAL(sin(x));
 }
 
-Value tanfn(MVM *vm, uint argc, MyMoObject *argv[]) {
-    if (argc != 1) {
-        runtimeError(vm, "TypeError: math.tan() takes 1 argument (%d given).", argc);
-        return V_EMPTY_VAL;
-    }
+Value cosfn(MVM *vm, uint argc, Value argv[])
+{
+    double x;
+    if (!mathArg(vm, "math.cos", argc, argv, &x)) return V_EMPTY_VAL;
+    return V_DOUBLE_VAL(cos(x));
+}
 
-    if (!IS_NUMBER(argv[0])) {
-        runtimeError(vm, "A non-number value passed to tan()");
-        return V_EMPTY_VAL;
-    }
-    MyMoObject *object = pop(vm);
-    return objectToValue(NEW_DOUBLE(vm, tan(NUMBER_VAL(object))));
+Value tanfn(MVM *vm, uint argc, Value argv[])
+{
+    double x;
+    if (!mathArg(vm, "math.tan", argc, argv, &x)) return V_EMPTY_VAL;
+    return V_DOUBLE_VAL(tan(x));
 }
 
 // static long long gcd(long long a, long long b) {
@@ -105,7 +64,7 @@ Value tanfn(MVM *vm, uint argc, MyMoObject *argv[]) {
 //     return a;
 // }
 
-// MyMoObject *gcdfn(MVM *vm, uint argc, MyMoObject *argv[]) {
+// MyMoObject *gcdfn(MVM *vm, uint argc, Value argv[]) {
 //     char* argcError = "gcd() requires 2 or more arguments (%d given).";
 //     char* nonNumberError = "gcd() argument at index %d is not a number";
 //     char* notWholeError = "gcd() argument (%f) at index %d is not a whole number";
@@ -155,7 +114,7 @@ Value tanfn(MVM *vm, uint argc, MyMoObject *argv[]) {
 //     return (a * b) / gcd(a, b);
 // }
 
-// MyMoObject *lcmfn(MVM *vm, uint argc, MyMoObject *argv[]) {
+// MyMoObject *lcmfn(MVM *vm, uint argc, Value argv[]) {
 //     char* argcError = "lcm() requires 2 or more arguments (%d given).";
 //     char* nonNumberError = "lcm() argument at index %d is not a number";
 //     char* notWholeError = "lcm() argument (%f) at index %d is not a whole number";

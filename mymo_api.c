@@ -74,7 +74,7 @@ bool mymo_check_args(MVM *vm, const char *funcname, uint argc, uint expected)
 //   S  MyMoString **out
 //   L  MyMoList **out
 //   T  MyMoTuple **out
-bool mymo_parse(MVM *vm, const char *funcname, uint argc, MyMoObject *argv[],
+bool mymo_parse(MVM *vm, const char *funcname, uint argc, Value argv[],
                 const char *fmt, ...)
 {
     // First pass: count expected args (skip 'n' — it pairs with 's',
@@ -93,6 +93,13 @@ bool mymo_parse(MVM *vm, const char *funcname, uint argc, MyMoObject *argv[],
     va_list ap;
     va_start(ap, fmt);
 
+#define ARG_ERROR(what)                                                          \
+    do {                                                                         \
+        va_end(ap);                                                              \
+        runtimeError(vm, "%s(): argument %u must be " what, funcname, i + 1);    \
+        return false;                                                            \
+    } while (0)
+
     uint i = 0;
     for (const char *p = fmt; *p; p++)
     {
@@ -103,111 +110,80 @@ bool mymo_parse(MVM *vm, const char *funcname, uint argc, MyMoObject *argv[],
         if (c == 'n')
         {
             int *out = va_arg(ap, int *);
-            if (i == 0 || argv[i - 1]->type != OBJ_STRING)
+            if (i == 0 || !V_IS_OBJ_TYPE(argv[i - 1], OBJ_STRING))
             {
                 va_end(ap);
                 runtimeError(vm, "%s(): 'n' format must follow 's'", funcname);
                 return false;
             }
-            *out = ((MyMoString *)argv[i - 1])->length;
+            *out = AS_STRING(V_AS_OBJ(argv[i - 1]))->length;
             continue;
         }
 
-        MyMoObject *arg = argv[i];
+        Value arg = argv[i];
 
         switch (c)
         {
         case 'i':
         {
             long *out = va_arg(ap, long *);
-            if (arg->type != OBJ_INT)
-            {
-                va_end(ap);
-                runtimeError(vm, "%s(): argument %u must be int", funcname, i + 1);
-                return false;
-            }
-            *out = ((MyMoInt *)arg)->value;
+            if (!valueLooksLikeInt(arg)) ARG_ERROR("int");
+            *out = valueToLong(arg);
             break;
         }
         case 'd':
         {
             double *out = va_arg(ap, double *);
-            if (arg->type == OBJ_DOUBLE)
-                *out = ((MyMoDouble *)arg)->value;
-            else if (arg->type == OBJ_INT)
-                *out = (double)((MyMoInt *)arg)->value;
-            else
-            {
-                va_end(ap);
-                runtimeError(vm, "%s(): argument %u must be number", funcname, i + 1);
-                return false;
-            }
+            if (!valueLooksLikeNumber(arg)) ARG_ERROR("number");
+            *out = valueAsNumber(arg);
             break;
         }
         case 's':
         {
             const char **out = va_arg(ap, const char **);
-            if (arg->type != OBJ_STRING)
-            {
-                va_end(ap);
-                runtimeError(vm, "%s(): argument %u must be string", funcname, i + 1);
-                return false;
-            }
-            *out = ((MyMoString *)arg)->value;
+            if (!V_IS_OBJ_TYPE(arg, OBJ_STRING)) ARG_ERROR("string");
+            *out = AS_STRING(V_AS_OBJ(arg))->value;
             break;
         }
         case 'b':
         {
             int *out = va_arg(ap, int *);
-            if (arg->type != OBJ_BOOL)
-            {
-                va_end(ap);
-                runtimeError(vm, "%s(): argument %u must be bool", funcname, i + 1);
-                return false;
-            }
-            *out = ((MyMoBool *)arg)->value ? 1 : 0;
+            if (!valueIsBool(arg)) ARG_ERROR("bool");
+            *out = valueAsBool(arg) ? 1 : 0;
+            break;
+        }
+        case 'v':
+        {
+            Value *out = va_arg(ap, Value *);
+            *out = arg;
             break;
         }
         case 'o':
         {
+            // Legacy: any value as an object (inline ints/doubles are boxed).
             MyMoObject **out = va_arg(ap, MyMoObject **);
-            *out = arg;
+            *out = valueToBoxedObject(vm, arg);
             break;
         }
         case 'S':
         {
             MyMoString **out = va_arg(ap, MyMoString **);
-            if (arg->type != OBJ_STRING)
-            {
-                va_end(ap);
-                runtimeError(vm, "%s(): argument %u must be string", funcname, i + 1);
-                return false;
-            }
-            *out = (MyMoString *)arg;
+            if (!V_IS_OBJ_TYPE(arg, OBJ_STRING)) ARG_ERROR("string");
+            *out = AS_STRING(V_AS_OBJ(arg));
             break;
         }
         case 'L':
         {
             MyMoList **out = va_arg(ap, MyMoList **);
-            if (arg->type != OBJ_LIST)
-            {
-                va_end(ap);
-                runtimeError(vm, "%s(): argument %u must be list", funcname, i + 1);
-                return false;
-            }
-            *out = (MyMoList *)arg;
+            if (!V_IS_OBJ_TYPE(arg, OBJ_LIST)) ARG_ERROR("list");
+            *out = AS_LIST(V_AS_OBJ(arg));
             break;
         }
         case 'T':
         {
             MyMoTuple **out = va_arg(ap, MyMoTuple **);
-            if (arg->type != OBJ_TUPLE)
-            {
-                va_end(ap);
-                runtimeError(vm, "%s(): argument %u must be tuple", funcname, i + 1);
-                return false;
-            }
-            *out = (MyMoTuple *)arg;
+            if (!V_IS_OBJ_TYPE(arg, OBJ_TUPLE)) ARG_ERROR("tuple");
+            *out = AS_TUPLE(V_AS_OBJ(arg));
             break;
         }
         default:
@@ -218,11 +194,12 @@ bool mymo_parse(MVM *vm, const char *funcname, uint argc, MyMoObject *argv[],
 
         i++;
     }
+#undef ARG_ERROR
 
     va_end(ap);
     // VM dispatch expects builtins to pop their argc operands. Do that
     // centrally so individual mymo_parse-based handlers don't have to.
-    for (uint k = 0; k < argc; k++) pop(vm);
+    for (uint k = 0; k < argc; k++) popV(vm);
     return true;
 }
 

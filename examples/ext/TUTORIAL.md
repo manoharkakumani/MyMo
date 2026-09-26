@@ -17,7 +17,7 @@ fits on two screens.
 ```c
 #include "mymo_module.h"
 
-static Value greet(MVM *vm, uint argc, MyMoObject *argv[])
+static Value greet(MVM *vm, uint argc, Value argv[])
 {
     const char *name;
     if (!mymo_parse(vm, "greet", argc, argv, "s", &name))
@@ -57,8 +57,10 @@ A module is a single `.c` file that:
 
 1. Includes `mymo_module.h`.
 2. Defines one or more **functions** with the signature
-   `Value fn(MVM *vm, uint argc, MyMoObject *argv[])`. Arguments
-   arrive as objects; the result is a NaN-boxed `Value`.
+   `Value fn(MVM *vm, uint argc, Value argv[])`. Arguments and the
+   result are NaN-boxed `Value`s: ints, doubles, nil and bools inline,
+   everything else an object pointer. Read them with `mymo_parse` or
+   the `mymo_is_*` / `mymo_as_*` macros.
 3. Calls `MYMO_MODULE(name, ...)` to declare the entry point.
 
 The compiled artefact must be named **`<name>mod.<ext>`** — the loader

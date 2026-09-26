@@ -67,7 +67,7 @@ static int ensure_queue(MVM *vm)
 }
 #endif
 
-static Value rl_nonblock(MVM *vm, uint argc, MyMoObject *argv[])
+static Value rl_nonblock(MVM *vm, uint argc, Value argv[])
 {
     long fd;
     if (!mymo_parse(vm, "runloop.nonblock", argc, argv, "i", &fd))
@@ -154,7 +154,7 @@ static int wait_one(int fd, int want_read, long timeout_ms)
 #endif
 }
 
-static Value rl_readable(MVM *vm, uint argc, MyMoObject *argv[])
+static Value rl_readable(MVM *vm, uint argc, Value argv[])
 {
     long fd, timeout_ms;
     if (!mymo_parse(vm, "runloop.readable", argc, argv, "ii",
@@ -172,7 +172,7 @@ static Value rl_readable(MVM *vm, uint argc, MyMoObject *argv[])
     return MYMO_BOOL(r);
 }
 
-static Value rl_writable(MVM *vm, uint argc, MyMoObject *argv[])
+static Value rl_writable(MVM *vm, uint argc, Value argv[])
 {
     long fd, timeout_ms;
     if (!mymo_parse(vm, "runloop.writable", argc, argv, "ii",
@@ -195,7 +195,7 @@ static Value rl_writable(MVM *vm, uint argc, MyMoObject *argv[])
 // -1 on timeout. Uses select(2) for portability — kqueue/epoll could
 // be wired in but select is enough for the modest fd counts our
 // example programs deal with.
-static Value rl_select(MVM *vm, uint argc, MyMoObject *argv[])
+static Value rl_select(MVM *vm, uint argc, Value argv[])
 {
     MyMoList *fds;
     long timeout_ms;
@@ -245,7 +245,7 @@ static Value rl_select(MVM *vm, uint argc, MyMoObject *argv[])
 // Every fd in the list that is readable (or closed/errored, which a read
 // then reports), waiting up to timeout_ms (-1 = forever). Unlike select
 // it reports all ready fds at once and has no FD_SETSIZE limit.
-static Value rl_ready(MVM *vm, uint argc, MyMoObject *argv[])
+static Value rl_ready(MVM *vm, uint argc, Value argv[])
 {
     MyMoList *fds;
     long timeout_ms;

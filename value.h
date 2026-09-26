@@ -183,6 +183,17 @@ static inline double valueAsNumber(Value v) {
 // to their inline encodings so they never reach the operand stack.
 Value objectToValue(MyMoObject *o);
 
+// Object-type test on a Value (false for inline values).
+#define V_IS_OBJ_TYPE(v, t) (V_IS_OBJ(v) && V_AS_OBJ(v)->type == (t))
+// nil / bool in either representation (inline or a legacy heap singleton).
+bool valueIsNil(Value v);
+bool valueIsBool(Value v);
+bool valueAsBool(Value v); // precondition: valueIsBool(v)
+// Language truthiness: Nil, False, 0, 0.0 and "" are false.
+bool valueIsFalsey(Value v);
+// An integer as a Value: inline when it fits in 32 bits, else a heap int.
+Value valueFromLong(MVM *vm, long n);
+
 // Allocates a MyMoInt for inline ints; legacy boxing helper.
 MyMoObject *valueToBoxedObject(MVM *vm, Value v);
 

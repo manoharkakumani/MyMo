@@ -15,7 +15,7 @@
   #include <windows.h>
 #endif
 
-static Value time_now(MVM *vm, uint argc, MyMoObject *argv[])
+static Value time_now(MVM *vm, uint argc, Value argv[])
 {
     if (!mymo_check_args(vm, "time.now", argc, 0)) return MYMO_ERROR;
     struct timespec ts;
@@ -23,7 +23,7 @@ static Value time_now(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(mymo_double(vm, (double)ts.tv_sec + ts.tv_nsec / 1e9));
 }
 
-static Value time_monotonic(MVM *vm, uint argc, MyMoObject *argv[])
+static Value time_monotonic(MVM *vm, uint argc, Value argv[])
 {
     if (!mymo_check_args(vm, "time.monotonic", argc, 0)) return MYMO_ERROR;
     struct timespec ts;
@@ -31,13 +31,13 @@ static Value time_monotonic(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(mymo_double(vm, (double)ts.tv_sec + ts.tv_nsec / 1e9));
 }
 
-static Value time_clock(MVM *vm, uint argc, MyMoObject *argv[])
+static Value time_clock(MVM *vm, uint argc, Value argv[])
 {
     if (!mymo_check_args(vm, "time.clock", argc, 0)) return MYMO_ERROR;
     return objectToValue(mymo_double(vm, (double)clock() / CLOCKS_PER_SEC));
 }
 
-static Value time_sleep(MVM *vm, uint argc, MyMoObject *argv[])
+static Value time_sleep(MVM *vm, uint argc, Value argv[])
 {
     double secs;
     if (!mymo_parse(vm, "time.sleep", argc, argv, "d", &secs)) return MYMO_ERROR;
@@ -57,7 +57,7 @@ static Value time_sleep(MVM *vm, uint argc, MyMoObject *argv[])
     return MYMO_NIL;
 }
 
-static Value time_format(MVM *vm, uint argc, MyMoObject *argv[])
+static Value time_format(MVM *vm, uint argc, Value argv[])
 {
     double epoch;
     const char *fmt;

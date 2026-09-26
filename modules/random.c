@@ -23,7 +23,7 @@ static uint64_t rng_next(void)
     return x * 0x2545F4914F6CDD1DULL;
 }
 
-static Value random_seed(MVM *vm, uint argc, MyMoObject *argv[])
+static Value random_seed(MVM *vm, uint argc, Value argv[])
 {
     long n;
     if (!mymo_parse(vm, "random.seed", argc, argv, "i", &n)) return MYMO_ERROR;
@@ -32,7 +32,7 @@ static Value random_seed(MVM *vm, uint argc, MyMoObject *argv[])
     return MYMO_NIL;
 }
 
-static Value random_int(MVM *vm, uint argc, MyMoObject *argv[])
+static Value random_int(MVM *vm, uint argc, Value argv[])
 {
     long lo, hi;
     if (!mymo_parse(vm, "random.int", argc, argv, "ii", &lo, &hi)) return MYMO_ERROR;
@@ -44,14 +44,14 @@ static Value random_int(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(mymo_int(vm, lo + (long)(rng_next() % span)));
 }
 
-static Value random_float(MVM *vm, uint argc, MyMoObject *argv[])
+static Value random_float(MVM *vm, uint argc, Value argv[])
 {
     if (!mymo_check_args(vm, "random.float", argc, 0)) return MYMO_ERROR;
     // Top 53 bits → uniform double in [0,1).
     return objectToValue(mymo_double(vm, (double)(rng_next() >> 11) / (double)(1ULL << 53)));
 }
 
-static Value random_choice(MVM *vm, uint argc, MyMoObject *argv[])
+static Value random_choice(MVM *vm, uint argc, Value argv[])
 {
     MyMoList *list;
     if (!mymo_parse(vm, "random.choice", argc, argv, "L", &list)) return MYMO_ERROR;

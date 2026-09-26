@@ -17,14 +17,14 @@
 
 #include "mymo_module.h"
 
-static Value area(MVM *vm, uint argc, MyMoObject *argv[])
+static Value area(MVM *vm, uint argc, Value argv[])
 {
     double r;
     if (!mymo_parse(vm, "area", argc, argv, "d", &r)) return MYMO_ERROR;
     return objectToValue(mymo_double(vm, 3.14159265358979 * r * r));
 }
 
-static Value circumference(MVM *vm, uint argc, MyMoObject *argv[])
+static Value circumference(MVM *vm, uint argc, Value argv[])
 {
     double r;
     if (!mymo_parse(vm, "circumference", argc, argv, "d", &r)) return MYMO_ERROR;

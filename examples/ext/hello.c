@@ -15,7 +15,7 @@
 #include "mymo_module.h"
 
 // greet(name) — returns "hello, <name>!" as a MyMo string.
-static Value greet(MVM *vm, uint argc, MyMoObject *argv[])
+static Value greet(MVM *vm, uint argc, Value argv[])
 {
     const char *name;
     if (!mymo_parse(vm, "greet", argc, argv, "s", &name))
@@ -24,7 +24,7 @@ static Value greet(MVM *vm, uint argc, MyMoObject *argv[])
 }
 
 // square(n) — returns n * n.
-static Value square(MVM *vm, uint argc, MyMoObject *argv[])
+static Value square(MVM *vm, uint argc, Value argv[])
 {
     long n;
     if (!mymo_parse(vm, "square", argc, argv, "i", &n))
@@ -33,7 +33,7 @@ static Value square(MVM *vm, uint argc, MyMoObject *argv[])
 }
 
 // add(a, b) — accepts ints or doubles; returns a number.
-static Value add(MVM *vm, uint argc, MyMoObject *argv[])
+static Value add(MVM *vm, uint argc, Value argv[])
 {
     if (!mymo_check_args(vm, "add", argc, 2)) return MYMO_ERROR;
     if (!mymo_is_number(argv[0]) || !mymo_is_number(argv[1]))

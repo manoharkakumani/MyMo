@@ -153,11 +153,11 @@ static int enc_value(Buf *b, MyMoObject *v)
     }
 }
 
-static Value json_encode(MVM *vm, uint argc, MyMoObject *argv[])
+static Value json_encode(MVM *vm, uint argc, Value argv[])
 {
     if (!mymo_check_args(vm, "json.encode", argc, 1)) return MYMO_ERROR;
     Buf b = {0};
-    int rc = enc_value(&b, argv[0]);
+    int rc = enc_value_v(&b, argv[0]);
     if (rc != 0) {
         free(b.data);
         runtimeError(vm, "json.encode(): %s",
@@ -343,7 +343,7 @@ static MyMoObject *parse_value(Parser *p)
     return NULL;
 }
 
-static Value json_decode(MVM *vm, uint argc, MyMoObject *argv[])
+static Value json_decode(MVM *vm, uint argc, Value argv[])
 {
     const char *s; int slen;
     if (!mymo_parse(vm, "json.decode", argc, argv, "sn", &s, &slen))

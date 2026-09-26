@@ -29,55 +29,19 @@ void boolean(MVM *vm)
     TrueBool->value = true;
 }
 
-Value newBoolMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value newBoolMethod(MVM *vm, uint argc, Value args[])
 {
+    // bool(x): x's truthiness (Nil, False, 0, 0.0 and "" are false).
     if (argc > 1)
     {
         runtimeError(vm, "bool() takes  1 argument (%d given)", argc);
         return V_EMPTY_VAL;
     }
-    else if (argc == 0)
-    {
-        return V_BOOL_VAL(0);
-    }
-    else
-    {
-        if (IS_INT(args[0]))
-        {
-            long value = INT_VAL(pop(vm));
-            if (value)
-            {
-                return V_BOOL_VAL(1);
-            }
-            return V_BOOL_VAL(0);
-        }
-        else if (IS_DOUBLE(args[0]))
-        {
-            double value = DOUBLE_VAL(pop(vm));
-            if (value)
-            {
-                return V_BOOL_VAL(1);
-            }
-            return V_BOOL_VAL(0);
-        }
-        else if (IS_STRING(args[0]))
-        {
-            MyMoString *string = (MyMoString *)pop(vm);
-            if (string->length)
-            {
-                return V_BOOL_VAL(1);
-            }
-            return V_BOOL_VAL(0);
-        }
-        else if (IS_BOOL(args[0]))
-        {
-            return objectToValue(pop(vm));
-        }
-        else
-        {
-            return V_BOOL_VAL(1);
-        }
-    }
+    if (argc == 0)
+        return V_FALSE_VAL;
+    Value v = args[0];
+    popV(vm);
+    return V_BOOL_VAL(!valueIsFalsey(v));
 }
 
 void defineBoolMethods(MVM *vm)

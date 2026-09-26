@@ -18,7 +18,7 @@ typedef struct _stat  Stat;
 typedef struct stat  Stat;
 #endif
 
-Value clockfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value clockfn(MVM *vm, uint argc, Value argv[])
 {
     UNUSED(vm);
     UNUSED(argv);
@@ -31,7 +31,7 @@ Value clockfn(MVM *vm, uint argc, MyMoObject *argv[])
 }
 
 
-Value inputfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value inputfn(MVM *vm, uint argc, Value argv[])
 {
     if (argc > 1)
     {
@@ -40,13 +40,13 @@ Value inputfn(MVM *vm, uint argc, MyMoObject *argv[])
     }
     if (argc != 0)
     {
-        MyMoObject *prompt = argv[0];
-        if (!IS_STRING(prompt))
+        Value prompt = argv[0];
+        if (!V_IS_OBJ_TYPE(prompt, OBJ_STRING))
         {
-            runtimeError(vm, "TypeError: input() only takes a <object 'str'> got %s.", getType(prompt));
+            runtimeError(vm, "TypeError: input() only takes a <object 'str'> got %s.", valueTypeName(prompt));
             return V_EMPTY_VAL;
         }
-        printf("%s", STRING_VAL(prompt));
+        printf("%s", AS_STRING(V_AS_OBJ(prompt))->value);
     }
     u64 currentSize = 128;
     char *line = malloc(currentSize);
@@ -69,7 +69,7 @@ Value inputfn(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(l);
 }
 
-Value printfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value printfn(MVM *vm, uint argc, Value argv[])
 {
     UNUSED(vm);
     if (argc == 0)
@@ -80,17 +80,17 @@ Value printfn(MVM *vm, uint argc, MyMoObject *argv[])
     int i = 0;
     for (i = 0; i < (argc - 1); i++)
     {
-        printObject(argv[i]);
-        pop(vm);
+        printValue(argv[i]);
+        popV(vm);
         printf(" ");
     }
-    printObject(argv[i]);
-    pop(vm);
+    printValue(argv[i]);
+    popV(vm);
     printf("\n");
     return V_BOOL_VAL(1);
 }
 
-Value typefn(MVM *vm, uint argc, MyMoObject *argv[])
+Value typefn(MVM *vm, uint argc, Value argv[])
 {
     UNUSED(vm);
     if (argc != 1)
@@ -102,7 +102,7 @@ Value typefn(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(NEW_STRING(vm, type, strlen(type)));
 }
 
-Value globalsfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value globalsfn(MVM *vm, uint argc, Value argv[])
 {
     if (argc)
     {
@@ -112,19 +112,20 @@ Value globalsfn(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(AS_OBJECT(&vm->globals));
 }
 
-Value compilefn(MVM *vm, uint argc, MyMoObject *argv[])
+Value compilefn(MVM *vm, uint argc, Value argv[])
 {
     if (argc != 1)
     {
         runtimeError(vm, "TypeError: compile() takes 1 argument (%d given).", argc);
         return V_EMPTY_VAL;
     }
-    if (!IS_STRING(argv[0]))
+    if (!V_IS_OBJ_TYPE(argv[0], OBJ_STRING))
     {
-        runtimeError(vm, "TypeError: compile() takes a <object 'str'> argument but got %s.", getType(argv[0]));
+        runtimeError(vm, "TypeError: compile() takes a <object 'str'> argument but got %s.", valueTypeName(argv[0]));
         return V_EMPTY_VAL;
     }
-    char *source = STRING_VAL(pop(vm));
+    char *source = AS_STRING(V_AS_OBJ(argv[0]))->value;
+    popV(vm);
     MyMoCode *code = newCode(vm);
     MyMoFunction *function = compile(code->vm, source, "@compile", COMPILE_STRING);
     if (function == NULL)
@@ -133,26 +134,27 @@ Value compilefn(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(AS_OBJECT(code));
 }
 
-Value execfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value execfn(MVM *vm, uint argc, Value argv[])
 {
     if (argc != 1)
     {
         runtimeError(vm, "TypeError: exec() takes 1 argument (%d given).", argc);
         return V_EMPTY_VAL;
     }
-    if (!(IS_CODE(argv[0])))
+    if (!V_IS_OBJ_TYPE(argv[0], OBJ_CODE))
     {
-        runtimeError(vm, "TypeError: exec() takes <object 'code'> got %s.",getType(argv[0]));
+        runtimeError(vm, "TypeError: exec() takes <object 'code'> got %s.", valueTypeName(argv[0]));
         return V_EMPTY_VAL;
     }
-    MyMoCode *code = AS_CODE(pop(vm));
+    MyMoCode *code = AS_CODE(V_AS_OBJ(argv[0]));
+    popV(vm);
     I_Result result = interpreter(code->vm, code->function);
     if (result == RUNTIME_ERROR)
         return V_EMPTY_VAL;
     return V_BOOL_VAL(1);
 }
 
-Value lenfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value lenfn(MVM *vm, uint argc, Value argv[])
 {
     if (argc != 1)
     {
@@ -176,7 +178,7 @@ Value lenfn(MVM *vm, uint argc, MyMoObject *argv[])
     }
 }
 
-Value yieldfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value yieldfn(MVM *vm, uint argc, Value argv[])
 {
     if (argc > 1)
     {
@@ -198,7 +200,7 @@ Value yieldfn(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(obj);
 }
 
-// Value awaitfn(MVM *vm, uint argc, MyMoObject *argv[])
+// Value awaitfn(MVM *vm, uint argc, Value argv[])
 // {
 //     if (argc > 1)
 //     {
@@ -219,7 +221,7 @@ Value yieldfn(MVM *vm, uint argc, MyMoObject *argv[])
 //     return obj;
 // }
 
-Value superfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value superfn(MVM *vm, uint argc, Value argv[])
 {
     MyMoFunction *function = vm->fiber->callFrames[vm->fiber->frameCount]->function;
     MyMoObject *klass = function ->klass; 

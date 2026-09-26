@@ -22,7 +22,7 @@
 #include <stdlib.h>
 
 // upper(s) — returns an upper-cased copy of s.
-static Value upper(MVM *vm, uint argc, MyMoObject *argv[])
+static Value upper(MVM *vm, uint argc, Value argv[])
 {
     const char *s; int n;
     if (!mymo_parse(vm, "upper", argc, argv, "sn", &s, &n))
@@ -35,7 +35,7 @@ static Value upper(MVM *vm, uint argc, MyMoObject *argv[])
 }
 
 // starts_with(haystack, needle) — bool.
-static Value starts_with(MVM *vm, uint argc, MyMoObject *argv[])
+static Value starts_with(MVM *vm, uint argc, Value argv[])
 {
     const char *hay, *needle;
     int hlen, nlen;
@@ -48,7 +48,7 @@ static Value starts_with(MVM *vm, uint argc, MyMoObject *argv[])
 }
 
 // repeat(s, n) — string `s` repeated `n` times.
-static Value repeat(MVM *vm, uint argc, MyMoObject *argv[])
+static Value repeat(MVM *vm, uint argc, Value argv[])
 {
     const char *s; int slen; long n;
     if (!mymo_parse(vm, "repeat", argc, argv, "sni", &s, &slen, &n))
@@ -78,7 +78,7 @@ static Value repeat(MVM *vm, uint argc, MyMoObject *argv[])
 
 // length(s) — returns the byte length of a string.
 // Exposed under the name "len" via MYMO_FN_AS to demonstrate aliasing.
-static Value string_length(MVM *vm, uint argc, MyMoObject *argv[])
+static Value string_length(MVM *vm, uint argc, Value argv[])
 {
     MyMoString *s;
     if (!mymo_parse(vm, "len", argc, argv, "S", &s))

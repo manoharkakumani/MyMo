@@ -41,7 +41,7 @@ static struct tm to_utc(time_t t)
 }
 
 #define COMPONENT_FN(NAME, EXPR)                                            \
-    static Value date_##NAME(MVM *vm, uint argc, MyMoObject *argv[])        \
+    static Value date_##NAME(MVM *vm, uint argc, Value argv[])        \
     {                                                                       \
         double epoch;                                                       \
         if (!mymo_parse(vm, "date." #NAME, argc, argv, "d", &epoch))        \
@@ -61,7 +61,7 @@ COMPONENT_FN(yearday, tm.tm_yday + 1)
 
 #undef COMPONENT_FN
 
-static Value date_iso(MVM *vm, uint argc, MyMoObject *argv[])
+static Value date_iso(MVM *vm, uint argc, Value argv[])
 {
     double epoch;
     if (!mymo_parse(vm, "date.iso", argc, argv, "d", &epoch)) return MYMO_ERROR;
@@ -71,7 +71,7 @@ static Value date_iso(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(mymo_strn(vm, buf, (int)n));
 }
 
-static Value date_parse(MVM *vm, uint argc, MyMoObject *argv[])
+static Value date_parse(MVM *vm, uint argc, Value argv[])
 {
 #ifdef _WIN32
     runtimeError(vm, "date.parse(): not implemented on Windows");
@@ -99,7 +99,7 @@ static Value date_parse(MVM *vm, uint argc, MyMoObject *argv[])
 #endif
 }
 
-static Value date_make(MVM *vm, uint argc, MyMoObject *argv[])
+static Value date_make(MVM *vm, uint argc, Value argv[])
 {
     long y, mo, d, h, mi, s;
     if (!mymo_parse(vm, "date.make", argc, argv, "iiiiii",

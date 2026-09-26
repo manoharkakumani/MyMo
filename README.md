@@ -679,13 +679,13 @@ demo in `examples/modules/`.
 ## Writing C extensions
 
 Native modules are shared libraries named `<name>mod.dylib` (macOS) or
-`<name>mod.so` (Linux), loaded on first `use`. A builtin takes its
-arguments as objects and returns a `Value`:
+`<name>mod.so` (Linux), loaded on first `use`. A builtin receives its
+arguments as NaN-boxed `Value`s and returns a `Value`:
 
 ```c
 #include "mymo_module.h"
 
-static Value greet(MVM *vm, uint argc, MyMoObject *argv[])
+static Value greet(MVM *vm, uint argc, Value argv[])
 {
     const char *name;
     if (!mymo_parse(vm, "greet", argc, argv, "s", &name))
@@ -714,8 +714,9 @@ wrap objects from `mymo_int`, `mymo_str` and friends in `objectToValue()`,
 and return `MYMO_ERROR` after `runtimeError()`. The full guide is in
 [`examples/ext/TUTORIAL.md`](examples/ext/TUTORIAL.md).
 
-> The builtin return type changed from `MyMoObject *` to `Value`, so
-> extensions compiled against older headers must be rebuilt.
+> Builtins now take and return `Value`s (`Value argv[]`), and the
+> `mymo_is_*` / `mymo_as_*` macros read `Value`s. Extensions compiled
+> against older headers must be rebuilt.
 
 ---
 
@@ -729,7 +730,7 @@ values back and forth.
 #include "mymo.h"
 #include <stdio.h>
 
-static Value host_add(MVM *vm, uint argc, MyMoObject *argv[])
+static Value host_add(MVM *vm, uint argc, Value argv[])
 {
     long a, b;
     if (!mymo_parse(vm, "host_add", argc, argv, "ii", &a, &b))
