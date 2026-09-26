@@ -66,6 +66,10 @@ int disassembleInstruction(Chunk *chunk, int offset)
         return simpleInstruction("OP_SUBSCRK", offset);
     case OP_DELSUBSCR:
         return simpleInstruction("OP_DELSUBSCR", offset);
+    case OP_DUPUNDER:
+        return simpleInstruction("OP_DUPUNDER", offset);
+    case OP_NIP:
+        return simpleInstruction("OP_NIP", offset);
     case OP_GETG:
         return constantInstruction("OP_GETG", chunk, offset);
     case OP_SETG:

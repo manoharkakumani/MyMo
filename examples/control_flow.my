@@ -116,3 +116,16 @@ while i < 1000:
 print("total", total)
 a = [first_even([2]), first_even([1, 6]), 99]
 print(a)
+x = 2
+print(1 < x < 3, 1 < x > 5, 0 <= x <= 2 < 3, 3 > x >= 2 > 1, 1 < 2 < 3 < 2)
+print(1 == 1 == 1, 1 == 1 != 2, 2 == 2 == 3)
+calls = []
+fn f(v):
+    calls.append(v)
+    return v
+print(f(1) < f(2) < f(0) < f(9), calls)
+print("a" < "b" < "c", [1] < [2] <= [2])
+if 0 < x < 10:
+    print("in range")
+y = 5 if 1 < x < 3 else 6
+print(y, not 1 < x < 3)

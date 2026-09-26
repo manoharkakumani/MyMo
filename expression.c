@@ -291,12 +291,61 @@ void unary(Compiler *compiler, bool canAssign)
     }
 }
 
+static bool isOrderingOp(TokenType t) { return t == LESS || t == GREATER || t == ELESS || t == EGREATER; }
+static bool isEqualityOp(TokenType t) { return t == DEQUAL || t == NEQUAL; }
+
+static void emitBinaryOp(Compiler *compiler, TokenType operatorType);
+
+// a < b < c  means  a < b and b < c, with b evaluated once:
+//     a b DUPUNDER <  JIF fail POP   c <   JMP done
+//     fail: NIP        ([b, False] -> [False])
+// Chains stay within one family: < > <= >= or == !=.
+static void comparisonChain(Compiler *compiler, TokenType first)
+{
+    bool ordering = isOrderingOp(first);
+    int failJumps[32];
+    int fails = 0;
+    TokenType op = first;
+    while (ordering ? isOrderingOp(compiler->parser->current.type) : isEqualityOp(compiler->parser->current.type))
+    {
+        emitByte(compiler, OP_DUPUNDER);
+        emitBinaryOp(compiler, op);
+        if (fails == 32)
+        {
+            error(compiler, "Comparison chain too long.");
+            break;
+        }
+        failJumps[fails++] = emitJump(compiler, OP_JIF);
+        emitByte(compiler, OP_POP);
+        advanceToken(compiler);
+        op = compiler->parser->previous.type;
+        parsePrecedence(compiler, (Precedence)(getRule(op)->precedence + 1));
+    }
+    emitBinaryOp(compiler, op);
+    int done = emitJump(compiler, OP_JMP);
+    for (int i = 0; i < fails; i++)
+        patchJump(compiler, failJumps[i]);
+    emitByte(compiler, OP_NIP);
+    patchJump(compiler, done);
+}
+
 void binary(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);
     TokenType operatorType = compiler->parser->previous.type;
     ParseRule *rule = getRule(operatorType);
     parsePrecedence(compiler, (Precedence)(rule->precedence + 1));
+    TokenType next = compiler->parser->current.type;
+    if ((isOrderingOp(operatorType) && isOrderingOp(next)) || (isEqualityOp(operatorType) && isEqualityOp(next)))
+    {
+        comparisonChain(compiler, operatorType);
+        return;
+    }
+    emitBinaryOp(compiler, operatorType);
+}
+
+static void emitBinaryOp(Compiler *compiler, TokenType operatorType)
+{
     u32 inplace = 0;
     switch (operatorType)
     {

@@ -2694,6 +2694,20 @@ int runMVM(MVM *vm)
         LOAD();
         DISPATCH();
     }
+    OP_DUPUNDER:
+    {
+        Value b = sp[-1];
+        sp[-1] = sp[-2];
+        sp[-2] = b;
+        lpush(b);
+        DISPATCH();
+    }
+    OP_NIP:
+    {
+        sp[-2] = sp[-1];
+        sp--;
+        DISPATCH();
+    }
     OP_GETG:
     {
         MyMoObject *name = ReadObject();

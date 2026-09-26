@@ -113,9 +113,11 @@ typedef enum
     OP_CALLEX,  //                [callee, list, dict] -> [result]
     OP_GETG,    // name           [] -> [globals[name]]    (`global name`)
     OP_SETG,    // name           [v] -> [v]              globals[name] = v
-    OP_SETNL    // name           [v] -> [v]              enclosing function's name = v (`nonlocal`)
+    OP_SETNL,   // name           [v] -> [v]              enclosing function's name = v (`nonlocal`)
+    OP_DUPUNDER, //               [a, b] -> [b, a, b]      (a < b < c)
+    OP_NIP       //               [a, b] -> [b]
 } OpCode;
 
 // Number of opcodes (keep in sync with the last enum entry).
-#define OP_COUNT (OP_SETNL + 1)
+#define OP_COUNT (OP_NIP + 1)
 #endif
