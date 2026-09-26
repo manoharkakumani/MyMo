@@ -316,6 +316,9 @@ MyMoDouble *findDouble(MyMoDict *dict, double value, int length, u32 hash)
 
 #include "../include/mymo_module.h"
 #include "list.h"
+#include "tuple.h"
+#include "../repr.h"
+#include "../builtins.h"
 
 static MyMoDict *dictSelf(MVM *vm, const char *fn, int self_idx)
 {
@@ -328,62 +331,281 @@ static MyMoDict *dictSelf(MVM *vm, const char *fn, int self_idx)
     return AS_DICT(function->self);
 }
 
-Value dictGetMethod(MVM *vm, uint argc, Value args[])
+// ─── Dict keys ──────────────────────────────────────────────────────
+// Dicts compare keys by identity. That is correct because every key
+// type is interned: strings, ints and doubles by their constructors, Nil
+// and bools are singletons, and tuples are interned here when they are
+// used as a key: equal tuples map to one canonical tuple in
+// vm->tupleKeys (a weak table, like the other intern tables).
+
+static bool isScalarKey(MyMoObject *key)
 {
-    if (argc < 1 || argc > 2)
-    {
-        runtimeError(vm, "TypeError: get() takes 1 or 2 arguments (%d given)", argc);
-        return V_EMPTY_VAL;
-    }
-    MyMoDict *dict = dictSelf(vm, "get", (int)argc);
-    if (!dict) return V_EMPTY_VAL;
-    // Pop args in reverse: default (if present) then key.
-    MyMoObject *def = (argc == 2) ? pop(vm) : NEW_NIL;
-    MyMoObject *key = pop(vm);
-    MyMoObject *value = getEntry(vm, dict, key);
-    return objectToValue(value ? value : def);
+    return IS_NIL(key) || IS_BOOL(key) || IS_INT(key) || IS_DOUBLE(key) || IS_STRING(key);
 }
 
+static MyMoObject *canonicalKey(MVM *vm, Value v, bool create, bool *hashable);
+
+// The canonical tuple equal to `t` (creating it when `create`), or NULL
+// when there is none yet or an element can't be a key (*hashable false).
+static MyMoTuple *internTupleKey(MVM *vm, MyMoTuple *t, bool create, bool *hashable)
+{
+    int n = t->values.count;
+    Value stackElems[16];
+    Value *elems = n <= 16 ? stackElems : malloc(sizeof(Value) * (size_t)n);
+    u32 hash = 2166136261u ^ (u32)n;
+    MyMoTuple *result = NULL;
+    for (int i = 0; i < n; i++)
+    {
+        MyMoObject *k = canonicalKey(vm, t->values.values[i], create, hashable);
+        if (k == NULL)
+            goto done;
+        elems[i] = objectToValue(k);
+        hash = (hash ^ k->hash) * 16777619u;
+    }
+    MyMoDict *table = &vm->tupleKeys;
+    if (table->entries != NULL)
+    {
+        for (u32 index = hash & (u32)table->capacity;; index = (index + 1) & (u32)table->capacity)
+        {
+            MyMoObject *key = table->entries[index].key;
+            if (key == NULL)
+                break;
+            MyMoTuple *candidate = AS_TUPLE(key);
+            if (key->hash != hash || candidate->values.count != n)
+                continue;
+            bool same = true;
+            for (int i = 0; i < n && same; i++)
+                same = valueToBoxedObject(vm, candidate->values.values[i]) == valueToBoxedObject(vm, elems[i]);
+            if (same)
+            {
+                result = candidate;
+                goto done;
+            }
+        }
+    }
+    if (create)
+    {
+        result = newTuple(vm);
+        for (int i = 0; i < n; i++)
+            writeValueArray(vm, &result->values, elems[i]);
+        result->object.hash = hash;
+        setPrimitive(vm, table, AS_OBJECT(result));
+    }
+done:
+    if (elems != stackElems)
+        free(elems);
+    return result;
+}
+
+static MyMoObject *canonicalKey(MVM *vm, Value v, bool create, bool *hashable)
+{
+    MyMoObject *key = valueToBoxedObject(vm, v);
+    if (isScalarKey(key))
+        return key;
+    if (IS_TUPLE(key))
+        return AS_OBJECT(internTupleKey(vm, AS_TUPLE(key), create, hashable));
+    *hashable = false;
+    return NULL;
+}
+
+// A Value as a key for storing: strings, numbers, bools, Nil and tuples
+// of those. NULL after raising a TypeError.
+MyMoObject *dictKey(MVM *vm, Value v)
+{
+    bool hashable = true;
+    MyMoObject *key = canonicalKey(vm, v, true, &hashable);
+    if (key)
+        return key;
+    if (V_IS_OBJ_TYPE(v, OBJ_TUPLE))
+        runtimeError(vm, "TypeError: a tuple used as a dict key may only hold strings, numbers, booleans, Nil or tuples");
+    else
+        runtimeError(vm, "TypeError: dict keys must be strings, numbers, booleans, Nil or tuples of them, not %s",
+                     valueTypeName(v));
+    return NULL;
+}
+
+// A Value as a key for lookups: never creates a canonical tuple (if none
+// exists, no dict can hold that key, so the returned object won't match).
+MyMoObject *dictLookupKey(MVM *vm, Value v)
+{
+    bool hashable = true;
+    MyMoObject *key = canonicalKey(vm, v, false, &hashable);
+    return key ? key : valueToBoxedObject(vm, v);
+}
+
+static void keyError(MVM *vm, Value key)
+{
+    Value text = valueToRepr(vm, key);
+    runtimeError(vm, "KeyError: %s", V_IS_EMPTY(text) ? "?" : AS_STRING(V_AS_OBJ(text))->value);
+}
+
+// d.get(key[, default])
+Value dictGetMethod(MVM *vm, uint argc, Value args[])
+{
+    MyMoObject *self = methodEnter(vm, "get", argc, 1, 2);
+    if (!self) return V_EMPTY_VAL;
+    Value value;
+    if (getEntryV(AS_DICT(self), dictLookupKey(vm, args[0]), &value))
+        return value;
+    return argc == 2 ? args[1] : V_NIL_VAL;
+}
+
+// d.put(key, value) -> value
 Value dictPutMethod(MVM *vm, uint argc, Value args[])
 {
-    if (argc != 2)
-    {
-        runtimeError(vm, "TypeError: put() takes exactly 2 arguments (%d given)", argc);
-        return V_EMPTY_VAL;
-    }
-    MyMoDict *dict = dictSelf(vm, "put", 2);
-    if (!dict) return V_EMPTY_VAL;
-    MyMoObject *value = pop(vm);
-    MyMoObject *key = pop(vm);
-    setEntry(vm, dict, key, value);
-    return objectToValue(value);
+    MyMoObject *self = methodEnter(vm, "put", argc, 2, 2);
+    if (!self) return V_EMPTY_VAL;
+    MyMoObject *key = dictKey(vm, args[0]);
+    if (!key) return V_EMPTY_VAL;
+    setEntryV(vm, AS_DICT(self), key, args[1]);
+    return args[1];
 }
 
 Value dictHasMethod(MVM *vm, uint argc, Value args[])
 {
-    if (argc != 1)
-    {
-        runtimeError(vm, "TypeError: has() takes exactly 1 argument (%d given)", argc);
-        return V_EMPTY_VAL;
-    }
-    MyMoDict *dict = dictSelf(vm, "has", 1);
-    if (!dict) return V_EMPTY_VAL;
-    MyMoObject *key = pop(vm);
-    return V_BOOL_VAL(getEntry(vm, dict, key) != NULL);
+    MyMoObject *self = methodEnter(vm, "has", argc, 1, 1);
+    if (!self) return V_EMPTY_VAL;
+    Value unused;
+    return V_BOOL_VAL(getEntryV(AS_DICT(self), dictLookupKey(vm, args[0]), &unused));
 }
 
+// d.delete(key) -> whether it was there
 Value dictDeleteMethod(MVM *vm, uint argc, Value args[])
 {
-    if (argc != 1)
+    MyMoObject *self = methodEnter(vm, "delete", argc, 1, 1);
+    if (!self) return V_EMPTY_VAL;
+    return V_BOOL_VAL(deleteEntry(vm, AS_DICT(self), dictLookupKey(vm, args[0])));
+}
+
+// d.pop(key[, default]) -> the removed value (KeyError without default)
+Value dictPopMethod(MVM *vm, uint argc, Value args[])
+{
+    MyMoObject *self = methodEnter(vm, "pop", argc, 1, 2);
+    if (!self) return V_EMPTY_VAL;
+    MyMoObject *key = dictLookupKey(vm, args[0]);
+    Value value;
+    if (getEntryV(AS_DICT(self), key, &value))
     {
-        runtimeError(vm, "TypeError: delete() takes exactly 1 argument (%d given)", argc);
+        deleteEntry(vm, AS_DICT(self), key);
+        return value;
+    }
+    if (argc == 2)
+        return args[1];
+    keyError(vm, args[0]);
+    return V_EMPTY_VAL;
+}
+
+// d.popitem() -> (key, value) of the most recently inserted entry
+Value dictPopitemMethod(MVM *vm, uint argc, Value args[])
+{
+    MyMoObject *self = methodEnter(vm, "popitem", argc, 0, 0);
+    if (!self) return V_EMPTY_VAL;
+    MyMoDict *dict = AS_DICT(self);
+    if (dict->tail < 0)
+    {
+        runtimeError(vm, "KeyError: popitem(): dictionary is empty");
         return V_EMPTY_VAL;
     }
-    MyMoDict *dict = dictSelf(vm, "delete", 1);
-    if (!dict) return V_EMPTY_VAL;
-    MyMoObject *key = pop(vm);
-    bool existed = deleteEntry(vm, dict, key);
-    return V_BOOL_VAL(existed);
+    Entry *last = &dict->entries[dict->tail];
+    MyMoTuple *item = newTuple(vm);
+    writeValueArray(vm, &item->values, objectToValue(last->key));
+    writeValueArray(vm, &item->values, last->value);
+    deleteEntry(vm, dict, last->key);
+    return V_OBJ_VAL(AS_OBJECT(item));
+}
+
+// d.setdefault(key[, default]) -> d[key], inserting default (Nil) first
+// when the key is missing
+Value dictSetdefaultMethod(MVM *vm, uint argc, Value args[])
+{
+    MyMoObject *self = methodEnter(vm, "setdefault", argc, 1, 2);
+    if (!self) return V_EMPTY_VAL;
+    MyMoObject *key = dictKey(vm, args[0]);
+    if (!key) return V_EMPTY_VAL;
+    Value value;
+    if (getEntryV(AS_DICT(self), key, &value))
+        return value;
+    value = argc == 2 ? args[1] : V_NIL_VAL;
+    setEntryV(vm, AS_DICT(self), key, value);
+    return value;
+}
+
+// d.update(other_dict | [(key, value), ...])
+Value dictUpdateMethod(MVM *vm, uint argc, Value args[])
+{
+    MyMoObject *self = methodEnter(vm, "update", argc, 1, 1);
+    if (!self) return V_EMPTY_VAL;
+    MyMoDict *dict = AS_DICT(self);
+    if (V_IS_OBJ_TYPE(args[0], OBJ_DICT))
+    {
+        copyDict(vm, AS_DICT(V_AS_OBJ(args[0])), dict);
+        return V_NIL_VAL;
+    }
+    ValueArray pairs;
+    initValueArray(vm, &pairs);
+    if (!appendIterable(vm, "update", args[0], &pairs))
+    {
+        freeValueArray(vm, &pairs);
+        return V_EMPTY_VAL;
+    }
+    for (int i = 0; i < pairs.count; i++)
+    {
+        Value p = pairs.values[i];
+        ValueArray *kv = V_IS_OBJ_TYPE(p, OBJ_TUPLE) ? &AS_TUPLE(V_AS_OBJ(p))->values
+                       : V_IS_OBJ_TYPE(p, OBJ_LIST)  ? &AS_LIST(V_AS_OBJ(p))->values
+                                                     : NULL;
+        MyMoObject *key = NULL;
+        if (!kv || kv->count != 2)
+            runtimeError(vm, "ValueError: update() element %d is not a (key, value) pair", i);
+        else
+            key = dictKey(vm, kv->values[0]);
+        if (!key)
+        {
+            freeValueArray(vm, &pairs);
+            return V_EMPTY_VAL;
+        }
+        setEntryV(vm, dict, key, kv->values[1]);
+    }
+    freeValueArray(vm, &pairs);
+    return V_NIL_VAL;
+}
+
+Value dictClearMethod(MVM *vm, uint argc, Value args[])
+{
+    MyMoObject *self = methodEnter(vm, "clear", argc, 0, 0);
+    if (!self) return V_EMPTY_VAL;
+    MyMoDict *dict = AS_DICT(self);
+    u32 version = dict->modifyCount;
+    FreeArray(vm, Entry, dict->entries, dict->capacity + 1);
+    initDict(dict);
+    dict->modifyCount = version + 1; // invalidate inline caches
+    return V_NIL_VAL;
+}
+
+Value dictCopyMethod(MVM *vm, uint argc, Value args[])
+{
+    MyMoObject *self = methodEnter(vm, "copy", argc, 0, 0);
+    if (!self) return V_EMPTY_VAL;
+    MyMoDict *copy = newDict(vm);
+    copyDict(vm, AS_DICT(self), copy);
+    return V_OBJ_VAL(AS_OBJECT(copy));
+}
+
+// d.items() -> [(key, value), ...] in insertion order
+Value dictItemsMethod(MVM *vm, uint argc, Value args[])
+{
+    MyMoObject *self = methodEnter(vm, "items", argc, 0, 0);
+    if (!self) return V_EMPTY_VAL;
+    MyMoList *out = newList(vm);
+    Entry *e;
+    DICT_FOREACH(AS_DICT(self), e)
+    {
+        MyMoTuple *item = newTuple(vm);
+        writeValueArray(vm, &item->values, objectToValue(e->key));
+        writeValueArray(vm, &item->values, e->value);
+        writeValueArray(vm, &out->values, V_OBJ_VAL(AS_OBJECT(item)));
+    }
+    return V_OBJ_VAL(AS_OBJECT(out));
 }
 
 Value dictKeysMethod(MVM *vm, uint argc, Value args[])
@@ -439,6 +661,13 @@ void defineDictMethods(MVM *vm)
     defineMethod(vm, OBJ_DICT, "keys",    dictKeysMethod);
     defineMethod(vm, OBJ_DICT, "values",  dictValuesMethod);
     defineMethod(vm, OBJ_DICT, "__len__", dictLenMethod);
+    defineMethod(vm, OBJ_DICT, "pop",        dictPopMethod);
+    defineMethod(vm, OBJ_DICT, "popitem",    dictPopitemMethod);
+    defineMethod(vm, OBJ_DICT, "setdefault", dictSetdefaultMethod);
+    defineMethod(vm, OBJ_DICT, "update",     dictUpdateMethod);
+    defineMethod(vm, OBJ_DICT, "clear",      dictClearMethod);
+    defineMethod(vm, OBJ_DICT, "copy",       dictCopyMethod);
+    defineMethod(vm, OBJ_DICT, "items",      dictItemsMethod);
 }
 
 void defineDictClass(MVM *vm)

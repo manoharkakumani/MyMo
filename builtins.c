@@ -795,14 +795,6 @@ static Value newTupleMethod(MVM *vm, uint argc, Value argv[])
     return V_OBJ_VAL(AS_OBJECT(tuple));
 }
 
-static bool validKey(MVM *vm, MyMoObject *key)
-{
-    if (IS_NIL(key) || IS_BOOL(key) || IS_INT(key) || IS_DOUBLE(key) || IS_STRING(key))
-        return true;
-    runtimeError(vm, "TypeError: dict keys must be strings, numbers, booleans or Nil, not %s", getType(key));
-    return false;
-}
-
 // dict() / dict(other_dict) / dict([(key, value), ...])
 static Value newDictMethod(MVM *vm, uint argc, Value argv[])
 {
@@ -832,8 +824,8 @@ static Value newDictMethod(MVM *vm, uint argc, Value argv[])
                     runtimeError(vm, "ValueError: dict() element %d is not a (key, value) pair", i);
                     return V_EMPTY_VAL;
                 }
-                MyMoObject *key = valueToBoxedObject(vm, kv->values[0]);
-                if (!validKey(vm, key))
+                MyMoObject *key = dictKey(vm, kv->values[0]);
+                if (!key)
                     return V_EMPTY_VAL;
                 setEntryV(vm, dict, key, kv->values[1]);
             }

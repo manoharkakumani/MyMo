@@ -23,4 +23,8 @@ void printList(MyMoList *list);
 
 void defineListClass(MVM *vm);
 
+// index()/count() shared by lists and tuples.
+Value sequenceIndexMethod(MVM *vm, uint argc, Value args[]);
+Value sequenceCountMethod(MVM *vm, uint argc, Value args[]);
+
 #endif

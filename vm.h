@@ -21,6 +21,7 @@ struct vm
     MyMoDict numbers;
     MyMoDict integers;
     MyMoDict doubles;
+    MyMoDict tupleKeys; // canonical tuples used as dict keys (dict.c)
     MyMoDict builtInModules;
     MyMoObject *objects;
     u32 classCall;

@@ -299,6 +299,7 @@ void collectGarbage(MVM *vm)
     sweepInternTable(vm, &vm->strings);
     sweepInternTable(vm, &vm->integers);
     sweepInternTable(vm, &vm->doubles);
+    sweepInternTable(vm, &vm->tupleKeys);
     sweepInternTable(vm, &vm->numbers);
     sweepObjects(vm);
     sweepRetiredFrames(vm);

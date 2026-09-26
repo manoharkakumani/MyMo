@@ -248,6 +248,27 @@ bool isEqual(MyMoObject *a, MyMoObject *b)
         }
         return true;
     }
+    case OBJ_DICT:
+    {
+        // Same keys (keys are interned, so identity lookups work) with
+        // equal values; order doesn't matter.
+        MyMoDict *da = AS_DICT(a), *db = AS_DICT(b);
+        if (da->count != db->count) return false;
+        Entry *e;
+        DICT_FOREACH(da, e)
+        {
+            Value other;
+            if (!getEntryV(db, e->key, &other) || !valuesEqual(e->value, other))
+                return false;
+        }
+        return true;
+    }
+    case OBJ_RANGE:
+    {
+        MyMoRange *ra = AS_RANGE(a), *rb = AS_RANGE(b);
+        long n = rangeLength(ra);
+        return n == rangeLength(rb) && (n == 0 || (ra->start == rb->start && (n == 1 || ra->step == rb->step)));
+    }
     default:
         return a == b;
     }

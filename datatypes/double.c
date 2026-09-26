@@ -17,7 +17,7 @@ MyMoDouble *newDouble(MVM *vm, double value)
     MyMoDouble *number = AllocateObject(vm, MyMoDouble, OBJ_DOUBLE);
     number->object.type = OBJ_DOUBLE;
     number->value = value;
-    number->length = 0;
+    number->length = length;
     number->object.hash = hash;
     setPrimitive(vm, &vm->doubles, (MyMoObject *)number);
     return number;

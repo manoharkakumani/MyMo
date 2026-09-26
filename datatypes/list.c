@@ -1,5 +1,6 @@
 #include "list.h"
 #include "../builtins.h"
+#include "tuple.h"
 #include "nil.h"
 #include "../memory.h"
 #include "../vm.h"
@@ -66,19 +67,9 @@ Value lenListMethod(MVM *vm, uint argc, Value args[])
 
 Value appendListMethod(MVM *vm, uint argc, Value args[])
 {
-    if (argc != 1)
-    {
-        runtimeError(vm, "TypeError: append() takes exactly one argument (%d given)", argc);
-        return V_EMPTY_VAL;
-    }
-    MyMoBuiltInFunction *function = AS_BUILTIN_FUNCTION(peek(vm, 1));
-    if (function->self == NULL)
-    {
-        runtimeError(vm, "TypeError: append() can only be applied on instance");
-        return V_EMPTY_VAL;
-    }
-    MyMoList *list = AS_LIST(function->self);
-    writeValueArrayObject(vm, &list->values, pop(vm));
+    MyMoObject *self = methodEnter(vm, "append", argc, 1, 1);
+    if (!self) return V_EMPTY_VAL;
+    writeValueArray(vm, &AS_LIST(self)->values, args[0]);
     return V_NIL_VAL;
 }
 
@@ -143,6 +134,60 @@ static int findInArray(ValueArray *array, Value target)
     return -1;
 }
 
+// The elements of a list or tuple method's receiver.
+static ValueArray *sequenceSelf(MyMoObject *self)
+{
+    return self->type == OBJ_LIST ? &AS_LIST(self)->values : &AS_TUPLE(self)->values;
+}
+
+// Clamp a Python-style slice bound (negative counts from the end).
+static int clampBound(long i, int count)
+{
+    if (i < 0)
+        i += count;
+    if (i < 0)
+        return 0;
+    return i > count ? count : (int)i;
+}
+
+// xs.index(x[, start[, end]]) for lists and tuples.
+Value sequenceIndexMethod(MVM *vm, uint argc, Value args[])
+{
+    MyMoObject *self = methodEnter(vm, "index", argc, 1, 3);
+    if (!self) return V_EMPTY_VAL;
+    ValueArray *values = sequenceSelf(self);
+    long bounds[2] = {0, values->count};
+    for (uint i = 1; i < argc; i++)
+    {
+        if (!valueLooksLikeInt(args[i]))
+        {
+            runtimeError(vm, "TypeError: index() bounds must be integers, not %s", valueTypeName(args[i]));
+            return V_EMPTY_VAL;
+        }
+        bounds[i - 1] = valueToLong(args[i]);
+    }
+    int end = clampBound(bounds[1], values->count);
+    for (int i = clampBound(bounds[0], values->count); i < end; i++)
+        if (valuesEqual(values->values[i], args[0]))
+            return V_INT_VAL(i);
+    runtimeError(vm, "ValueError: %s.index(x): x not in %s", self->type == OBJ_LIST ? "list" : "tuple",
+                 self->type == OBJ_LIST ? "list" : "tuple");
+    return V_EMPTY_VAL;
+}
+
+// xs.count(x) for lists and tuples.
+Value sequenceCountMethod(MVM *vm, uint argc, Value args[])
+{
+    MyMoObject *self = methodEnter(vm, "count", argc, 1, 1);
+    if (!self) return V_EMPTY_VAL;
+    ValueArray *values = sequenceSelf(self);
+    int n = 0;
+    for (int i = 0; i < values->count; i++)
+        if (valuesEqual(values->values[i], args[0]))
+            n++;
+    return V_INT_VAL(n);
+}
+
 Value popListMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "pop", argc, 0, 1);
@@ -205,19 +250,6 @@ Value removeListMethod(MVM *vm, uint argc, Value args[])
     return V_NIL_VAL;
 }
 
-Value indexListMethod(MVM *vm, uint argc, Value args[])
-{
-    MyMoObject *self = methodEnter(vm, "index", argc, 1, 1);
-    if (!self) return V_EMPTY_VAL;
-    int i = findInArray(&AS_LIST(self)->values, args[0]);
-    if (i < 0)
-    {
-        runtimeError(vm, "ValueError: list.index(x): x not in list");
-        return V_EMPTY_VAL;
-    }
-    return V_INT_VAL(i);
-}
-
 Value containsListMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "contains", argc, 1, 1);
@@ -251,24 +283,9 @@ Value extendListMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "extend", argc, 1, 1);
     if (!self) return V_EMPTY_VAL;
-    if (!V_IS_OBJ_TYPE(args[0], OBJ_LIST) && !V_IS_OBJ_TYPE(args[0], OBJ_TUPLE))
-    {
-        runtimeError(vm, "TypeError: extend() expects a list or tuple, got %s", valueTypeName(args[0]));
+    if (!appendIterable(vm, "extend", args[0], &AS_LIST(self)->values))
         return V_EMPTY_VAL;
-    }
-    MyMoObject *seq = V_AS_OBJ(args[0]);
-    ValueArray *src = IS_LIST(seq) ? &AS_LIST(seq)->values : &AS_TUPLE(seq)->values;
-    int n = src->count; // snapshot: `xs.extend(xs)` must not loop forever
-    for (int i = 0; i < n; i++)
-        writeValueArray(vm, &AS_LIST(self)->values, src->values[i]);
     return V_NIL_VAL;
-}
-
-// sort(): numbers (int/double mixed) or strings, ascending. Insertion
-// sort keeps it stable and lets a type mismatch abort cleanly.
-static bool isStringValue(Value v)
-{
-    return V_IS_OBJ(v) && V_AS_OBJ(v)->type == OBJ_STRING;
 }
 
 // xs.sort([key[, reverse]]) — stable; key may be Nil.
@@ -295,7 +312,8 @@ void defineListMethods(MVM *vm)
     defineMethod(vm, OBJ_LIST, "extend", extendListMethod);
     defineMethod(vm, OBJ_LIST, "clear", clearListMethod);
     defineMethod(vm, OBJ_LIST, "contains", containsListMethod);
-    defineMethod(vm, OBJ_LIST, "index", indexListMethod);
+    defineMethod(vm, OBJ_LIST, "index", sequenceIndexMethod);
+    defineMethod(vm, OBJ_LIST, "count", sequenceCountMethod);
     defineMethod(vm, OBJ_LIST, "pop", popListMethod);
     defineMethod(vm, OBJ_LIST, "reverse", reverseListMethod);
     defineMethod(vm, OBJ_LIST, "sort", sortListMethod);

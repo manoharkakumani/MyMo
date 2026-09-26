@@ -4,6 +4,7 @@
 #include "class.h"
 #include "function.h"
 #include "int.h"
+#include "list.h"
 
 MyMoTuple *newTuple(MVM *vm)
 {
@@ -40,11 +41,12 @@ Value lenTupleMethod(MVM *vm, uint argc, Value args[])
     return V_INT_VAL(AS_TUPLE(function->self)->values.count);
 }
 
-// Method table only: no `tuple` builtin name is registered, since there
-// is no `__new__` to construct one (tuples come from literals).
+// The `tuple` name and its __new__ are registered in builtins.c.
 void defineTupleClass(MVM *vm)
 {
     MyMoString *name = newString(vm, "tuple", 5);
     vm->builtInClasses[OBJ_TUPLE] = newBuiltInClass(vm, name);
     defineMethod(vm, OBJ_TUPLE, "__len__", lenTupleMethod);
+    defineMethod(vm, OBJ_TUPLE, "index", sequenceIndexMethod);
+    defineMethod(vm, OBJ_TUPLE, "count", sequenceCountMethod);
 }

@@ -37,6 +37,7 @@ MVM *initVM()
     initDict(&vm->numbers);
     initDict(&vm->integers);
     initDict(&vm->doubles);
+    initDict(&vm->tupleKeys);
     initDict(&vm->modules);
     initDict(&vm->builtInModules);
     defineBuiltInClasses(vm);
@@ -60,6 +61,7 @@ void freeVM(MVM *vm)
     freeDict(vm, &vm->numbers);
     freeDict(vm, &vm->integers);
     freeDict(vm, &vm->doubles);
+    freeDict(vm, &vm->tupleKeys);
     freeDict(vm, &vm->modules);
     freeDict(vm, &vm->builtInModules);
     freeObjects(vm);
@@ -753,13 +755,10 @@ int runMVM(MVM *vm)
         MyMoDict *dict = newDict(vm);
         for (u32 i = 0; i < count; i++)
         {
-            MyMoObject *key = valueToBoxedObject(vm, pairs[2 * i]);
-            if (!IS_NIL(key) && !IS_BOOL(key) && !IS_INT(key) && !IS_DOUBLE(key) && !IS_STRING(key))
-            {
-                SAVE();
-                runtimeError(vm, "TypeError: Dictionary keys must be immutable.");
+            SAVE();
+            MyMoObject *key = dictKey(vm, pairs[2 * i]);
+            if (!key)
                 goto _runtime_error;
-            }
             setEntryV(vm, dict, key, pairs[2 * i + 1]);
         }
         sp = pairs;
@@ -768,129 +767,138 @@ int runMVM(MVM *vm)
     }
     OP_SUBSCR:
     {
-        MyMoObject *index = pop(vm);
-        if (IS_DICT(peek(vm, 0)))
+        // [object, index] -> [object[index]]
+        Value index = lpeek(0);
+        Value target = lpeek(1);
+        if (!V_IS_OBJ(target))
         {
-            MyMoDict *dict = AS_DICT(pop(vm));
-            MyMoObject *value = getEntry(vm, dict,index);
-            if (!(value))
+            SAVE();
+            runtimeError(vm, "TypeError: %s is not subscriptable", valueTypeName(target));
+            goto _runtime_error;
+        }
+        MyMoObject *object = V_AS_OBJ(target);
+        if (object->type == OBJ_DICT)
+        {
+            Value value;
+            if (!getEntryV(AS_DICT(object), dictLookupKey(vm, index), &value))
             {
-                runtimeError(vm, "KeyError: value not found ");
+                SAVE();
+                Value text = valueToRepr(vm, index);
+                runtimeError(vm, "KeyError: %s", V_IS_EMPTY(text) ? "?" : AS_STRING(V_AS_OBJ(text))->value);
                 goto _runtime_error;
             }
-            push(vm, value);
+            sp -= 2;
+            lpush(value);
             DISPATCH();
         }
-        if (!IS_INT(index))
+        if (object->type == OBJ_INSTANCE)
         {
-            runtimeError(vm, "TypeError: Indices must be integers.");
+            sp -= 2;
+            OperatorOverLoad(target, index, "__getitem__");
+        }
+        if (!valueLooksLikeInt(index) && !valueIsBool(index))
+        {
+            SAVE();
+            runtimeError(vm, "TypeError: indices must be integers, not %s", valueTypeName(index));
             goto _runtime_error;
         }
-        int indexValue = INT_VAL(index);
-        MyMoObject *object = pop(vm);
+        long i = valueIsBool(index) ? valueAsBool(index) : valueToLong(index);
+        long count;
         switch (object->type)
         {
-        case OBJ_STRING:
-        {
-            MyMoString *string = AS_STRING(object);
-            if (indexValue >= string->length || -indexValue > string->length)
-            {
-                runtimeError(vm, "TypeError: String index out of bounds.");
-                goto _runtime_error;
-            }
-            if (indexValue < 0)
-            {
-                indexValue += string->length;
-            }
-            push(vm, NEW_STRING(vm, &string->value[indexValue], 1));
-            break;
-        }
-        case OBJ_LIST:
-        {
-            MyMoList *list = AS_LIST(object);
-            if (indexValue >= list->values.count || -indexValue > list->values.count)
-            {
-                runtimeError(vm, "TypeError: List Index out of bounds.");
-                goto _runtime_error;
-            }
-            if (indexValue < 0)
-            {
-                pushV(vm, list->values.values[list->values.count + indexValue]);
-            }
-            else
-            {
-                pushV(vm, list->values.values[indexValue]);
-            }
-            break;
-        }
-        case OBJ_TUPLE:
-        {
-            MyMoTuple *tuple = AS_TUPLE(object);
-            if (indexValue >= tuple->values.count || -indexValue > tuple->values.count)
-            {
-                runtimeError(vm, "Tuple Index out of bounds.");
-                goto _runtime_error;
-            }
-            if (indexValue < 0)
-            {
-                pushV(vm, tuple->values.values[tuple->values.count + indexValue]);
-            }
-            else
-            {
-                pushV(vm, tuple->values.values[indexValue]);
-            }
-            break;
-        }
+        case OBJ_STRING: count = AS_STRING(object)->length; break;
+        case OBJ_LIST:   count = AS_LIST(object)->values.count; break;
+        case OBJ_TUPLE:  count = AS_TUPLE(object)->values.count; break;
+        case OBJ_RANGE:  count = rangeLength(AS_RANGE(object)); break;
         default:
-            runtimeError(vm, "TypeError: Index operator cannot  applied to %s", getType(object));
+            SAVE();
+            runtimeError(vm, "TypeError: %s is not subscriptable", getType(object));
             goto _runtime_error;
         }
+        if (i < 0)
+            i += count;
+        if (i < 0 || i >= count)
+        {
+            SAVE();
+            runtimeError(vm, "IndexError: %s index out of range", object->type == OBJ_STRING ? "string"
+                         : object->type == OBJ_LIST ? "list" : object->type == OBJ_TUPLE ? "tuple" : "range");
+            goto _runtime_error;
+        }
+        Value result;
+        switch (object->type)
+        {
+        case OBJ_STRING: result = V_OBJ_VAL(AS_OBJECT(newString(vm, AS_STRING(object)->value + i, 1))); break;
+        case OBJ_LIST:   result = AS_LIST(object)->values.values[i]; break;
+        case OBJ_TUPLE:  result = AS_TUPLE(object)->values.values[i]; break;
+        default:         result = valueFromLong(vm, rangeAt(AS_RANGE(object), i)); break;
+        }
+        sp -= 2;
+        lpush(result);
         DISPATCH();
     }
     OP_SETSUBSCR:
     {
-        MyMoObject *value = pop(vm);
-        MyMoObject *index = pop(vm);
-        MyMoObject *object = pop(vm);
-        if (IS_LIST(object))
+        // [object, index, value] -> [value]
+        Value value = lpeek(0);
+        Value index = lpeek(1);
+        Value target = lpeek(2);
+        if (V_IS_OBJ_TYPE(target, OBJ_LIST))
         {
-            if (!IS_INT(index))
+            ValueArray *values = &AS_LIST(V_AS_OBJ(target))->values;
+            if (!valueLooksLikeInt(index))
             {
-                runtimeError(vm, "TypeError: Indices must be integers.");
+                SAVE();
+                runtimeError(vm, "TypeError: list indices must be integers, not %s", valueTypeName(index));
                 goto _runtime_error;
             }
-            int indexValue = INT_VAL(index);
-            MyMoList *list = AS_LIST(object);
-            if (indexValue >= list->values.count || -indexValue > list->values.count)
+            long i = valueToLong(index);
+            if (i < 0)
+                i += values->count;
+            if (i < 0 || i >= values->count)
             {
-                runtimeError(vm, "TypeError: List Index out of bounds.");
+                SAVE();
+                runtimeError(vm, "IndexError: list assignment index out of range");
                 goto _runtime_error;
             }
-            if (indexValue < 0)
-            {
-                indexValue += list->values.count;
-            }
-            list->values.values[indexValue] = objectToValue(value);
-            push(vm, value);
-            DISPATCH();
+            values->values[i] = value;
         }
-        else if (IS_DICT(object))
+        else if (V_IS_OBJ_TYPE(target, OBJ_DICT))
         {
-            MyMoDict *dict = AS_DICT(object);
-            if (!IS_STRING(index) && !IS_INT(index) && !IS_BOOL(index) && !IS_NIL(index) && !IS_DOUBLE(index))
+            SAVE();
+            MyMoObject *key = dictKey(vm, index);
+            if (!key)
+                goto _runtime_error;
+            setEntryV(vm, AS_DICT(V_AS_OBJ(target)), key, value);
+        }
+        else if (V_IS_OBJ_TYPE(target, OBJ_INSTANCE))
+        {
+            // obj[index] = value calls obj.__setitem__(index, value).
+            MyMoObject *method = getMethod(vm, V_AS_OBJ(target), "__setitem__");
+            if (IS_EMPTY(method))
             {
-                runtimeError(vm, "TypeError: Dictionary keys must be hashable.");
+                SAVE();
+                runtimeError(vm, "TypeError: %s does not support item assignment (no __setitem__)", valueTypeName(target));
                 goto _runtime_error;
             }
-            setEntry(vm, dict, index, value);
-            push(vm, value);
+            sp[-3] = V_OBJ_VAL(method);
+            sp[-2] = target;
+            sp[-1] = index;
+            lpush(value);
+            SAVE();
+            if (!caller(vm, method, 3))
+                goto _runtime_error;
+            LOAD();
             DISPATCH();
         }
         else
         {
-            runtimeError(vm, "TypeError: '%s' does not support item assignment.", getType(object));
+            SAVE();
+            runtimeError(vm, "TypeError: %s does not support item assignment", valueTypeName(target));
             goto _runtime_error;
         }
+        sp -= 3;
+        lpush(value);
+        DISPATCH();
     }
     OP_UNPACK:
     {

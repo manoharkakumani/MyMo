@@ -195,8 +195,7 @@ Value containsValue(MVM *vm, Value container, Value item)
         {
             // Keys are interned objects; box inline keys to find them.
             Value unused;
-            MyMoObject *key = valueToBoxedObject(vm, item);
-            return V_BOOL_VAL(getEntryV(AS_DICT(c), key, &unused));
+            return V_BOOL_VAL(getEntryV(AS_DICT(c), dictLookupKey(vm, item), &unused));
         }
         default:
             break;

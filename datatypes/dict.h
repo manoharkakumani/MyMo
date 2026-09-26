@@ -78,6 +78,13 @@ void setPrimitive(MVM *vm, MyMoDict *dict, MyMoObject *key);
 
 void defineDictClass(MVM *vm);
 
+// A Value as a dict key for storing (strings, numbers, bools, Nil and
+// tuples of them; tuples are interned so equal tuples are one key). NULL
+// after raising a TypeError for anything else.
+MyMoObject *dictKey(MVM *vm, Value v);
+// The same for lookups (d[k], k in d, get/has/pop/delete): never raises.
+MyMoObject *dictLookupKey(MVM *vm, Value v);
+
 MyMoString *findString(MyMoDict *dict, const char *chars, int length, u32 hash);
 
 MyMoInt *findInt(MyMoDict *dict, long value, int length, u32 hash);
