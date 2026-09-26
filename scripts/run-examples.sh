@@ -12,10 +12,9 @@ BIN=${BIN:-./mymo}
 GOLDEN_DIR=tests/golden
 mkdir -p "$GOLDEN_DIR"
 
-# The interpreter writes `.myc` bytecode caches alongside `.my` sources on
-# every run. Stale caches from a previous interpreter version silently corrupt
-# results, so we always nuke them before a test run.
-/bin/rm -f examples/*.myc benchmarks/*.myc test.myc 2>/dev/null
+# The interpreter writes bytecode caches to __mycache__/ next to each source.
+# Start from a clean slate so the first pass really compiles.
+/bin/rm -rf examples/__mycache__ benchmarks/__mycache__ __mycache__ 2>/dev/null
 
 SKIP=()
 STRICT=0
@@ -91,7 +90,7 @@ for f in examples/*.my; do
 done
 [ -f test.my ] && run_one test.my
 
-# Second pass: the first run wrote a .myc next to each script, so this one
+# Second pass: the first run wrote __mycache__/<name>.myc, so this one
 # loads bytecode from the cache instead of compiling. Output must be
 # identical (same goldens).
 echo
@@ -99,7 +98,7 @@ echo "Re-running from the .myc bytecode cache ..."
 for f in examples/*.my test.my; do
   [ -f "$f" ] || continue
   if [ $STRICT -eq 0 ] && is_skipped "$f"; then continue; fi
-  if [ ! -f "${f}c" ]; then
+  if [ ! -f "$(dirname "$f")/__mycache__/$(basename "$f")c" ]; then
     fail=$((fail + 1))
     failed_names+=("$f (no .myc cache written)")
     printf '  FAIL  %-40s no .myc written\n' "$f"
@@ -107,7 +106,7 @@ for f in examples/*.my test.my; do
   fi
   run_one "$f" " [cached]"
 done
-/bin/rm -f examples/*.myc test.myc 2>/dev/null
+/bin/rm -rf examples/__mycache__ __mycache__ 2>/dev/null
 
 echo
 echo "Results: $pass passed, $fail failed"

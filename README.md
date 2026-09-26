@@ -75,10 +75,11 @@ Other targets:
 | `make lib`   | Build `libmymo.a` for [embedding](#embedding-mymo-in-c)        |
 | `make clean` | Remove binaries and object files                               |
 
-Running `foo.my` writes a bytecode cache, `foo.myc`, next to it. Later runs
-skip compiling while the source (and the interpreter build) are unchanged.
-A `.myc` can also be run on its own (`./mymo foo.myc`). Set `MYMO_NOCACHE=1`
-to disable the cache.
+Running `foo.my` writes a bytecode cache to `__mycache__/foo.myc` in the
+same directory, like Python's `__pycache__`. Later runs skip compiling while
+the source (and the interpreter build) are unchanged. A `.myc` file can
+also be run on its own (`./mymo foo.myc`), for example to ship bytecode
+without source. Set `MYMO_NOCACHE=1` to disable the cache.
 
 ---
 
@@ -764,7 +765,7 @@ make clean && make && make test && make bench
 - Standard-library modules written in MyMo live in `stdlib/` and are
   embedded into the binary at build time.
 - `make test` runs every example twice: once compiled, and once loaded
-  from the `.myc` cache.
+  from `__mycache__`.
 - `MYMO_GC_STRESS=1` collects garbage at every safe point. Combine it with
   an AddressSanitizer build to catch GC bugs.
 

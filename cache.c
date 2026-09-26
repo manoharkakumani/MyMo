@@ -1,6 +1,7 @@
 // .myc bytecode cache.
 //
-// runFile() compiles `foo.my` once and writes `foo.myc`. Later runs reuse
+// runFile() compiles `foo.my` once and writes `__mycache__/foo.myc` in the
+// same directory (created on demand, like Python's __pycache__). Later runs reuse
 // the cached bytecode when the header still matches, skipping lexing and
 // compiling. The source is still read on every run (it's cheap, and
 // runtime errors need it for the "offending line" display); only its hash
@@ -33,6 +34,46 @@
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <errno.h>
+#ifdef _WIN32
+  #include <direct.h>
+  #define make_dir(p) _mkdir(p)
+#else
+  #define make_dir(p) mkdir((p), 0755)
+#endif
+
+#define CACHE_DIR "__mycache__"
+
+char *cachePathFor(const char *sourcePath)
+{
+    const char *slash = strrchr(sourcePath, '/');
+#ifdef _WIN32
+    const char *bslash = strrchr(sourcePath, '\\');
+    if (bslash && (!slash || bslash > slash)) slash = bslash;
+#endif
+    size_t dirLen = slash ? (size_t)(slash - sourcePath + 1) : 0;
+    const char *base = sourcePath + dirLen;
+    size_t n = dirLen + strlen(CACHE_DIR) + 1 + strlen(base) + 2;
+    char *out = malloc(n);
+    snprintf(out, n, "%.*s" CACHE_DIR "/%sc", (int)dirLen, sourcePath, base);
+    return out;
+}
+
+// Create the __mycache__ directory that will hold `cachePath`.
+static bool ensureCacheDir(const char *cachePath)
+{
+    const char *slash = strrchr(cachePath, '/');
+    if (!slash)
+        return true;
+    size_t len = (size_t)(slash - cachePath);
+    char *dir = malloc(len + 1);
+    memcpy(dir, cachePath, len);
+    dir[len] = '\0';
+    bool ok = make_dir(dir) == 0 || errno == EEXIST;
+    free(dir);
+    return ok;
+}
 
 #define MYMO_CACHE_VERSION 5 // 3: OP_WIDE; 4: OP_DEFAULTS; 5: OP_METV
 
@@ -144,6 +185,8 @@ static bool putFunction(FILE *f, MyMoFunction *fn)
 
 bool cacheWrite(MyMoFunction *fn, const char *cachePath, uint64_t sourceHash)
 {
+    if (!ensureCacheDir(cachePath))
+        return false; // read-only directory etc.: just run uncached
     size_t n = strlen(cachePath);
     char *tmp = malloc(n + 32);
     snprintf(tmp, n + 32, "%s.tmp%ld", cachePath, (long)getpid());

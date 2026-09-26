@@ -6,6 +6,10 @@
 
 // .myc bytecode cache — format and invariants documented in cache.c.
 
+// Where the cache for `sourcePath` lives: <dir>/__mycache__/<name>.myc
+// (like Python's __pycache__). Caller frees the result.
+char *cachePathFor(const char *sourcePath);
+
 // Content hash of a source file (never 0; 0 means "unknown source").
 uint64_t cacheHash(const char *src, size_t len);
 

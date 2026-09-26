@@ -381,10 +381,7 @@ MyMoFunction *runFile(MVM *vm, char *path)
         // otherwise compile and refresh it. MYMO_NOCACHE=1 disables both.
         bool useCache = getenv("MYMO_NOCACHE") == NULL;
         uint64_t hash = cacheHash(buffer, bytesRead);
-        char *cachePath = New(char, len + 2);
-        memcpy(cachePath, path, len);
-        cachePath[len] = 'c';
-        cachePath[len + 1] = '\0';
+        char *cachePath = cachePathFor(path);
         function = useCache ? cacheRead(vm, cachePath, hash) : NULL;
         if (function)
             attachSource(function, buffer);
