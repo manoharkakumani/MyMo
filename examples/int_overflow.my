@@ -19,3 +19,13 @@ try:
     s += 1
 catch e:
     print(e)
+print(int("42"), int(" -17 "), int("ff", 16), int("0xff", 16), int("0x1F", 0), int("0b101", 0), int("777", 8), int("1_000_000"), int("z", 36), int(3.9), int(-3.9), int(True), float(" 2.5 "), float("1e3"), float("inf"))
+for bad in ["12a", "", " ", "0x", "1__0"]:
+    try:
+        int(bad)
+    catch ValueError as e:
+        print(e)
+try:
+    int("9", 8)
+catch ValueError as e:
+    print(e)

@@ -1,6 +1,7 @@
 #include "double.h"
 #include "../memory.h"
 #include "../vm.h"
+#include <ctype.h>
 #include "nil.h"
 
 MyMoDouble *newDouble(MVM *vm, double value)
@@ -47,8 +48,10 @@ Value newDoubleMethod(MVM *vm, uint argc, Value args[])
     {
         char *str = AS_STRING(V_AS_OBJ(v))->value;
         char *end;
-        double value = strtod(str, &end);
-        if (*str == '\0' || *end != '\0')
+        double value = strtod(str, &end); // skips leading whitespace
+        while (isspace((unsigned char)*end))
+            end++;
+        if (end == str || *end != '\0')
         {
             runtimeError(vm, "ValueError: invalid literal for double(): '%s'", str);
             return V_EMPTY_VAL;
