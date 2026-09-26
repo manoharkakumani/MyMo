@@ -82,6 +82,10 @@ typedef struct Compiler
     // (-1 if none). Peepholes that rewind an instruction must not split
     // it from its prefix.
     int lastWideTarget;
+    // Chunk offset where the left operand of the infix operator being
+    // compiled starts (set by parsePrecedence). `a if c else b` moves a's
+    // code behind the condition so `a` only runs when `c` holds.
+    int infixLeftStart;
 } Compiler;
 
 typedef enum

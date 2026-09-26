@@ -64,19 +64,38 @@ void trenaryCond(Compiler *compiler, bool canAssign)
     patchJump(compiler, jump);
 }
 
+// `a if c else b`. The single-pass compiler has already emitted `a` by
+// the time it sees `if`; cut that code out, compile `c`, and re-emit it
+// in the true branch so `a` is only evaluated when `c` holds (jumps in
+// `a` are relative, so the block can move as a whole).
 void trenaryCond2(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);
-    expression(compiler);
-    int ifJump = emitJump(compiler, OP_JIF);
+    Chunk *ch = currentChunk(compiler);
+    int start = compiler->infixLeftStart;
+    int len = ch->count - start;
+    u8 *code = malloc((size_t)len + 1);
+    u32 *lines = malloc(sizeof(u32) * ((size_t)len + 1));
+    u32 *cols = malloc(sizeof(u32) * ((size_t)len + 1));
+    memcpy(code, ch->code + start, (size_t)len);
+    memcpy(lines, ch->lines + start, sizeof(u32) * (size_t)len);
+    memcpy(cols, ch->cols + start, sizeof(u32) * (size_t)len);
+    ch->count = start;
+
+    expression(compiler); // the condition
+    int elseJump = emitJump(compiler, OP_JIF);
     emitByte(compiler, OP_POP);
-    int Jump = emitJump(compiler, OP_JMP);
-    patchJump(compiler, ifJump);
+    for (int i = 0; i < len; i++)
+        writeChunk(compiler->parser->vm, currentChunk(compiler), code[i], lines[i], cols[i]);
+    free(code);
+    free(lines);
+    free(cols);
+    int endJump = emitJump(compiler, OP_JMP);
+    patchJump(compiler, elseJump);
     emitByte(compiler, OP_POP);
     consumeToken(compiler, ELSE, "expected 'else' after 'if' expression.");
-    emitByte(compiler, OP_POP);
     expression(compiler);
-    patchJump(compiler, Jump);
+    patchJump(compiler, endJump);
 }
 
 void expressionStatement(Compiler *compiler)

@@ -2140,52 +2140,38 @@ int runMVM(MVM *vm)
     }
     OP_SETP:
     {
-        if (IS_INSTANCE(peek(vm, 1)))
+        // [target, value] -> [value]; target.name = value.
+        Value value = lpeek(0);
+        Value targetV = lpeek(1);
+        MyMoObject *name = ReadObject();
+        MyMoDict *dest = NULL;
+        if (V_IS_OBJ(targetV))
         {
-            MyMoInstance *instance = AS_INSTANCE(peek(vm, 1));
-            setEntry(vm, instance->fields, ReadObject(), peek(vm, 0));
-            MyMoObject *value = pop(vm);
-            pop(vm);
-            push(vm, value);
-            DISPATCH();
+            MyMoObject *target = V_AS_OBJ(targetV);
+            switch (target->type)
+            {
+            case OBJ_INSTANCE: dest = AS_INSTANCE(target)->fields; break;
+            case OBJ_CLASS:    dest = AS_CLASS(target)->variables; break;
+            case OBJ_MODULE:   dest = AS_MODULE(target)->variables; break;
+            // JS-style dot-write: `d.status = v` is `d["status"] = v`.
+            case OBJ_DICT:     dest = AS_DICT(target); break;
+            case OBJ_BUILTIN_CLASS:
+                SAVE();
+                runtimeError(vm, "TypeError: can't set attributes of built-in/extension type 'object'");
+                goto _runtime_error;
+            default: break;
+            }
         }
-        else if (IS_CLASS(peek(vm, 1)))
+        if (!dest)
         {
-            MyMoClass *klass = AS_CLASS(peek(vm, 1));
-            setEntry(vm, klass->variables, ReadObject(), peek(vm, 0));
-            MyMoObject *value = pop(vm);
-            pop(vm);
-            push(vm, value);
-            DISPATCH();
-        }
-        else if (IS_MODULE(peek(vm, 1)))
-        {
-            MyMoModule *module = AS_MODULE(peek(vm, 1));
-            setEntry(vm, module->variables, ReadObject(), peek(vm, 0));
-            MyMoObject *value = pop(vm);
-            pop(vm);
-            push(vm, value);
-            DISPATCH();
-        }
-        else if (IS_DICT(peek(vm, 1)))
-        {
-            // JS-style dot-write: `d.status = v` is sugar for
-            // `d["status"] = v`. The property name is already a
-            // string in the constant pool.
-            MyMoDict *dict = AS_DICT(peek(vm, 1));
-            setEntry(vm, dict, ReadObject(), peek(vm, 0));
-            MyMoObject *value = pop(vm);
-            pop(vm);
-            push(vm, value);
-            DISPATCH();
-        }
-        else if (IS_BUILTIN_CLASS(peek(vm, 1)))
-        {
-            runtimeError(vm, "TypeError: can't set attributes of built-in/extension type 'object'");
+            SAVE();
+            runtimeError(vm, "TypeError: Only classes and instances have properties.");
             goto _runtime_error;
         }
-        runtimeError(vm, "TypeError: Only classes and instances have properties.");
-        goto _runtime_error;
+        setEntryV(vm, dest, name, value);
+        sp -= 2;
+        lpush(value);
+        DISPATCH();
     }
     OP_AGETP:
     {
@@ -2193,71 +2179,85 @@ int runMVM(MVM *vm)
     }
     OP_GETP:
     {
-        MyMoObjectType type = peek(vm, 0)->type;
-        switch (type)
+        // Property read. Lookups use the Value API (no boxing); the
+        // receiver stays on the stack when `agp` is set (compound
+        // assignment reads it again for OP_SETP).
+#define GETP_FOUND(v)                          \
+        do {                                   \
+            Value found_ = (v);                \
+            if (!agp) lpop();                  \
+            agp = 0;                           \
+            pushV(vm, found_);                 \
+            DISPATCH();                        \
+        } while (0)
+        Value recvV = lpeek(0);
+        if (!V_IS_OBJ(recvV))
+        {
+            // Inline receiver: ints/doubles may have builtin methods; nil
+            // and bool have none.
+            MyMoObject *variable = ReadObject();
+            MyMoObjectType t = valueLooksLikeInt(recvV) ? OBJ_INT
+                             : valueLooksLikeDouble(recvV) ? OBJ_DOUBLE : OBJ_OBJECT;
+            MyMoObject *fn = (t != OBJ_OBJECT && vm->builtInClasses[t])
+                ? getEntry(vm, vm->builtInClasses[t]->methods, variable) : NULL;
+            if (!fn)
+            {
+                SAVE();
+                runtimeError(vm, "AttributeError: %s has no attribute '%s'.", valueTypeName(recvV), STRING_VAL(variable));
+                goto _runtime_error;
+            }
+            MyMoBuiltInFunction *tmpl = AS_BUILTIN_FUNCTION(fn);
+            MyMoBuiltInFunction *bound = newBuiltInFunction(vm, tmpl->name, tmpl->function, fn->type);
+            bound->self = valueToBoxedObject(vm, recvV);
+            lpop();
+            agp = 0;
+            pushV(vm, V_OBJ_VAL(AS_OBJECT(bound)));
+            DISPATCH();
+        }
+        MyMoObject *recv = V_AS_OBJ(recvV);
+        Value value;
+        switch (recv->type)
         {
         case OBJ_INSTANCE:
         {
-            MyMoInstance *instance = AS_INSTANCE(peek(vm, 0));
+            MyMoInstance *instance = AS_INSTANCE(recv);
             MyMoObject *variable = ReadObject();
-            MyMoObject *value = getEntry(vm, instance->fields, variable);
-            if (value)
+            if (getEntryV(instance->fields, variable, &value))
+                GETP_FOUND(value);
+            if (getEntryV(instance->klass->variables, variable, &value))
+                GETP_FOUND(value);
+            if (getEntryV(instance->klass->methods, variable, &value))
             {
-                if (!agp)
-                    pop(vm); // pop the instance
-                push(vm, value);
-                if (agp)
-                    agp = 0;
-                DISPATCH();
-            }
-            value = getEntry(vm, instance->klass->variables, variable);
-            if (value)
-            {
-                if (!agp)
-                    pop(vm); // pop the instance
-                push(vm, value);
-                if (agp)
-                    agp = 0;
-                DISPATCH();
-            }
-            value = getEntry(vm, instance->klass->methods, variable);
-            if (value)
-            {
-                if (IS_FUNCTION(value))
+                if (V_IS_OBJ_TYPE(value, OBJ_FUNCTION))
                 {
-                    MyMoBoundMethod *bound = newBoundMethod(vm, peek(vm, 0), AS_FUNCTION(value));
-                    setEntry(vm, instance->fields, variable, AS_OBJECT(bound));
-                    value = AS_OBJECT(bound);
+                    MyMoBoundMethod *bound = newBoundMethod(vm, recv, AS_FUNCTION(V_AS_OBJ(value)));
+                    value = V_OBJ_VAL(AS_OBJECT(bound));
+                    setEntryV(vm, instance->fields, variable, value);
                 }
-                if (!agp)
-                    pop(vm); // pop the instance
-                push(vm, value);
-                if (agp)
-                    agp = 0;
-                DISPATCH();
+                GETP_FOUND(value);
             }
-            value = getEntry(vm, vm->builtInClasses[OBJ_OBJECT]->methods, variable);
-            if (value)
+            if (getEntryV(vm->builtInClasses[OBJ_OBJECT]->methods, variable, &value))
             {
-                pop(vm); // pop the instance
-                push(vm, value);
                 if (agp)
                 {
+                    SAVE();
                     runtimeError(vm, "TypeError: can't set attributes of built-in/extension type 'object'");
                     goto _runtime_error;
                 }
-                DISPATCH();
+                GETP_FOUND(value);
             }
+            SAVE();
             runtimeError(vm, "Undefined property '%s'.", STRING_VAL(variable));
             goto _runtime_error;
         }
         case OBJ_SUPER:
         {
-            MyMoSuper *super = AS_SUPER(peek(vm, 0));
+            MyMoSuper *super = AS_SUPER(recv);
             MyMoObject *variable = ReadObject();
             MyMoObject *method = getEntry(vm, super->klass->methods, variable);
             if (!method || agp)
             {
+                SAVE();
                 runtimeError(vm, agp ? "TypeError: can't assign through super()."
                                      : "AttributeError: parent class '%s' has no method '%s'.",
                              super->klass->name->value, STRING_VAL(variable));
@@ -2272,149 +2272,104 @@ int runMVM(MVM *vm)
                     vm->classCall++;
                 method = AS_OBJECT(newBoundMethod(vm, super->self, AS_FUNCTION(method)));
             }
-            pop(vm); // pop the super proxy
-            push(vm, method);
+            lpop(); // the super proxy
+            pushV(vm, V_OBJ_VAL(method));
             DISPATCH();
         }
         case OBJ_CLASS:
         {
-            MyMoClass *klass = AS_CLASS(peek(vm, 0));
+            MyMoClass *klass = AS_CLASS(recv);
             MyMoObject *variable = ReadObject();
-            MyMoObject *value = getEntry(vm, klass->variables, variable);
-            if (value)
+            if (getEntryV(klass->variables, variable, &value))
+                GETP_FOUND(value);
+            if (getEntryV(klass->methods, variable, &value))
+                GETP_FOUND(value);
+            if (getEntryV(vm->builtInClasses[OBJ_OBJECT]->methods, variable, &value))
             {
-                if (!agp)
-                    pop(vm); // pop the class
-                if (agp)
-                    agp = 0;
-                push(vm, value);
-                DISPATCH();
-            }
-            value = getEntry(vm, klass->methods, variable);
-            if (value)
-            {
-                if (!agp)
-                    pop(vm); // pop the class
-                if (agp)
-                    agp = 0;
-                push(vm, value);
-                DISPATCH();
-            }
-            value = getEntry(vm, vm->builtInClasses[OBJ_OBJECT]->methods, variable);
-            if (value)
-            {
-                pop(vm); // pop the instance
-                push(vm, value);
                 if (agp)
                 {
+                    SAVE();
                     runtimeError(vm, "TypeError: can't set attributes of built-in/extension type 'object'");
+                    goto _runtime_error;
                 }
-                DISPATCH();
+                GETP_FOUND(value);
             }
+            SAVE();
             runtimeError(vm, "Undefined property '%s'.", STRING_VAL(variable));
             goto _runtime_error;
         }
         case OBJ_MODULE:
         {
-            MyMoModule *module = AS_MODULE(peek(vm, 0));
+            MyMoModule *module = AS_MODULE(recv);
             MyMoObject *variable = ReadObject();
-            MyMoObject *value = getEntry(vm, module->variables, variable);
-            if (value)
-            {
-                if (!agp)
-                    pop(vm); // pop the module
-                if (agp)
-                    agp = 0;
-                push(vm, value);
-                DISPATCH();
-            }
+            if (getEntryV(module->variables, variable, &value))
+                GETP_FOUND(value);
+            SAVE();
             runtimeError(vm, "AttributeError: module '%s' has no attribute '%s'.", module->name->value, STRING_VAL(variable));
             goto _runtime_error;
         }
         case OBJ_BUILTIN_CLASS:
         {
-            MyMoBuiltInClass *klass = AS_BUILTIN_CLASS(peek(vm, 0));
+            MyMoBuiltInClass *klass = AS_BUILTIN_CLASS(recv);
             MyMoObject *variable = ReadObject();
-            MyMoObject *value = getEntry(vm, klass->methods, variable);
-            if (value)
-            {
-                if (!agp)
-                    pop(vm); // pop the class
-                if (agp)
-                    agp = 0;
-                push(vm, value);
-                DISPATCH();
-            }
+            if (getEntryV(klass->methods, variable, &value))
+                GETP_FOUND(value);
+            SAVE();
             runtimeError(vm, "AttributeError: built-in/extension type '%s' has no attribute '%s'.", klass->name->value, STRING_VAL(variable));
             goto _runtime_error;
         }
         case OBJ_DICT:
         {
-            // JS-style dot-read: `r.status` is sugar for `r["status"]`.
-            // If a built-in dict class is registered, fall through to
-            // its method table when no such key exists; otherwise
-            // just error out cleanly (dict methods aren't currently
-            // registered in vm->builtInClasses[OBJ_DICT]).
-            MyMoDict *dict = AS_DICT(peek(vm, 0));
+            // JS-style dot-read: `r.status` is sugar for `r["status"]`;
+            // otherwise a dict method, bound to this dict.
+            MyMoDict *dict = AS_DICT(recv);
             MyMoObject *variable = ReadObject();
-            MyMoObject *value = getEntry(vm, dict, variable);
-            if (value)
-            {
-                if (!agp)
-                    pop(vm); // pop the dict
-                push(vm, value);
-                if (agp)
-                    agp = 0;
-                DISPATCH();
-            }
+            if (getEntryV(dict, variable, &value))
+                GETP_FOUND(value);
             if (vm->builtInClasses[OBJ_DICT])
             {
                 MyMoObject *fn = getEntry(vm, vm->builtInClasses[OBJ_DICT]->methods, variable);
                 if (fn)
                 {
-                    // Allocate a fresh bound copy so two concurrent
-                    // method-references (e.g. nested comprehensions)
-                    // don't share — and overwrite — the same `self`
-                    // field on the class's template method object.
-                    MyMoObject *self = pop(vm);
+                    // A fresh bound copy per lookup: sharing the class's
+                    // template method would alias its `self` field.
                     MyMoBuiltInFunction *tmpl = AS_BUILTIN_FUNCTION(fn);
-                    MyMoBuiltInFunction *bound = newBuiltInFunction(
-                        vm, tmpl->name, tmpl->function, fn->type);
-                    bound->self = self;
-                    push(vm, AS_OBJECT(bound));
-                    if (agp) agp = 0;
+                    MyMoBuiltInFunction *bound = newBuiltInFunction(vm, tmpl->name, tmpl->function, fn->type);
+                    bound->self = recv;
+                    lpop();
+                    agp = 0;
+                    pushV(vm, V_OBJ_VAL(AS_OBJECT(bound)));
                     DISPATCH();
                 }
             }
+            SAVE();
             runtimeError(vm, "KeyError: dict has no key '%s'.", STRING_VAL(variable));
             goto _runtime_error;
         }
         default:
         {
-            MyMoObject *self = pop(vm);
             MyMoObject *variable = ReadObject();
             // Types without a registered builtin class (functions,
             // modules, ...) have no methods; fall through to the error.
-            MyMoObject *fn = vm->builtInClasses[type]
-                ? getEntry(vm, vm->builtInClasses[type]->methods, variable)
+            MyMoObject *fn = vm->builtInClasses[recv->type]
+                ? getEntry(vm, vm->builtInClasses[recv->type]->methods, variable)
                 : NULL;
             if (fn)
             {
-                // Allocate a fresh bound copy (see the OBJ_DICT case
-                // above for the rationale — sharing a single
-                // MyMoBuiltInFunction across receivers aliases the
-                // `self` field at the last writer).
+                // Fresh bound copy (see OBJ_DICT above).
                 MyMoBuiltInFunction *tmpl = AS_BUILTIN_FUNCTION(fn);
-                MyMoBuiltInFunction *bound = newBuiltInFunction(
-                    vm, tmpl->name, tmpl->function, fn->type);
-                bound->self = self;
-                push(vm, AS_OBJECT(bound));
+                MyMoBuiltInFunction *bound = newBuiltInFunction(vm, tmpl->name, tmpl->function, fn->type);
+                bound->self = recv;
+                lpop();
+                pushV(vm, V_OBJ_VAL(AS_OBJECT(bound)));
                 DISPATCH();
             }
-            runtimeError(vm, "AttributeError: %s has no attribute '%s'.", getType(self), STRING_VAL(variable));
+            SAVE();
+            runtimeError(vm, "AttributeError: %s has no attribute '%s'.", getType(recv), STRING_VAL(variable));
             goto _runtime_error;
         }
         }
+#undef GETP_FOUND
     }
     OP_OGETP:
     {
@@ -2427,15 +2382,15 @@ int runMVM(MVM *vm)
         // For instances / classes / modules / etc. it falls back to
         // the regular OP_GETP path — `?.` is not a blanket "make all
         // errors disappear" operator.
-        MyMoObject *recv = peek(vm, 0);
-        if (IS_NIL(recv))
+        Value recvV = lpeek(0);
+        if (valueIsNil(recvV))
         {
             ReadObject(); // skip property name
-            pop(vm);      // drop the Nil receiver
-            pushV(vm, V_NIL_VAL);
+            lpop();       // drop the Nil receiver
+            lpush(V_NIL_VAL);
             DISPATCH();
         }
-        if (recv->type == OBJ_DICT)
+        if (V_IS_OBJ_TYPE(recvV, OBJ_DICT))
         {
             // Mirror OP_GETP's dict lookup chain: key first, then
             // built-in method fallback (with a fresh bound copy so
@@ -2444,13 +2399,13 @@ int runMVM(MVM *vm)
             // raising. Matters for chains like `dict?.get(...)` —
             // the `?.` shouldn't suppress method dispatch, only
             // suppress the "missing" error.
-            MyMoDict *dict = AS_DICT(recv);
+            MyMoDict *dict = AS_DICT(V_AS_OBJ(recvV));
             MyMoObject *variable = ReadObject();
-            MyMoObject *value = getEntry(vm, dict, variable);
-            if (value)
+            Value value;
+            if (getEntryV(dict, variable, &value))
             {
-                pop(vm);
-                push(vm, value);
+                lpop();
+                lpush(value);
                 DISPATCH();
             }
             if (vm->builtInClasses[OBJ_DICT])
@@ -2458,17 +2413,17 @@ int runMVM(MVM *vm)
                 MyMoObject *fn = getEntry(vm, vm->builtInClasses[OBJ_DICT]->methods, variable);
                 if (fn)
                 {
-                    MyMoObject *self = pop(vm);
                     MyMoBuiltInFunction *tmpl = AS_BUILTIN_FUNCTION(fn);
                     MyMoBuiltInFunction *bound = newBuiltInFunction(
                         vm, tmpl->name, tmpl->function, fn->type);
-                    bound->self = self;
-                    push(vm, AS_OBJECT(bound));
+                    bound->self = AS_OBJECT(dict);
+                    lpop();
+                    lpush(V_OBJ_VAL(AS_OBJECT(bound)));
                     DISPATCH();
                 }
             }
-            pop(vm);
-            pushV(vm, V_NIL_VAL);
+            lpop();
+            lpush(V_NIL_VAL);
             DISPATCH();
         }
         goto OP_GETP;

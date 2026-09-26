@@ -174,6 +174,7 @@ void parsePrecedence(Compiler *compiler, Precedence precedence)
         return;
     }
     bool canAssign = precedence <= PREC_ASSIGNMENT;
+    int leftStart = currentChunk(compiler)->count;
     prefixRule(compiler, canAssign);
     if (compiler->flags.tuple)
     {
@@ -184,6 +185,7 @@ void parsePrecedence(Compiler *compiler, Precedence precedence)
     {
         advanceToken(compiler);
         ParseFn infixRule = getRule(compiler->parser->previous.type)->infix;
+        compiler->infixLeftStart = leftStart;
         infixRule(compiler, canAssign);
     }
     if (canAssign && matchToken(compiler, EQUAL))
@@ -215,6 +217,7 @@ Compiler *initCompiler(MVM *vm, Parser *parser, FunctionType type)
     compiler->loop = NULL;
     compiler->tryDepth = 0;
     compiler->lastWideTarget = -1;
+    compiler->infixLeftStart = 0;
     compiler->flags.cl_fn = false;
     compiler->flags.dontSetVar = 0;
     compiler->flags.pithru = 0;
