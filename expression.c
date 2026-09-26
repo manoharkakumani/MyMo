@@ -858,9 +858,30 @@ void call(Compiler *compiler, bool canAssign)
     compiler->flags.argv--;
 }
 
+// The arithmetic opcode for a compound assignment token (`+=` -> OP_ADD),
+// or -1.
+static int compoundAssignOp(TokenType type)
+{
+    switch (type)
+    {
+    case EPLUS: return OP_ADD;
+    case EMINUS: return OP_SUB;
+    case ESTAR: return OP_MUL;
+    case ESLASH: return OP_DIV;
+    case EDSTAR: return OP_POW;
+    case EDSLASH: return OP_IDIV;
+    case EPERCENT: return OP_MOD;
+    case EVBAR: return OP_BOR;
+    case EAMPER: return OP_BAND;
+    case ECAP: return OP_BXOR;
+    case EDLESS: return OP_LSFT;
+    case EDGREATER: return OP_RSFT;
+    default: return -1;
+    }
+}
+
 void subScript(Compiler *compiler, bool canAssign)
 {
-    UNUSED(canAssign);
     compiler->flags.dontSetVar++;
     if (matchToken(compiler, COLON))
     {
@@ -910,9 +931,19 @@ void subScript(Compiler *compiler, bool canAssign)
         expression(compiler);
         if (matchToken(compiler, RSQB))
         {
+            int op = compoundAssignOp(compiler->parser->current.type);
             if (matchToken(compiler, EQUAL))
             {
                 expression(compiler);
+                emitByte(compiler, OP_SETSUBSCR);
+            }
+            else if (op >= 0 && canAssign)
+            {
+                // obj[key] op= value
+                advanceToken(compiler);
+                emitByte(compiler, OP_SUBSCRK);
+                expression(compiler);
+                emitBytes(compiler, (u8)op, 1);
                 emitByte(compiler, OP_SETSUBSCR);
             }
             else
@@ -946,14 +977,24 @@ endSS:
     return;
 }
 
-// Forward declaration — defined below.
-static void listComprehension(Compiler *compiler, const char *exprText, int exprLen);
+// Comprehensions (defined below): [x for ...] and {k: v for ...}.
+typedef struct
+{
+    bool isDict;
+    const char *keyText; // dict only
+    int keyLen;
+    const char *valueText;
+    int valueLen;
+    u32 result; // hidden local holding the list/dict being built
+} Comprehension;
+static void comprehension(Compiler *compiler, Comprehension *comp, TokenType closer);
 
 void list(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);
     compiler->flags.dontSetVar++;
     u32 count = 0;
+    int pieces = 0; // full 255-element pieces already emitted
     compiler->flags.list++;
     // Same position tracking as grouping() — list patterns `[a, b, c]`
     // also bind by index in case-arm context.
@@ -989,8 +1030,8 @@ void list(Compiler *compiler, bool canAssign)
             // via a sub-parser. The constants it added remain in
             // the pool but they're harmless (just unreachable).
             compiler->function->chunk->count = savedChunkCount;
-            int exprLen = (int)(exprEnd - exprStart);
-            listComprehension(compiler, exprStart, exprLen);
+            Comprehension comp = {.isDict = false, .valueText = exprStart, .valueLen = (int)(exprEnd - exprStart)};
+            comprehension(compiler, &comp, RSQB);
             if (trackPos) compiler->flags.casePatternDepth--;
             compiler->flags.list--;
             compiler->flags.dontSetVar--;
@@ -1007,6 +1048,15 @@ void list(Compiler *compiler, bool canAssign)
             {
                 break;
             }
+            if (count == 255)
+            {
+                // OP_LIST takes a byte count: build long literals in
+                // 255-element pieces joined with +.
+                emitBytes(compiler, OP_LIST, 255);
+                if (pieces++)
+                    emitBytes(compiler, OP_ADD, 0);
+                count = 0;
+            }
             expression(compiler);
             skipNewLines(compiler);
             count++;
@@ -1017,89 +1067,23 @@ void list(Compiler *compiler, bool canAssign)
     }
     consumeToken(compiler, RSQB, "Expected closing ']'");
     emitBytes(compiler, OP_LIST, count);
+    if (pieces)
+        emitBytes(compiler, OP_ADD, 0);
     if (trackPos) compiler->flags.casePatternDepth--;
     compiler->flags.list--;
     compiler->flags.dontSetVar--;
 }
 
-// List comprehension: `[EXPR for VAR in ITER (if COND)?]`.
-// Already at the `for` token. Caller has captured EXPR's source text
-// for re-emission and rewound chunk->count. Builds bytecode for:
-//
-//   __lc_result = []
-//   for VAR in ITER:
-//       if COND:
-//           __lc_result.append(EXPR)
-//   __lc_result  // leaves on stack as the expression's value
-//
-// VAR is a real local (uses whatever slot logic OP_SETV resolves);
-// __lc_result is a hidden local with a name outside the identifier
-// alphabet so it can never collide with user code.
-static void listComprehension(Compiler *compiler, const char *exprText, int exprLen)
+// Compile a snippet of source text (a comprehension's element
+// expression) as an expression at the current position, by swapping in
+// a lexer over it, like f-string interpolation does.
+static void compileSnippet(Compiler *compiler, const char *text, int len)
 {
     MVM *vm = compiler->parser->vm;
-    // Hidden-local name for the accumulator. `<` is not an identifier
-    // start char in MyMo, so this can never collide with user code.
-    // Nested comprehensions need distinct names, so we suffix with a
-    // monotonically increasing counter.
-    static int lc_counter = 0;
-    char lcBuf[32];
-    int lcLen = snprintf(lcBuf, sizeof(lcBuf), "<lc_result_%d>", lc_counter++);
-    Token lcTok;
-    lcTok.token = lcBuf;
-    lcTok.length = lcLen;
-    u32 lcName = identifierConstant(compiler, &lcTok);
-
-    // result = []
-    emitBytes(compiler, OP_LIST, 0);
-    emitSetV(compiler, lcName);
-    emitByte(compiler, OP_POP);
-
-    // Consume `for VAR in`.
-    consumeToken(compiler, FOR, "expected 'for' in list comprehension");
-    consumeToken(compiler, NAME, "expected an iterator name");
-    u32 varName = identifierConstant(compiler, &compiler->parser->previous);
-    consumeToken(compiler, IN, "expected 'in' after iterator name");
-
-    // Iterable expression. Use a precedence above PREC_ASSIGNMENT
-    // so a trailing `if cond` (the filter clause) is left for us
-    // to consume — otherwise IF's ternary infix rule would try to
-    // parse `iter if cond else <expected>` and demand an `else`.
-    parsePrecedence(compiler, PREC_OR);
-    emitByte(compiler, OP_GETI);
-    Loop loop;
-    startLoop(compiler, &loop);
-    compiler->loop->loopJump = emitJump(compiler, OP_ITER);
-    emitSetV(compiler, varName);
-    emitByte(compiler, OP_POP);
-
-    // Optional `if COND` filter.
-    int condJump = -1;
-    if (matchToken(compiler, IF))
-    {
-        expression(compiler);
-        condJump = emitJump(compiler, OP_JIF);
-        emitByte(compiler, OP_POP); // pop the condition's True
-    }
-
-    // result.append(EXPR) — OP_GETP now allocates a fresh bound
-    // method per lookup, so nested comprehensions no longer alias
-    // the same `self`.
-    emitGetV(compiler, lcName);
-    Token appendTok;
-    appendTok.token = "append";
-    appendTok.length = 6;
-    u32 appendName = identifierConstant(compiler, &appendTok);
-    emitConstOp(compiler, OP_GETP, appendName);
-
-    // Sub-parse the saved expression text — same swap-and-restore
-    // pattern as f-string interpolations. The new lexer reads from
-    // a heap buffer terminated by `\n` so it produces a clean
-    // NEWLINE after the expression.
-    char *buf = New(char, exprLen + 2);
-    memcpy(buf, exprText, exprLen);
-    buf[exprLen] = '\n';
-    buf[exprLen + 1] = '\0';
+    char *buf = New(char, len + 2);
+    memcpy(buf, text, len);
+    buf[len] = '\n';
+    buf[len + 1] = '\0';
     Lexer *outerLexer = compiler->parser->lexer;
     Token outerCurrent = compiler->parser->current;
     Token outerPrevious = compiler->parser->previous;
@@ -1112,38 +1096,114 @@ static void listComprehension(Compiler *compiler, const char *exprText, int expr
     compiler->parser->lexer = outerLexer;
     compiler->parser->current = outerCurrent;
     compiler->parser->previous = outerPrevious;
+}
 
-    emitBytes(compiler, OP_CALL, 1);
-    emitByte(compiler, OP_POP); // discard append's return value
-
-    if (condJump >= 0)
+// Add one element to the result: result.append(value) or
+// result[key] = value.
+static void comprehensionBody(Compiler *compiler, Comprehension *comp)
+{
+    emitGetV(compiler, comp->result);
+    if (comp->isDict)
     {
-        int afterAppend = emitJump(compiler, OP_JMP);
-        patchJump(compiler, condJump);
-        emitByte(compiler, OP_POP); // pop the condition's False
-        patchJump(compiler, afterAppend);
+        compileSnippet(compiler, comp->keyText, comp->keyLen);
+        compileSnippet(compiler, comp->valueText, comp->valueLen);
+        emitByte(compiler, OP_SETSUBSCR);
+        emitByte(compiler, OP_POP);
+        return;
+    }
+    Token appendTok = {.token = "append", .length = 6};
+    emitConstOp(compiler, OP_GETP, identifierConstant(compiler, &appendTok));
+    compileSnippet(compiler, comp->valueText, comp->valueLen);
+    emitBytes(compiler, OP_CALL, 1);
+    emitByte(compiler, OP_POP); // append's return value
+}
+
+// One `for NAMES in ITER (if COND)*` clause, then either the next clause
+// or the body. Loops nest like the equivalent for statements.
+static void comprehensionClause(Compiler *compiler, Comprehension *comp)
+{
+    consumeToken(compiler, FOR, "expected 'for' in comprehension");
+    Token names[16];
+    int n = parseNameList(compiler, names, 16);
+    consumeToken(compiler, IN, "expected 'in' after the loop variable");
+    // Parse above the ternary so a trailing `if COND` stays a filter.
+    parsePrecedence(compiler, PREC_OR);
+    emitByte(compiler, OP_GETI);
+    Loop loop;
+    startLoop(compiler, &loop);
+    loop.isFor = true;
+    compiler->loop->loopJump = emitJump(compiler, OP_ITER);
+    if (n == 1)
+    {
+        emitStoreName(compiler, &names[0]);
+        emitByte(compiler, OP_POP);
+    }
+    else
+    {
+        emitBytes(compiler, OP_UNPACK, (u8)n);
+        storeUnpacked(compiler, names, n);
     }
 
+    // Filters: each false condition skips to the next iteration.
+    int condJumps[16];
+    int conds = 0;
+    while (matchToken(compiler, IF))
+    {
+        parsePrecedence(compiler, PREC_OR);
+        if (conds == 16)
+        {
+            error(compiler, "too many 'if' filters in one comprehension clause.");
+            break;
+        }
+        condJumps[conds++] = emitJump(compiler, OP_JIF);
+        emitByte(compiler, OP_POP); // the true condition
+    }
+
+    if (checkToken(compiler, FOR))
+        comprehensionClause(compiler, comp);
+    else
+        comprehensionBody(compiler, comp);
+
+    if (conds)
+    {
+        int next = emitJump(compiler, OP_JMP);
+        for (int i = 0; i < conds; i++)
+            patchJump(compiler, condJumps[i]);
+        emitByte(compiler, OP_POP); // the false condition
+        patchJump(compiler, next);
+    }
     emitLoop(compiler, compiler->loop->loopStart);
-    int Jump = emitJump(compiler, OP_JMP);
     compiler->loop = loop.enclosing;
     patchJump(compiler, loop.loopJump);
-    emitByte(compiler, OP_POP); // pop the iterator
-    patchJump(compiler, Jump);
-    int breaksCount = loop.breaksCount;
-    while (breaksCount)
-    {
-        breaksCount--;
-        patchJump(compiler, loop.breakJumps[breaksCount]);
-    }
+    emitByte(compiler, OP_POP); // the iterator
     if (loop.breaksCapacity)
-    {
         FreeArray(compiler->parser->vm, int, loop.breakJumps, loop.breaksCapacity);
-    }
+}
 
-    // Push the accumulated result as the expression's value.
-    emitGetV(compiler, lcName);
-    consumeToken(compiler, RSQB, "Expected closing ']' after comprehension");
+// [EXPR for ... ] / {KEY: VALUE for ...}. We're at the first `for`; the
+// caller captured the element's source text and discarded its code.
+// Builds:
+//     <result> = [] / {}
+//     for ...: (if ...:) <result>.append(EXPR) / <result>[KEY] = VALUE
+//     <result>                       (left on the stack; the name is deleted)
+// The hidden name starts with `<`, so it can't collide with user names.
+static void comprehension(Compiler *compiler, Comprehension *comp, TokenType closer)
+{
+    static int counter = 0;
+    char nameBuf[32];
+    Token nameTok = {.token = nameBuf};
+    nameTok.length = snprintf(nameBuf, sizeof(nameBuf), "<comp_%d>", counter++);
+    comp->result = identifierConstant(compiler, &nameTok);
+
+    emitBytes(compiler, comp->isDict ? OP_DICT : OP_LIST, 0);
+    emitSetV(compiler, comp->result);
+    emitByte(compiler, OP_POP);
+    comprehensionClause(compiler, comp);
+    emitGetV(compiler, comp->result);
+    emitConstOp(compiler, OP_DELV, comp->result);
+    skipNewLines(compiler);
+    consumeToken(compiler, closer, closer == RSQB ? "Expected closing ']' after comprehension"
+                                                  : "Expected closing '}' after comprehension");
 }
 
 void dictionary(Compiler *compiler, bool canAssign)
@@ -1160,15 +1220,36 @@ void dictionary(Compiler *compiler, bool canAssign)
             {
                 break;
             }
+            const char *keyStart = compiler->parser->current.token;
+            int savedChunkCount = compiler->function->chunk->count;
             expression(compiler);
+            const char *keyEnd = compiler->parser->current.token;
             skipNewLines(compiler);
             consumeToken(compiler, COLON, "Expected ':'");
             skipNewLines(compiler);
+            const char *valueStart = compiler->parser->current.token;
             compiler->flags.dict++;
             expression(compiler);
             compiler->flags.dict--;
+            const char *valueEnd = compiler->parser->current.token;
             skipNewLines(compiler);
+            if (count == 0 && checkToken(compiler, FOR))
+            {
+                // {KEY: VALUE for ...}: recompiled inside the loop.
+                compiler->function->chunk->count = savedChunkCount;
+                Comprehension comp = {.isDict = true,
+                                      .keyText = keyStart, .keyLen = (int)(keyEnd - keyStart),
+                                      .valueText = valueStart, .valueLen = (int)(valueEnd - valueStart)};
+                comprehension(compiler, &comp, RBRACE);
+                compiler->flags.dontSetVar--;
+                return;
+            }
             count++;
+            if (count > 255)
+            {
+                error(compiler, "Too many entries in one dict literal (at most 255); build it in steps.");
+                count = 255;
+            }
         } while (matchToken(compiler, COMMA));
     }
     consumeToken(compiler, RBRACE, "Expected closing '}'");

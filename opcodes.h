@@ -89,9 +89,13 @@ typedef enum
     //                            decorators' result) and bind the original
     OP_METV,
     //   OP_IN                    [item, container] -> [bool] (`in`)
-    OP_IN
+    OP_IN,
+    //   OP_SUBSCRK               [obj, key] -> [obj, key, obj[key]] (obj[key] op= v)
+    OP_SUBSCRK,
+    //   OP_DELSUBSCR             [obj, key] -> [] (del obj[key])
+    OP_DELSUBSCR
 } OpCode;
 
 // Number of opcodes (keep in sync with the last enum entry).
-#define OP_COUNT (OP_IN + 1)
+#define OP_COUNT (OP_DELSUBSCR + 1)
 #endif

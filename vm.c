@@ -1,6 +1,8 @@
 #include "common.h"
 #include "vm.h"
 #include "repr.h"
+#include <limits.h>
+#include "include/mymo.h"
 #include "stack.h"
 #include "operations.h"
 #include "datatypes/datatypes.h"
@@ -681,13 +683,17 @@ int runMVM(MVM *vm)
         // for now (typed exceptions land later), and trigger the
         // unwind path. We sync ip first so runtimeError reports the
         // correct line for any traceback printed below.
-        MyMoObject *value = pop(vm);
+        Value raised = lpeek(0);
+        SAVE();
+        // The message printed if nothing catches it: the value's str().
+        Value text = valueToStr(vm, raised);
+        const char *message = V_IS_EMPTY(text) ? "RaiseError" : AS_STRING(V_AS_OBJ(text))->value;
+        lpop();
         SAVE();
         // Stash the raw object on the fiber so a `catch e:` binds
-        // exactly what was raised; if it propagates past all
-        // handlers, runtimeError will print it as a message.
-        vm->fiber->exception = value;
-        runtimeError(vm, "RaiseError");
+        // exactly what was raised.
+        vm->fiber->exception = valueToBoxedObject(vm, raised);
+        runtimeError(vm, "%s", message);
         goto _runtime_error;
     }
     OP_CONST:
@@ -765,7 +771,69 @@ int runMVM(MVM *vm)
         lpush(V_OBJ_VAL(AS_OBJECT(dict)));
         DISPATCH();
     }
+    OP_SUBSCRK:
+    {
+        // obj[key] op= v reads obj[key] but keeps obj and key for the
+        // OP_SETSUBSCR that follows: duplicate them, then subscript.
+        Value key = lpeek(0);
+        Value obj = lpeek(1);
+        lpush(obj);
+        lpush(key);
+        goto subscr;
+    }
+    OP_DELSUBSCR:
+    {
+        // del obj[key]: [obj, key] -> []
+        Value key = lpeek(0);
+        Value target = lpeek(1);
+        SAVE();
+        if (V_IS_OBJ_TYPE(target, OBJ_DICT))
+        {
+            if (!deleteEntry(vm, AS_DICT(V_AS_OBJ(target)), dictLookupKey(vm, key)))
+            {
+                Value text = valueToRepr(vm, key);
+                runtimeError(vm, "KeyError: %s", V_IS_EMPTY(text) ? "?" : AS_STRING(V_AS_OBJ(text))->value);
+                goto _runtime_error;
+            }
+        }
+        else if (V_IS_OBJ_TYPE(target, OBJ_LIST))
+        {
+            ValueArray *values = &AS_LIST(V_AS_OBJ(target))->values;
+            long i = valueLooksLikeInt(key) ? valueToLong(key) : LONG_MIN;
+            if (i != LONG_MIN && i < 0)
+                i += values->count;
+            if (i < 0 || i >= values->count)
+            {
+                runtimeError(vm, valueLooksLikeInt(key) ? "IndexError: list assignment index out of range"
+                                                        : "TypeError: list indices must be integers");
+                goto _runtime_error;
+            }
+            memmove(&values->values[i], &values->values[i + 1], sizeof(Value) * (size_t)(values->count - i - 1));
+            values->count--;
+        }
+        else if (V_IS_OBJ_TYPE(target, OBJ_INSTANCE))
+        {
+            // del obj[key] calls obj.__delitem__(key); discard its result.
+            MyMoObject *method = getMethod(vm, V_AS_OBJ(target), "__delitem__");
+            if (IS_EMPTY(method))
+            {
+                runtimeError(vm, "TypeError: %s does not support item deletion (no __delitem__)", valueTypeName(target));
+                goto _runtime_error;
+            }
+            Value args[2] = {target, key};
+            if (mymo_call(vm, V_OBJ_VAL(method), 2, args, NULL) != MYMO_OK)
+                goto _runtime_error;
+        }
+        else
+        {
+            runtimeError(vm, "TypeError: %s does not support item deletion", valueTypeName(target));
+            goto _runtime_error;
+        }
+        sp -= 2;
+        DISPATCH();
+    }
     OP_SUBSCR:
+    subscr:
     {
         // [object, index] -> [object[index]]
         Value index = lpeek(0);
@@ -1939,10 +2007,11 @@ int runMVM(MVM *vm)
     OP_DELV:
     {
         MyMoObject *variable = ReadObject();
-        if (deleteEntry(vm, &frame->locals, variable))
+        if (deleteEntry(vm, &frame->locals, variable) || deleteEntry(vm, &vm->globals, variable))
         {
             DISPATCH();
         }
+        SAVE();
         runtimeError(vm, "Name Error: Undefined variable '%s'.", AS_STRING(variable)->value);
         goto _runtime_error;
     }
@@ -2597,7 +2666,18 @@ int runMVM(MVM *vm)
         DISPATCH();
     }
     OP_DELP:
+    {
+        // del obj.name: [obj] -> []
+        MyMoObject *name = ReadObject();
+        Value target = lpop();
+        if (!V_IS_OBJ_TYPE(target, OBJ_INSTANCE) || !deleteEntry(vm, AS_INSTANCE(V_AS_OBJ(target))->fields, name))
+        {
+            SAVE();
+            runtimeError(vm, "AttributeError: %s has no attribute '%s'", valueTypeName(target), AS_STRING(name)->value);
+            goto _runtime_error;
+        }
         DISPATCH();
+    }
     OP_USE:
     {
         MyMoString *modulePathUse = AS_STRING(ReadObject());

@@ -4,7 +4,7 @@
 
 #include "common.h"
 
-#define KEYWORDS 32
+#define KEYWORDS 33
 
 typedef enum
 {
@@ -76,6 +76,7 @@ typedef enum
     // keywords
     AND,
     AS,
+    ASSERT,
     BREAK,
     CASE,
     CLASS,

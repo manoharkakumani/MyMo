@@ -152,6 +152,7 @@ ParseRule rules[] = {
     [FROM] = {NULL, NULL, PREC_NONE},
     [PASS] = {NULL, NULL, PREC_NONE},
     [DEL] = {NULL, NULL, PREC_NONE},
+    [ASSERT] = {NULL, NULL, PREC_NONE},
     [ERROR] = {NULL, NULL, PREC_NONE},
     [END] = {NULL, NULL, PREC_NONE},
     [YIELD] = {yeild, NULL, PREC_NONE},

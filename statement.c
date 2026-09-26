@@ -124,7 +124,7 @@ static bool isUnpackAssignment(Compiler *compiler)
 }
 
 // Parse `NAME (, NAME)*` into `names`; returns the count.
-static int parseNameList(Compiler *compiler, Token *names, int max)
+int parseNameList(Compiler *compiler, Token *names, int max)
 {
     int n = 0;
     do
@@ -142,7 +142,7 @@ static int parseNameList(Compiler *compiler, Token *names, int max)
 
 // After OP_UNPACK n pushed the elements in order, store them into the
 // names (last element is on top).
-static void storeUnpacked(Compiler *compiler, Token *names, int n)
+void storeUnpacked(Compiler *compiler, Token *names, int n)
 {
     for (int i = n - 1; i >= 0; i--)
     {
@@ -232,22 +232,73 @@ void returnStatement(Compiler *compiler)
     }
 }
 
+// del name | del target.attr | del target[key]   (target may chain:
+// del a.b[0].c)
 void deleteStatement(Compiler *compiler)
 {
-    if (!matchToken(compiler, NAME))
+    consumeToken(compiler, NAME, "expected a name after 'del'.");
+    if (!checkToken(compiler, DOT) && !checkToken(compiler, LSQB))
     {
-        errorAtCurrent(compiler, "expected variable");
+        emitConstOp(compiler, OP_DELV, identifierConstant(compiler, &compiler->parser->previous));
+        return;
     }
-    uint name = identifierConstant(compiler, &compiler->parser->previous);
-    if (matchToken(compiler, DOT))
+    compiler->flags.dontSetVar++;
+    variable(compiler, false);
+    for (;;)
     {
-        emitConstOp(compiler, OP_GETP, name);
-        consumeToken(compiler, NAME, "expected property name after '.'.");
-        name = identifierConstant(compiler, &compiler->parser->previous);
-        emitBytes(compiler, OP_DELP, name);
+        if (matchToken(compiler, DOT))
+        {
+            consumeToken(compiler, NAME, "expected a property name after '.'.");
+            uint name = identifierConstant(compiler, &compiler->parser->previous);
+            if (!checkToken(compiler, DOT) && !checkToken(compiler, LSQB))
+            {
+                emitConstOp(compiler, OP_DELP, name);
+                break;
+            }
+            emitConstOp(compiler, OP_GETP, name);
+        }
+        else if (matchToken(compiler, LSQB))
+        {
+            expression(compiler);
+            consumeToken(compiler, RSQB, "expected ']' after the key.");
+            if (!checkToken(compiler, DOT) && !checkToken(compiler, LSQB))
+            {
+                emitByte(compiler, OP_DELSUBSCR);
+                break;
+            }
+            emitByte(compiler, OP_SUBSCR);
+        }
+        else
+        {
+            errorAtCurrent(compiler, "expected '.' or '[' in del target.");
+            break;
+        }
+    }
+    compiler->flags.dontSetVar--;
+}
+
+// assert cond[, message] — raises "AssertionError[: message]" when cond
+// is falsy. The message is only evaluated on failure.
+void assertStatement(Compiler *compiler)
+{
+    parsePrecedence(compiler, PREC_ASSIGNMENT); // not expression(): `c, msg` isn't a tuple
+    int failJump = emitJump(compiler, OP_JIF);
+    emitByte(compiler, OP_POP);
+    int endJump = emitJump(compiler, OP_JMP);
+    patchJump(compiler, failJump);
+    emitByte(compiler, OP_POP);
+    MVM *vm = compiler->parser->vm;
+    if (matchToken(compiler, COMMA))
+    {
+        emitConstant(compiler, NEW_STRING(vm, "AssertionError: ", 16));
+        expression(compiler);
+        emitByte(compiler, OP_TOSTRING);
+        emitBytes(compiler, OP_ADD, 0);
     }
     else
-        emitConstOp(compiler, OP_DELV, name);
+        emitConstant(compiler, NEW_STRING(vm, "AssertionError", 14));
+    emitByte(compiler, OP_RAISE);
+    patchJump(compiler, endJump);
 }
 
 void block(Compiler *compiler, size_t indent)
@@ -705,6 +756,10 @@ void simpleStatement(Compiler *compiler)
     else if (matchToken(compiler, DEL))
     {
         deleteStatement(compiler);
+    }
+    else if (matchToken(compiler, ASSERT))
+    {
+        assertStatement(compiler);
     }
     else if (matchToken(compiler, PASS))
     {

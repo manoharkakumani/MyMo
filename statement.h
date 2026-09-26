@@ -27,6 +27,12 @@ void raiseStatement(Compiler *compiler);
 void breakStatement(Compiler *compiler);
 void continueStatement(Compiler *compiler);
 void deleteStatement(Compiler *compiler);
+void assertStatement(Compiler *compiler);
+
+// `NAME (, NAME)*` target lists (for loops, comprehensions, a, b = ...):
+// parse up to `max` names; after OP_UNPACK n, store them (pops all n).
+int parseNameList(Compiler *compiler, Token *names, int max);
+void storeUnpacked(Compiler *compiler, Token *names, int n);
 
 void functionStatement(Compiler *compiler);
 void decoratedStatement(Compiler *compiler);
