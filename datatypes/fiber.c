@@ -2,6 +2,7 @@
 #include "../vm.h"
 #include "nil.h"
 #include "bool.h"
+#include "../gc.h"
 
 MyMoFiber *newFiber(MVM *vm, MyMoFunction *function)
 {
@@ -25,6 +26,8 @@ MyMoFiber *newFiber(MVM *vm, MyMoFunction *function)
     CallFrame *frame = New(CallFrame, 1);
     frame->function = function;
     frame->captured = false;
+    frame->gcEpoch = 0;
+    frame->nextRetired = NULL;
     initDict(&frame->locals);
     fiber->callFrames[0] = frame;
     if (function)
@@ -38,8 +41,16 @@ void freeFiber(MVM *vm, MyMoFiber *fiber)
 {
     for (size_t i = 0; i <= fiber->frameCount; i++)
     {
-        freeDict(vm, &fiber->callFrames[i]->locals);
-        free(fiber->callFrames[i]);
+        CallFrame *frame = fiber->callFrames[i];
+        // A closure may still reference a captured frame; the GC frees it
+        // once nothing does.
+        if (frame->captured)
+        {
+            retireFrame(vm, frame);
+            continue;
+        }
+        freeDict(vm, &frame->locals);
+        free(frame);
     }
     // Drain the free-frame pool. While on the free list, frame->function
     // holds the next-free pointer; the locals dict is empty (already

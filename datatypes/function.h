@@ -71,6 +71,10 @@ struct CallFrame {
     // outlives its call (never recycled into the frame pool) because the
     // closure still reads its locals/args after it returns.
     bool captured;
+    // GC bookkeeping: epoch of the last collection that reached this
+    // frame, and the link on vm->retiredFrames once it left the stack.
+    u32 gcEpoch;
+    struct CallFrame *nextRetired;
     Value args[CALLFRAME_ARGS_INLINE];
 };
 

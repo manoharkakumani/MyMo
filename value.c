@@ -88,12 +88,14 @@ bool valuesEqual(Value a, Value b) {
     if (V_IS_NUMBER(a) && V_IS_NUMBER(b)) {
         return V_AS_NUMBER(a) == V_AS_NUMBER(b);
     }
-    // Mixed inline-int vs heap-MyMoInt comparison. Common during the
-    // 1.3-1.6 migration window where one operand is inline (literal or
-    // arithmetic result) and the other is heap (from a dict). After step
-    // 1.6 deletes MyMoInt this branch becomes dead.
+    // Mixed inline/heap numbers (heap ints/doubles still come from dicts,
+    // modules and a few arithmetic paths). Ints compare exactly as longs;
+    // any int/double mix compares numerically, so 0 == 0.0 like Python.
     if (valueLooksLikeInt(a) && valueLooksLikeInt(b)) {
         return valueToLong(a) == valueToLong(b);
+    }
+    if (valueLooksLikeNumber(a) && valueLooksLikeNumber(b)) {
+        return valueAsNumber(a) == valueAsNumber(b);
     }
     // Same migration story for nil/bool: one side may be the inline
     // V_*_VAL tag, the other may be a NilObject / TrueBool / FalseBool

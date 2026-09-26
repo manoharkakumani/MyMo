@@ -99,6 +99,10 @@ void breakStatement(Compiler *compiler)
         loop->breaksCapacity = ResizeCapacity(oldCapacity);
         loop->breakJumps = ResizeArray(compiler->parser->vm, int, loop->breakJumps, oldCapacity, loop->breaksCapacity);
     }
+    for (int i = compiler->tryDepth; i > loop->tryDepth; i--)
+        emitByte(compiler, OP_ENDTRY);
+    if (loop->isFor)
+        emitByte(compiler, OP_POP); // the iterator
     compiler->loop->breakJumps[compiler->loop->breaksCount] = emitJump(compiler, OP_JMP);
     compiler->loop->breaksCount++;
     return;
@@ -111,6 +115,8 @@ void continueStatement(Compiler *compiler)
         error(compiler, "cannot use 'continue' outside of a loop.");
         return;
     }
+    for (int i = compiler->tryDepth; i > compiler->loop->tryDepth; i--)
+        emitByte(compiler, OP_ENDTRY);
     emitLoop(compiler, compiler->loop->loopStart);
     return;
 }
@@ -126,6 +132,12 @@ void returnStatement(Compiler *compiler)
     {
         error(compiler, "cannot return from an initializer.");
     }
+    // Drop the iterators of every enclosing `for` in this function so
+    // OP_FRET finds the callee slot where it expects it. The loop
+    // variable was already stored, so the return expression can use it.
+    for (Loop *loop = compiler->loop; loop; loop = loop->enclosing)
+        if (loop->isFor)
+            emitByte(compiler, OP_POP);
     if (checkToken(compiler, NEWLINE))
     {
         emitReturn(compiler);
@@ -234,10 +246,12 @@ void tryStatement(Compiler *compiler)
     advanceToken(compiler); // consume `try`
     consumeToken(compiler, COLON, "expected ':' after try");
     int tryJump = emitJump(compiler, OP_TRY);
+    compiler->tryDepth++;
     if (matchToken(compiler, NEWLINE))
         block(compiler, indent);
     else
         simpleStatement(compiler);
+    compiler->tryDepth--;
     emitByte(compiler, OP_ENDTRY);
     int afterCatch = emitJump(compiler, OP_JMP);
     patchJump(compiler, tryJump);
@@ -293,6 +307,8 @@ void startLoop(Compiler *compiler, Loop *loop)
     loop->breakJumps = NULL;
     loop->breaksCount = 0;
     loop->breaksCapacity = 0;
+    loop->tryDepth = compiler->tryDepth;
+    loop->isFor = false;
     compiler->loop = loop;
 }
 
@@ -308,6 +324,7 @@ void loopStatement(Compiler *compiler)
         expression(compiler);
         emitByte(compiler, OP_GETI);
         startLoop(compiler, &loop);
+        loop.isFor = true;
         compiler->loop->loopJump = emitJump(compiler, OP_ITER);
         emitSetV(compiler, name);
     }

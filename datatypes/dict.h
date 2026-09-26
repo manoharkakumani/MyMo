@@ -32,6 +32,11 @@ typedef struct MyMoDict
     // `i = i + 1` style hot loops where the same key is overwritten
     // millions of times. See OP_GETV/OP_SETV in vm.c.
     u32 modifyCount;
+    // Deleted slots still in the table. They keep probe chains intact but
+    // occupy space, so the resize check counts them; otherwise a dict with
+    // insert/delete churn fills with tombstones and findEntry never finds
+    // an empty slot (infinite probe loop).
+    int tombstones;
 } MyMoDict;
 
 MyMoDict *newDict(MVM *vm);

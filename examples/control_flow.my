@@ -1,0 +1,118 @@
+# Control flow edge cases: return/break/continue out of for loops and
+# try blocks, return inside case/cond, and Python-style % // ** and
+# numeric equality.
+fn inner():
+    try:
+        return 1
+    catch:
+        return 2
+
+try:
+    inner()
+    raise "outer still catches"
+catch e:
+    print("caught:", e)
+
+n = 0
+while True:
+    try:
+        n = n + 1
+        if n == 50:
+            break
+    catch:
+        pass
+print("broke at", n)
+
+hits = 0
+for i in [1, 2, 3]:
+    try:
+        for j in [1, 2, 3]:
+            try:
+                if j == 2:
+                    break
+                hits = hits + 1
+            catch:
+                pass
+        if i == 2:
+            continue
+    catch:
+        pass
+print("hits", hits)
+
+fn risky(k):
+    try:
+        if k == 3:
+            raise "k3"
+        return k
+    catch e:
+        return e
+
+out = []
+for k in [1, 2, 3, 4]:
+    out.append(risky(k))
+print(out)
+try:
+    raise "final"
+catch e:
+    print("final caught:", e)
+
+fn classify(n):
+    case n:
+        1:
+            return "one"
+        2, 3:
+            return "few"
+        _:
+            return "many"
+
+fn grade(s):
+    cond
+        s >= 90:
+            return "A"
+        True:
+            return "B"
+
+fn pat(t):
+    case t:
+        (1, _):
+            return "starts 1"
+        _:
+            return "other"
+
+fn deep(m):
+    for row in m:
+        for v in row:
+            while True:
+                if v > 4:
+                    return v
+                break
+    return 0
+
+out = []
+i = 0
+while i < 200:
+    out.append(classify(i % 5))
+    i = i + 1
+print(out[0], out[1], out[2], out[4], len(out))
+print(grade(95), grade(10), pat((1, 9)), pat((2, 2)), deep([[1, 2], [3, 7, 9]]))
+print(1 + len([classify(2), grade(1)]))
+
+print(4 % 2 == 0, 7 % 3, -7 % 3, 7 % -3, 7.5 % 2, type(4 % 2))
+print(-7 // 2, 7 // 2, 7.5 // 2, type(7 // 2))
+print(2 ** 10, type(2 ** 10), 2 ** 62, 2 ** 64, 2 ** -1, 3 ** 0)
+print(0 == 0.0, 1 == 1.0, 2 == 2.5, 7 / 2)
+
+fn first_even(xs):
+    for x in xs:
+        if x % 2 == 0:
+            return x
+    return -1
+
+total = 0
+i = 0
+while i < 1000:
+    total = total + first_even([1, 3, 4, 5])
+    i = i + 1
+print("total", total)
+a = [first_even([2]), first_even([1, 6]), 99]
+print(a)

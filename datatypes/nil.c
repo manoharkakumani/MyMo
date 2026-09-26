@@ -10,8 +10,13 @@ void printNil(MyMoObject *object)
     printf("Nil");
 }
 
+// Process-wide singletons, created once by the first VM (compile() spins
+// up extra VMs; re-creating them there would let freeing that VM free the
+// objects the main VM still uses).
 void nil(MVM *vm)
 {
+    if (NilObject != NULL)
+        return;
     NilObject = AllocateObject(vm, MyMoNil, OBJ_NIL);
     NilObject->value = false;
     EmptyObject = AllocateObject(vm, MyMoEmpty, OBJ_OBJECT);

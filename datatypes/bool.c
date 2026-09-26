@@ -21,6 +21,8 @@ void printBool(MyMoBool *boolean)
 
 void boolean(MVM *vm)
 {
+    if (TrueBool != NULL) // process-wide singletons; see nil()
+        return;
     FalseBool = AllocateObject(vm, MyMoBool, OBJ_BOOL);
     FalseBool->value = false;
     TrueBool = AllocateObject(vm, MyMoBool, OBJ_BOOL);

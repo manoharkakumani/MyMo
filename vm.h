@@ -25,6 +25,18 @@ struct vm
     MyMoObject *objects;
     u32 classCall;
     MyMoObject *wildcard;   // singleton for `_` in case-statement patterns
+    // Garbage collector state (gc.c).
+    MyMoFiber *rootFiber;       // the initial fiber; always a root
+    size_t objectCount;         // live objects on `objects`
+    size_t nextGC;              // collect once objectCount reaches this
+    size_t gcCount;             // collections so far
+    u32 gcEpoch;                // bumped per collection; marks CallFrames
+    int runDepth;               // nested runMVM depth; GC only runs at 1
+    bool gcStress;              // MYMO_GC_STRESS: collect at every safe point
+    CallFrame *retiredFrames;   // captured/module frames off the call stack
+    MyMoObject **grayStack;
+    int grayCount;
+    int grayCapacity;
 };
 
 typedef enum

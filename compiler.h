@@ -24,6 +24,11 @@ typedef struct Loop
     int *breakJumps;
     int breaksCount;
     int breaksCapacity;
+    int tryDepth; // compiler->tryDepth when the loop started
+    // A `for` keeps its iterator on the operand stack for the whole loop
+    // (popped at normal exit). break/return jump past that pop, so they
+    // must pop it themselves.
+    bool isFor;
     struct Loop *enclosing;
 } Loop;
 
@@ -69,6 +74,10 @@ typedef struct Compiler
     MyMoFunction *function;
     CompilerFlags flags;
     Loop *loop;
+    // `try` bodies currently open in this function. break/continue emit
+    // one OP_ENDTRY per try they jump out of, or the VM's handler stack
+    // would keep a stale entry (and overflow after 32).
+    int tryDepth;
 } Compiler;
 
 typedef enum

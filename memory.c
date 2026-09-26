@@ -31,7 +31,12 @@ void *reallocate(MVM *vm, void *pointer, size_t oldSize, size_t newSize)
 MyMoObject *allocateObject(MVM *vm, size_t size, MyMoObjectType type)
 {
     MyMoObject *object = (MyMoObject *)reallocate(vm, NULL, 0, size);
+    // Zero the whole object: the GC traces every pointer field, so a
+    // constructor that forgets one must leave NULL, not heap garbage.
+    // This also clears the header's refCount, used as the GC mark bit.
+    memset(object, 0, size);
     object->type = type;
+    vm->objectCount++;
     object->next = vm->objects;
     vm->objects = object;
     return object;
@@ -76,6 +81,27 @@ void freeObject(MVM *vm, MyMoObject *object)
         MyMoString *string = AS_STRING(object);
         FreeArray(vm, char, string->value, string->length + 1);
         Free(vm, MyMoString, object);
+        break;
+    }
+    case OBJ_TUPLE:
+    {
+        freeMyMoObjectArray(vm, &AS_TUPLE(object)->values);
+        Free(vm, MyMoTuple, object);
+        break;
+    }
+    case OBJ_ITER:
+    {
+        Free(vm, MyMoIter, object);
+        break;
+    }
+    case OBJ_CLOUSER:
+    {
+        Free(vm, MyMoClouser, object);
+        break;
+    }
+    case OBJ_WILDCARD:
+    {
+        Free(vm, MyMoObject, object);
         break;
     }
     case OBJ_LIST:
@@ -128,6 +154,7 @@ void freeObject(MVM *vm, MyMoObject *object)
     }
     case OBJ_CLASS:
     {
+        freeMyMoObjectArray(vm, &AS_CLASS(object)->superClasses);
         Free(vm, MyMoClass, AS_CLASS(object));
         break;
     }

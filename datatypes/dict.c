@@ -20,6 +20,7 @@ void initDict(MyMoDict *dict)
     dict->capacity = -1;
     dict->entries = NULL;
     dict->modifyCount = 0;
+    dict->tombstones = 0;
     dict->object.type = OBJ_DICT;
 }
 
@@ -108,6 +109,7 @@ void adjustCapacity(MVM *vm, MyMoDict *dict, int capacity)
     Entry *oldEntries = dict->entries;
     int oldCapacity = dict->capacity;
     dict->count = 0;
+    dict->tombstones = 0; // rehashing drops them
     dict->entries = entries;
     dict->capacity = capacity;
     for (int i = 0; i <= oldCapacity; i++)
@@ -131,13 +133,17 @@ bool setEntry(MVM *vm, MyMoDict *dict, MyMoObject *key, MyMoObject *value)
 
 bool setEntryV(MVM *vm, MyMoDict *dict, MyMoObject *key, Value value)
 {
-    if (dict->count + 1 > (dict->capacity + 1) * TABLE_MAX_LOAD)
+    if (dict->count + dict->tombstones + 1 > (dict->capacity + 1) * TABLE_MAX_LOAD)
     {
-        int capacity = ResizeCapacity(dict->capacity + 1) - 1;
+        // Mostly tombstones: rehash in place instead of growing.
+        bool mostlyDeleted = dict->count + 1 <= (dict->capacity + 1) * TABLE_MAX_LOAD / 2;
+        int capacity = mostlyDeleted ? dict->capacity : ResizeCapacity(dict->capacity + 1) - 1;
         adjustCapacity(vm, dict, capacity);
     }
     Entry *entry = findEntry(dict->entries, dict->capacity, key);
     bool isNewKey = entry->key == NULL;
+    if (isNewKey && !V_IS_NIL(entry->value))
+        dict->tombstones--; // reusing a deleted slot
     entry->key = key;
     entry->value = value;
     if (isNewKey)
@@ -160,6 +166,7 @@ bool deleteEntry(MVM *vm, MyMoDict *dict, MyMoObject *key)
     // Tombstone marker (anything not V_NIL_VAL). Use V_FALSE_VAL so the
     // probe loop stops looking once it can; any non-nil sentinel works.
     entry->value = V_FALSE_VAL;
+    dict->tombstones++;
     dict->modifyCount++;
     return true;
 }

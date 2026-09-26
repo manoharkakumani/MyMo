@@ -188,6 +188,20 @@ int disassembleInstruction(Chunk *chunk, int offset)
         printf("%-16s %4d argc=%d\n", "OP_INVOKE_GLOBAL", nameIdx, argc);
         return offset + 11;  // op + name + 8 IC + argc
     }
+    case OP_OGETP:
+        return constantInstruction("OP_OGETP", chunk, offset);
+    case OP_IS:
+        return byteInstruction("OP_IS", chunk, offset);
+    case OP_TOSTRING:
+        return simpleInstruction("OP_TOSTRING", offset);
+    case OP_LAPPEND:
+        return simpleInstruction("OP_LAPPEND", offset);
+    case OP_TRY:
+        return jumpInstruction("OP_TRY", 1, chunk, offset);
+    case OP_ENDTRY:
+        return simpleInstruction("OP_ENDTRY", offset);
+    case OP_RAISE:
+        return simpleInstruction("OP_RAISE", offset);
     default:
         printf("Unknown opcode %d\n", instruction);
         return offset + 1;

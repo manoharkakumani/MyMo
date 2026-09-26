@@ -4,6 +4,7 @@
 #include "operations.h"
 #include "datatypes/datatypes.h"
 #include "utils.h"
+#include "gc.h"
 #include "debug.h"
 #include "bytecode.h"   // IC_BYTES, IC_TAG_*
 #include "modules/modules.h"
@@ -17,12 +18,14 @@ MVM *initVM()
 {
     MVM *vm = New(MVM, 1);
     vm->objects = NULL;
+    initGC(vm);
     vm->currentModule = NULL;
     vm->currentClass = NULL;
     vm->objectClass = NULL;
     vm->classCall = 0;
     memset(vm->builtInClasses, 0, sizeof(vm->builtInClasses));
     vm->fiber = newFiber(vm, NULL);
+    vm->rootFiber = vm->fiber;
     initDict(&vm->globals);
     initDict(&vm->builtins);
     initDict(&vm->strings);
@@ -55,6 +58,8 @@ void freeVM(MVM *vm)
     freeDict(vm, &vm->modules);
     freeDict(vm, &vm->builtInModules);
     freeObjects(vm);
+    freeRetiredFrames(vm); // after freeObjects: freeFiber retires captured frames
+    free(vm->grayStack);
     free(vm);
 }
 
@@ -175,6 +180,15 @@ static MyMoObject *lookupEnclosing(MVM *vm, CallFrame *parent, MyMoObject *name)
     return NULL;
 }
 
+// An integer result: inline when it fits in 32 bits, else a heap int.
+// Returns the Value so the dispatch loop pushes it on its cached `sp`.
+static Value intResult(MVM *vm, long n)
+{
+    if (n >= INT32_MIN && n <= INT32_MAX)
+        return V_INT_VAL((int32_t)n);
+    return V_OBJ_VAL(NEW_INT(vm, n));
+}
+
 bool callFunction(MVM *vm, MyMoFunction *function, int argc)
 {
     if (function->argc != argc)
@@ -215,6 +229,8 @@ bool callFunction(MVM *vm, MyMoFunction *function, int argc)
         {
             frame = New(CallFrame, 1);
             initDict(&frame->locals);
+            frame->gcEpoch = 0;
+            frame->nextRetired = NULL;
         }
         frame->function = function;
         frame->captured = false;
@@ -453,6 +469,12 @@ int runMVM(MVM *vm)
 // also change across CALL/RET, so LOAD re-reads it.
 #define SAVE() do { vm->fiber->stack.count = (int)(sp - vm->fiber->stack.values); frame->ip = ip; } while (0)
 #define LOAD() do { frame = vm->fiber->callFrames[vm->fiber->frameCount]; ip = frame->ip; sp = vm->fiber->stack.values + vm->fiber->stack.count; } while (0)
+
+// GC safe point (see gc.c). Placed only where every live value is on a
+// fiber stack, in a frame or in a VM root — loop back-edges and call
+// entry — and skipped in nested runMVM calls, whose C callers may hold
+// objects in locals.
+#define GC_SAFEPOINT() do { if (vm->objectCount >= vm->nextGC && vm->runDepth == 1) { SAVE(); collectGarbage(vm); LOAD(); } } while (0)
 
 // runtimeError reads `frame->ip` to compute the source line, but
 // inside the dispatch loop `ip` is held in a register and only
@@ -1325,15 +1347,27 @@ int runMVM(MVM *vm)
             runtimeError(vm, "Operands must be numbers.");
             goto _runtime_error;
         }
-        double result = pow(NUMBER_VAL(a), NUMBER_VAL(b));
-        // if (isInteger(result))
-        // {
-        //     push(vm, NEW_INT(vm, (long)result));
-        // }
-        // else
+        if (IS_INT(a) && IS_INT(b) && INT_VAL(b) >= 0)
         {
-            push(vm, NEW_DOUBLE(vm, result));
+            // Exact integer power by squaring; fall back to double on
+            // overflow of a signed 64-bit long.
+            long base = INT_VAL(a), exp = INT_VAL(b), acc = 1;
+            bool overflow = false;
+            while (exp > 0 && !overflow)
+            {
+                if ((exp & 1) && __builtin_mul_overflow(acc, base, &acc))
+                    overflow = true;
+                exp >>= 1;
+                if (exp > 0 && __builtin_mul_overflow(base, base, &base))
+                    overflow = true;
+            }
+            if (!overflow)
+            {
+                pushV(vm, intResult(vm, acc));
+                DISPATCH();
+            }
         }
+        push(vm, NEW_DOUBLE(vm, pow(NUMBER_VAL(a), NUMBER_VAL(b))));
         DISPATCH();
     }
     OP_MOD:
@@ -1350,15 +1384,25 @@ int runMVM(MVM *vm)
             runtimeError(vm, "Operands must be numbers.");
             goto _runtime_error;
         }
-        double result = fmod(NUMBER_VAL(a), NUMBER_VAL(b));
-        // if (isInteger(result))
-        // {
-        //     push(vm, NEW_INT(vm, (int)result));
-        // }
-        // else
+        // Python semantics: the result takes the divisor's sign.
+        if (NUMBER_VAL(b) == 0)
         {
-            push(vm, NEW_DOUBLE(vm, result));
+            runtimeError(vm, "ZeroDivisionError: modulo by zero");
+            goto _runtime_error;
         }
+        if (IS_INT(a) && IS_INT(b))
+        {
+            long x = INT_VAL(a), y = INT_VAL(b), r = x % y;
+            if (r != 0 && ((r < 0) != (y < 0)))
+                r += y;
+            pushV(vm, intResult(vm, r));
+            DISPATCH();
+        }
+        double y = NUMBER_VAL(b);
+        double r = fmod(NUMBER_VAL(a), y);
+        if (r != 0 && ((r < 0) != (y < 0)))
+            r += y;
+        push(vm, NEW_DOUBLE(vm, r));
         DISPATCH();
     }
     OP_LSFT:
@@ -1399,8 +1443,21 @@ int runMVM(MVM *vm)
             runtimeError(vm, "Operands must be numbers.");
             goto _runtime_error;
         }
-        long int r = NUMBER_VAL(a) / NUMBER_VAL(b);
-        push(vm, NEW_INT(vm, r));
+        // Floor division (Python semantics): -7 // 2 == -4.
+        if (NUMBER_VAL(b) == 0)
+        {
+            runtimeError(vm, "ZeroDivisionError: integer division by zero");
+            goto _runtime_error;
+        }
+        if (IS_INT(a) && IS_INT(b))
+        {
+            long x = INT_VAL(a), y = INT_VAL(b), q = x / y;
+            if ((x % y != 0) && ((x < 0) != (y < 0)))
+                q--;
+            pushV(vm, intResult(vm, q));
+            DISPATCH();
+        }
+        push(vm, NEW_DOUBLE(vm, floor(NUMBER_VAL(a) / NUMBER_VAL(b))));
         DISPATCH();
     }
     OP_NEG:
@@ -1478,6 +1535,7 @@ int runMVM(MVM *vm)
     {
         u16 offset = ReadShort();
         ip -= offset;
+        GC_SAFEPOINT();
         DISPATCH();
     }
     OP_ITER:
@@ -1727,6 +1785,7 @@ int runMVM(MVM *vm)
     }
     OP_CALL:
     {
+        GC_SAFEPOINT();
         u8 argCount = ReadByte();
         // Fast path: OBJ_FUNCTION call. Skips the caller()/callFunction()
         // indirection and inlines the frame setup. Covers the dominant
@@ -1777,6 +1836,8 @@ int runMVM(MVM *vm)
                 {
                     newFrame = New(CallFrame, 1);
                     initDict(&newFrame->locals);
+                    newFrame->gcEpoch = 0;
+                    newFrame->nextRetired = NULL;
                 }
                 newFrame->function = function;
                 newFrame->captured = false;
@@ -1850,6 +1911,12 @@ int runMVM(MVM *vm)
     }
     OP_FRET:
     {
+        // A `return` inside a try body skips OP_ENDTRY: drop the handlers
+        // this frame installed so they can't leak (or catch errors
+        // raised after we've left).
+        while (vm->fiber->handlerCount > 0
+               && vm->fiber->handlers[vm->fiber->handlerCount - 1].frameCount >= vm->fiber->frameCount)
+            vm->fiber->handlerCount--;
         MyMoObject *ret = pop(vm);
         if (vm->classCall && frame->function->type == FN_INIT)
         {
@@ -1886,9 +1953,12 @@ int runMVM(MVM *vm)
         // function->frame->locals. Recycling the frame would free
         // those locals and clobber frame->function (it's repurposed
         // as the pool's next-link), so later calls to exported
-        // functions would crash. Leak one CallFrame per module. The same
-        // holds for any frame a closure captured (see OP_FN).
-        if (frame->function->type != FN_MODULE && !frame->captured)
+        // functions would crash. The same holds for any frame a closure
+        // captured (see OP_FN). Those are retired: the GC frees them once
+        // no function references them.
+        if (frame->function->type == FN_MODULE || frame->captured)
+            retireFrame(vm, frame);
+        else
         {
             // Recycle into the fiber's frame pool instead of free()ing.
             // Skip freeDict when the locals dict was never grown
@@ -2531,6 +2601,7 @@ int runMVM(MVM *vm)
     }
     OP_INVOKE_GLOBAL:
     {
+        GC_SAFEPOINT();
         // Fused OP_GETV + OP_CALL. Layout: opcode | name_idx u8 | IC[8] | argc u8.
         // Pre-condition: argc args sit on the operand stack in call order.
         // Post-condition: args consumed, return value pushed.
@@ -2678,6 +2749,8 @@ int runMVM(MVM *vm)
             {
                 newFrame = New(CallFrame, 1);
                 initDict(&newFrame->locals);
+                newFrame->gcEpoch = 0;
+                newFrame->nextRetired = NULL;
             }
             newFrame->function = function;
             newFrame->captured = false;
@@ -2903,7 +2976,9 @@ _runtime_error:
         while (vm->fiber->frameCount > h.frameCount)
         {
             CallFrame *dead = vm->fiber->callFrames[vm->fiber->frameCount--];
-            if (dead->function->type != FN_MODULE && !dead->captured)
+            if (dead->function->type == FN_MODULE || dead->captured)
+                retireFrame(vm, dead);
+            else
             {
                 if (dead->locals.count > 0 || dead->locals.entries != NULL)
                     freeDict(vm, &dead->locals);
@@ -2946,7 +3021,8 @@ I_Result interpreter(MVM *vm, MyMoFunction *main_)
     MyMoObject *name = AS_OBJECT(newString(vm, "__name__", 8));
     MyMoObject *main = AS_OBJECT(newString(vm, "__main__", 8));
     setEntry(vm, &vm->globals, name, main);
+    vm->runDepth++;
     I_Result i = runMVM(vm);
-    // free(frame);
+    vm->runDepth--;
     return i;
 }

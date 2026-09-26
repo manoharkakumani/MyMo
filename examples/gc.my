@@ -1,0 +1,12 @@
+# Garbage collection: allocate far more than fits without collecting.
+fn mk(p):
+    return x => x + p
+
+i = 0
+s = 0
+while i < 300000:
+    s = s + mk(i)(1)
+    t = [i, str(i), {"k": i}]
+    i = i + 1
+
+print(s, t)
