@@ -86,3 +86,29 @@ try:
 catch e:
     print("caught via resume:", e)
 print("end")
+class Countdown:
+    fn __init__(self, start):
+        self.n = start
+    fn __iter__(self):
+        return self
+    fn __next__(self):
+        if self.n <= 0:
+            raise StopIteration
+        self.n -= 1
+        return self.n + 1
+class Bag:
+    fn __iter__(self):
+        return ("x", "y")
+print(list(Countdown(3)), sorted(Countdown(4)), sum(Countdown(4)), max(Countdown(5)), tuple(Bag()), set(Bag()), ",".join(Bag()))
+print(dict(zip(Bag(), Countdown(2))), [x * 2 for x in Countdown(2)], enumerate(Countdown(2)))
+class Bad:
+    fn __next__(self):
+        raise KeyError("in next")
+try:
+    list(Bad())
+catch KeyError as e:
+    print("caught:", e)
+try:
+    list(fiber(() => 1))
+catch TypeError as e:
+    print(e)

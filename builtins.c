@@ -14,6 +14,7 @@
 #include "memory.h"
 #include "operations.h"
 #include "format.h"
+#include "repr.h"
 #include "include/mymo.h"
 #include "datatypes/datatypes.h"
 #include <math.h>
@@ -87,8 +88,52 @@ bool takeKeyword(MVM *vm, const char *name, Value *out)
     return true;
 }
 
+// Elements of an object iterator: obj.__iter__() (if defined), then
+// __next__() until StopIteration.
+static bool appendFromIterator(MVM *vm, const char *fn, Value obj, ValueArray *out)
+{
+    MyMoObject *iterMethod = getMethod(vm, V_AS_OBJ(obj), "__iter__");
+    if (!IS_EMPTY(iterMethod))
+    {
+        if (mymo_call(vm, V_OBJ_VAL(iterMethod), 1, &obj, &obj) != MYMO_OK)
+            return false;
+        if (!V_IS_OBJ_TYPE(obj, OBJ_INSTANCE))
+            return appendIterable(vm, fn, obj, out);
+    }
+    MyMoObject *next = getMethod(vm, V_AS_OBJ(obj), "__next__");
+    if (IS_EMPTY(next))
+    {
+        runtimeError(vm, "TypeError: %s() expects an iterable, got %s (no __iter__ or __next__)", fn, valueTypeName(obj));
+        return false;
+    }
+    Value stop;
+    bool haveStop = getEntryV(&vm->builtins, AS_OBJECT(newString(vm, "StopIteration", 13)), &stop);
+    for (;;)
+    {
+        Value item;
+        vm->quietErrors++;
+        MyMoResult r = mymo_call(vm, V_OBJ_VAL(next), 1, &obj, &item);
+        vm->quietErrors--;
+        if (r == MYMO_OK)
+        {
+            writeValueArray(vm, out, item);
+            continue;
+        }
+        MyMoObject *exc = vm->fiber->exception;
+        if (haveStop && exc && exc->type == OBJ_INSTANCE && isInstanceOf(vm, V_OBJ_VAL(exc), stop))
+        {
+            vm->fiber->exception = NULL;
+            return true;
+        }
+        Value text = exc ? valueToStr(vm, objectToValue(exc)) : V_EMPTY_VAL;
+        vm->fiber->exception = exc;
+        runtimeError(vm, "%s", V_IS_EMPTY(text) ? vm->lastError : AS_STRING(V_AS_OBJ(text))->value);
+        return false;
+    }
+}
+
 // Appends the elements of an iterable (list, tuple, string characters,
-// dict keys, range) to `out`.
+// dict keys, set, range, iterator object) to `out`.
 bool appendIterable(MVM *vm, const char *fn, Value v, ValueArray *out)
 {
     if (V_IS_OBJ(v))
@@ -128,6 +173,11 @@ bool appendIterable(MVM *vm, const char *fn, Value v, ValueArray *out)
                 writeValueArray(vm, out, valueFromLong(vm, rangeAt(r, i)));
             return true;
         }
+        case OBJ_INSTANCE:
+            return appendFromIterator(vm, fn, v, out);
+        case OBJ_FIBER:
+            runtimeError(vm, "TypeError: %s() can't consume a fiber; collect it with [x for x in f]", fn);
+            return false;
         default:
             break;
         }
