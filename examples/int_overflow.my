@@ -1,0 +1,21 @@
+# Integer overflow falls back to doubles; += on doubles, bools and big ints.
+x = 1.5
+x += 1
+print(x)
+b = True
+b += 1
+print(b)
+big = 9223372036854775807
+big += 1
+print(big)
+fn f():
+    y = 0.5
+    y += 2
+    return y
+print(f())
+print(9223372036854775807 + 1, -9223372036854775807 - 10, 9223372036854775807 * 2, 2147483647 + 1)
+s = "a"
+try:
+    s += 1
+catch e:
+    print(e)

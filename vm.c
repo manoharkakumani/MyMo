@@ -1477,9 +1477,10 @@ int runMVM(MVM *vm)
                 lpushObj(NEW_INT(vm, r));
             DISPATCH();
         }
-        if (valueLooksLikeInt(va) && valueLooksLikeInt(vb))
+        long r;
+        if (valueLooksLikeInt(va) && valueLooksLikeInt(vb) && !__builtin_add_overflow(valueToLong(va), valueToLong(vb), &r))
         {
-            long r = valueToLong(va) + valueToLong(vb);
+            // (On 64-bit overflow, fall through to the double path.)
             sp -= 2;
             if (r >= INT32_MIN && r <= INT32_MAX)
                 lpush(V_INT_VAL((int32_t)r));
@@ -1524,9 +1525,10 @@ int runMVM(MVM *vm)
                 lpushObj(NEW_INT(vm, r));
             DISPATCH();
         }
-        if (valueLooksLikeInt(va) && valueLooksLikeInt(vb))
+        long r;
+        if (valueLooksLikeInt(va) && valueLooksLikeInt(vb) && !__builtin_sub_overflow(valueToLong(va), valueToLong(vb), &r))
         {
-            long r = valueToLong(va) - valueToLong(vb);
+            // (On 64-bit overflow, fall through to the double path.)
             sp -= 2;
             if (r >= INT32_MIN && r <= INT32_MAX)
                 lpush(V_INT_VAL((int32_t)r));
@@ -1569,9 +1571,10 @@ int runMVM(MVM *vm)
                 lpushObj(NEW_INT(vm, r));
             DISPATCH();
         }
-        if (valueLooksLikeInt(va) && valueLooksLikeInt(vb))
+        long r;
+        if (valueLooksLikeInt(va) && valueLooksLikeInt(vb) && !__builtin_mul_overflow(valueToLong(va), valueToLong(vb), &r))
         {
-            long r = valueToLong(va) * valueToLong(vb);
+            // (On 64-bit overflow, fall through to the double path.)
             sp -= 2;
             if (r >= INT32_MIN && r <= INT32_MAX)
                 lpush(V_INT_VAL((int32_t)r));
@@ -3228,33 +3231,31 @@ int runMVM(MVM *vm)
         }
         // Slow path: do the read/add/write through the legacy dict API.
         Value cur;
-        bool found = getEntryV(target, variable, &cur);
-        long curLong = 0;
-        if (found && valueLooksLikeInt(cur))
+        if (!getEntryV(target, variable, &cur))
         {
-            curLong = valueToLong(cur);
-        }
-        else if (!found)
-        {
-            // Treat as 0 if uninitialized — semantically wrong (should be
-            // NameError) but matches what `0 + delta` would do for bare ints.
-            // Fall back to error path: simulate the legacy GETV failure.
+            SAVE();
             runtimeError(vm, "Name Error: Undefined variable '%s'.", STRING_VAL(variable));
             goto _runtime_error;
         }
+        Value next;
+        long sum;
+        if (valueLooksLikeInt(cur) && !__builtin_add_overflow(valueToLong(cur), (long)delta, &sum))
+            next = sum >= INT32_MIN && sum <= INT32_MAX ? V_INT_VAL((int32_t)sum) : V_OBJ_VAL(AS_OBJECT(newInt(vm, sum)));
         else
         {
-            // Non-int target: emit a TypeError. Could fall back to the slow
-            // OP_ADD path, but += of a non-int with a literal int is rare.
-            runtimeError(vm, "TypeError: cannot += int to %s.", valueTypeName(cur));
-            goto _runtime_error;
+            // Doubles, bools, strings (TypeError), 64-bit overflow: the
+            // general + rules.
+            SAVE();
+            if (V_IS_OBJ_TYPE(cur, OBJ_INSTANCE))
+            {
+                runtimeError(vm, "TypeError: `%s += %d` on an instance: write `%s = %s + %d`",
+                             STRING_VAL(variable), delta, STRING_VAL(variable), STRING_VAL(variable), delta);
+                goto _runtime_error;
+            }
+            next = addValues(vm, cur, V_INT_VAL(delta));
+            if (V_IS_EMPTY(next))
+                goto _runtime_error;
         }
-        long sum = curLong + (long)delta;
-        Value next;
-        if (sum >= INT32_MIN && sum <= INT32_MAX)
-            next = V_INT_VAL((int32_t)sum);
-        else
-            next = V_OBJ_VAL(AS_OBJECT(newInt(vm, sum)));
         setEntryV(vm, target, variable, next);
         // Refresh cache.
         Entry *es = target->entries;

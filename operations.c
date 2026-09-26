@@ -55,7 +55,7 @@ static Value boolAsInt(Value v)
 
 static Value typeError(MVM *vm, const char *op, Value a, Value b)
 {
-    runtimeError(vm, "TypeError: can't perform %s between  %s and %s", op, valueTypeName(a), valueTypeName(b));
+    runtimeError(vm, "TypeError: can't perform %s between %s and %s", op, valueTypeName(a), valueTypeName(b));
     return V_EMPTY_VAL;
 }
 
@@ -67,8 +67,9 @@ Value addValues(MVM *vm, Value a, Value b)
         return V_BOOL_VAL(valueAsBool(a) || valueAsBool(b));
     a = boolAsInt(a);
     b = boolAsInt(b);
-    if (valueLooksLikeInt(a) && valueLooksLikeInt(b))
-        return valueFromLong(vm, valueToLong(a) + valueToLong(b));
+    long r;
+    if (valueLooksLikeInt(a) && valueLooksLikeInt(b) && !__builtin_add_overflow(valueToLong(a), valueToLong(b), &r))
+        return valueFromLong(vm, r); // on 64-bit overflow, fall through to doubles
     if (valueLooksLikeNumber(a) && valueLooksLikeNumber(b))
         return V_DOUBLE_VAL(valueAsNumber(a) + valueAsNumber(b));
     if (isType(a, OBJ_STRING) && isType(b, OBJ_STRING))
@@ -104,8 +105,9 @@ Value subValues(MVM *vm, Value a, Value b)
         return V_BOOL_VAL(valueAsBool(a) && !valueAsBool(b));
     a = boolAsInt(a);
     b = boolAsInt(b);
-    if (valueLooksLikeInt(a) && valueLooksLikeInt(b))
-        return valueFromLong(vm, valueToLong(a) - valueToLong(b));
+    long r;
+    if (valueLooksLikeInt(a) && valueLooksLikeInt(b) && !__builtin_sub_overflow(valueToLong(a), valueToLong(b), &r))
+        return valueFromLong(vm, r); // on 64-bit overflow, fall through to doubles
     if (valueLooksLikeNumber(a) && valueLooksLikeNumber(b))
         return V_DOUBLE_VAL(valueAsNumber(a) - valueAsNumber(b));
     if (isType(a, OBJ_SET) && isType(b, OBJ_SET))

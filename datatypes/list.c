@@ -100,7 +100,7 @@ Value addListMethod(MVM *vm, uint argc, Value args[])
     MyMoList *resultList = newList(vm);
     if (!(IS_LIST(peek(vm,0))) || !(IS_LIST(peek(vm,1))))
     {
-        runtimeError(vm, "TypeError: can't perform + between  %s and %s", getType(peek(vm,1)), getType(peek(vm,0)));
+        runtimeError(vm, "TypeError: can't perform + between %s and %s", getType(peek(vm,1)), getType(peek(vm,0)));
         return V_EMPTY_VAL;
     }
     MyMoList *bList = AS_LIST(pop(vm));
