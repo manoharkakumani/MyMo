@@ -13,6 +13,9 @@ typedef struct MyMoIter
     MyMoObject object;
     MyMoObject *iterator;
     long index;
+    // Iterating a fiber: true while the fiber runs to its next yield
+    // (the loop's OP_ITER then receives the value). See OP_ITER.
+    bool waiting;
 } MyMoIter;
 
 MyMoIter *newIter(MVM *vm, MyMoObject *object);

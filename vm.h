@@ -26,6 +26,9 @@ struct vm
     // Builtins take the ones they understand with takeKeyword(); any
     // left over after the call is an error. See OP_CALLKW.
     MyMoDict *kwargs;
+    // > 0 while the VM calls code whose errors it inspects itself (an
+    // iterator's __next__): runtimeError records them without printing.
+    int quietErrors;
     MyMoDict builtInModules;
     MyMoObject *objects;
     u32 classCall;

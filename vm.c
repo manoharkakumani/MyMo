@@ -45,6 +45,7 @@ MVM *initVM()
     initDict(&vm->doubles);
     initDict(&vm->tupleKeys);
     vm->kwargs = NULL;
+    vm->quietErrors = 0;
     initDict(&vm->modules);
     initDict(&vm->builtInModules);
     defineBuiltInClasses(vm);
@@ -105,14 +106,34 @@ static int extractSourceLine(const char *source, int lineNo, char *out, size_t o
 
 // A try handler that may catch the current error: the fiber's innermost
 // one, unless it was installed outside the nested mymo_call we're in.
-static bool hasActiveHandler(MVM *vm)
+static bool fiberHasHandler(MVM *vm, MyMoFiber *fiber)
 {
-    MyMoFiber *fiber = vm->fiber;
     if (fiber->handlerCount == 0)
         return false;
     if (vm->exitFiber == fiber && (int)fiber->handlers[fiber->handlerCount - 1].frameCount <= vm->exitFrame)
         return false;
     return true;
+}
+
+static bool hasActiveHandler(MVM *vm)
+{
+    return fiberHasHandler(vm, vm->fiber);
+}
+
+// Will some try handler catch an error raised now? An error that nothing
+// in a fiber catches ends that fiber and continues in the fiber that
+// resumed it, so look up the chain of resumers (but not past the fiber a
+// nested mymo_call runs in).
+static bool handlerInChain(MVM *vm)
+{
+    for (MyMoFiber *fiber = vm->fiber; fiber; fiber = fiber->parent)
+    {
+        if (fiberHasHandler(vm, fiber))
+            return true;
+        if (fiber == vm->exitFiber)
+            break;
+    }
+    return false;
 }
 
 // The exception object for a runtime error message "Name: text": an
@@ -185,7 +206,7 @@ void runtimeError(MVM *vm, const char *format, ...)
     // Inside a mymo_call whose caller has a `try` further out, the error
     // will propagate to it through the builtin; stash it without printing.
     bool outerHandler = vm->exitFiber == vm->fiber && vm->fiber->handlerCount > 0;
-    if (hasActiveHandler(vm) || outerHandler)
+    if (handlerInChain(vm) || outerHandler || vm->quietErrors > 0)
     {
         if (vm->fiber->exception == NULL)
             vm->fiber->exception = errorObject(vm, msg);
@@ -1960,19 +1981,139 @@ int runMVM(MVM *vm)
     }
     OP_ITER:
     {
+        // [iter] -> [iter, next] or jump past the loop when exhausted.
+        if (sp - vm->fiber->stack.values >= 2 && V_IS_OBJ_TYPE(lpeek(1), OBJ_ITER) &&
+            AS_ITER(V_AS_OBJ(lpeek(1)))->waiting)
+        {
+            // Back from running the iterated fiber: [iter, value]. A value
+            // from a yield is the next element; from the fiber finishing,
+            // it is the return value and the loop ends.
+            u16 offset = ReadShort();
+            Value value = lpop();
+            MyMoIter *iterator = AS_ITER(V_AS_OBJ(lpeek(0)));
+            iterator->waiting = false;
+            if (AS_FIBER(iterator->iterator)->state == FIBER_DEAD)
+                ip += offset;
+            else
+                lpush(value);
+            DISPATCH();
+        }
         u16 offset = ReadShort();
-        MyMoIter *iterator = AS_ITER(peek(vm, 0));
+        MyMoIter *iterator = AS_ITER(V_AS_OBJ(lpeek(0)));
+        MyMoObject *source = iterator->iterator;
+        if (source->type == OBJ_FIBER)
+        {
+            // Run the fiber to its next yield (or its end), then come back
+            // to this instruction: the fiber replaces our placeholder
+            // with the value it yields or returns.
+            MyMoFiber *fiber = AS_FIBER(source);
+            if (fiber->state == FIBER_DEAD)
+            {
+                ip += offset;
+                DISPATCH();
+            }
+            if (fiber->state == FIBER_RUNNING)
+            {
+                SAVE();
+                runtimeError(vm, "RuntimeError: cannot iterate a running fiber");
+                goto _runtime_error;
+            }
+            MyMoFunction *body = fiber->callFrames[0]->function;
+            if (fiber->state == FIBER_READY)
+            {
+                int fill = missingDefaults(body, 0);
+                if (fill < 0)
+                {
+                    SAVE();
+                    runtimeError(vm, "TypeError: a fiber iterated by for must not need arguments "
+                                     "(wrap the call: fiber(() => %s(...)))", body->name ? body->name->value : "fn");
+                    goto _runtime_error;
+                }
+                for (int i = 0; i < fill && i < CALLFRAME_ARGS_INLINE; i++)
+                    fiber->callFrames[0]->args[i] = body->defaults[body->defaultCount - fill + i];
+                fiber->callFrames[0]->ip = body->chunk->code;
+            }
+            lpush(V_NIL_VAL); // placeholder the fiber's yield/return replaces
+            iterator->waiting = true;
+            ip -= 3;          // resume at this OP_ITER
+            SAVE();
+            bool starting = fiber->state == FIBER_READY;
+            fiber->parent = vm->fiber;
+            fiber->state = FIBER_RUNNING;
+            vm->fiber = fiber;
+            if (starting) // frame 0's callee slot (not pushV: that's the register sp)
+                fiber->stack.values[fiber->stack.count++] = V_OBJ_VAL(AS_OBJECT(body));
+            else
+                fiber->stack.values[fiber->stack.count - 1] = V_NIL_VAL; // the pending yield() returns Nil
+            LOAD();
+            DISPATCH();
+        }
+        if (source->type == OBJ_INSTANCE)
+        {
+            // obj.__next__() until it raises StopIteration.
+            MyMoObject *method = getMethod(vm, source, "__next__");
+            SAVE();
+            Value self = V_OBJ_VAL(source), next;
+            vm->quietErrors++;
+            MyMoResult called = mymo_call(vm, V_OBJ_VAL(method), 1, &self, &next);
+            vm->quietErrors--;
+            if (called != MYMO_OK)
+            {
+                MyMoObject *exc = vm->fiber->exception;
+                Value stop;
+                if (exc && exc->type == OBJ_INSTANCE &&
+                    getEntryV(&vm->builtins, AS_OBJECT(newString(vm, "StopIteration", 13)), &stop) &&
+                    isInstanceOf(vm, V_OBJ_VAL(exc), stop))
+                {
+                    vm->fiber->exception = NULL;
+                    ip += offset;
+                    DISPATCH();
+                }
+                // A real error: report it here (the exception object stays
+                // the one __next__ raised).
+                Value text = exc ? valueToStr(vm, objectToValue(exc)) : V_EMPTY_VAL;
+                vm->fiber->exception = exc;
+                runtimeError(vm, "%s", V_IS_EMPTY(text) ? vm->lastError : AS_STRING(V_AS_OBJ(text))->value);
+                goto _runtime_error;
+            }
+            lpush(next);
+            DISPATCH();
+        }
         Value next = nextIter(vm, iterator);
         if (V_IS_EMPTY(next))
             ip += offset;
         else
-            pushV(vm, next);
+            lpush(next);
         DISPATCH();
     }
     OP_GETI:
     {
-        MyMoObject *iterator = pop(vm);
-        switch (iterator->type)
+        Value iterableV = lpeek(0);
+        MyMoObject *iterator = V_IS_OBJ(iterableV) ? V_AS_OBJ(iterableV) : NULL;
+        if (iterator && iterator->type == OBJ_INSTANCE)
+        {
+            // obj.__iter__() gives the iterator (an object with __next__,
+            // a fiber, or any built-in iterable); an object with only
+            // __next__ is its own iterator.
+            MyMoObject *iterMethod = getMethod(vm, iterator, "__iter__");
+            if (!IS_EMPTY(iterMethod))
+            {
+                SAVE();
+                Value self = iterableV, result;
+                if (mymo_call(vm, V_OBJ_VAL(iterMethod), 1, &self, &result) != MYMO_OK)
+                    goto _runtime_error;
+                sp[-1] = result;
+                iterableV = result;
+                iterator = V_IS_OBJ(result) ? V_AS_OBJ(result) : NULL;
+            }
+            if (iterator && iterator->type == OBJ_INSTANCE && IS_EMPTY(getMethod(vm, iterator, "__next__")))
+            {
+                SAVE();
+                runtimeError(vm, "TypeError: %s is not iterable (no __iter__ or __next__)", valueTypeName(iterableV));
+                goto _runtime_error;
+            }
+        }
+        switch (iterator ? iterator->type : OBJ_NIL)
         {
         case OBJ_STRING:
         case OBJ_LIST:
@@ -1980,16 +2121,17 @@ int runMVM(MVM *vm)
         case OBJ_DICT:
         case OBJ_RANGE:
         case OBJ_SET:
-            // case OBJ_INSTANCE: TODO
-            {
-                push(vm, AS_OBJECT(newIter(vm, iterator)));
-                DISPATCH();
-            }
-        default:
+        case OBJ_FIBER:
+        case OBJ_INSTANCE:
         {
-            runtimeError(vm, "TypeError: cannot iterate on %s.", getType(iterator));
-            goto _runtime_error;
+            MyMoIter *it = newIter(vm, iterator);
+            sp[-1] = V_OBJ_VAL(AS_OBJECT(it));
+            DISPATCH();
         }
+        default:
+            SAVE();
+            runtimeError(vm, "TypeError: %s is not iterable", valueTypeName(iterableV));
+            goto _runtime_error;
         }
     }
     OP_GETV:
@@ -3402,6 +3544,18 @@ int runMVM(MVM *vm)
     }
 
 _runtime_error:
+    // Uncaught in this fiber but caught by one that resumed it: the fiber
+    // dies and the exception moves up to its resumer.
+    while (!hasActiveHandler(vm) && vm->fiber->parent != NULL && vm->fiber != vm->exitFiber && handlerInChain(vm))
+    {
+        MyMoFiber *child = vm->fiber;
+        MyMoObject *exc = child->exception;
+        child->exception = NULL;
+        child->state = FIBER_DEAD;
+        child->handlerCount = 0;
+        vm->fiber = child->parent;
+        vm->fiber->exception = exc;
+    }
     // Every per-handler error path inside the dispatch loop jumps
     // here. If there's an active `try` handler, unwind the fiber's
     // frames + operand stack to the saved state, push the raised

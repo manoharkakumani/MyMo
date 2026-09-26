@@ -1,0 +1,88 @@
+# Iteration protocol: for over fibers (generators) and objects with
+# __iter__/__next__; errors in a fiber reach the try of its resumer.
+fn countdown():
+    n = 3
+    while n > 0:
+        yield(n)
+        n -= 1
+    return "done"
+for x in fiber(countdown):
+    print("tick", x)
+fn fib_gen(limit=50):
+    a, b = 0, 1
+    while a < limit:
+        yield(a)
+        a, b = b, a + b
+print([x for x in fiber(fib_gen)])
+g = fiber(countdown)
+for x in g:
+    if x == 2:
+        break
+print("alive after break:", g.alive())
+for x in g:
+    print("resumed", x)
+fn squares_of(xs):
+    return fiber(() => [yield(x * x) for x in xs])
+total = 0
+for sq in squares_of([1, 2, 3]):
+    total += sq
+print("total", total)
+fn outer():
+    for i in fiber(countdown):
+        for j in fiber(countdown):
+            if j == 3:
+                print("nested", i, j)
+outer()
+class Countdown:
+    fn __init__(self, start):
+        self.n = start
+    fn __iter__(self):
+        return self
+    fn __next__(self):
+        if self.n <= 0:
+            raise StopIteration
+        self.n -= 1
+        return self.n + 1
+print([x for x in Countdown(4)])
+class Bag:
+    fn __init__(self):
+        self.items = ["a", "b"]
+    fn __iter__(self):
+        return self.items
+for item in Bag():
+    print("bag", item)
+class Broken:
+    fn __next__(self):
+        raise ValueError("oops")
+try:
+    for x in Broken():
+        print(x)
+catch ValueError as e:
+    print("error from __next__:", e)
+try:
+    for x in 5:
+        print(x)
+catch TypeError as e:
+    print(e)
+fn gen_with_args(n):
+    i = 0
+    while i < n:
+        yield(i)
+        i += 1
+print([v for v in fiber(() => gen_with_args(3))])
+fn bad():
+    yield(1)
+    x = {}["k"]
+try:
+    for v in fiber(bad):
+        print("got", v)
+catch KeyError as e:
+    print("caught from fiber:", e)
+print("after")
+f = fiber(bad)
+try:
+    f.run()
+    f.resume()
+catch e:
+    print("caught via resume:", e)
+print("end")

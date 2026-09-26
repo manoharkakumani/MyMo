@@ -6,6 +6,7 @@ MyMoIter *newIter(MVM *vm, MyMoObject *object)
 {
   MyMoIter *iter = AllocateObject(vm, MyMoIter, OBJ_ITER);
   iter->index = 0;
+  iter->waiting = false;
   if (object->type == OBJ_DICT || object->type == OBJ_SET)
   {
     // Iterate a snapshot of the keys (in insertion order), so the loop
