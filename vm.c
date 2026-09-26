@@ -210,14 +210,17 @@ static Value intResult(MVM *vm, long n)
     return V_OBJ_VAL(NEW_INT(vm, n));
 }
 
-bool callFunction(MVM *vm, MyMoFunction *function, int argc)
+bool callFunction(MVM *vm, MyMoFunction *function, int argc, bool calleeSlot)
 {
-    if (function->argc != argc)
+    int fill = missingDefaults(function, argc);
+    if (fill < 0)
     {
-        runtimeError(vm, "TypeError : %s() Takes %d arguments but got %d.", function->name->value, function->argc, argc);
+        arityError(vm, function, argc);
         return false;
     }
-    else
+    for (int i = 0; i < fill; i++)
+        pushV(vm, function->defaults[function->defaultCount - fill + i]);
+    argc += fill;
     {
         // Off-by-one fix: callFrames is indexed up to and including
         // frameCount (slot 0 is the script/initial frame, slot frameCount
@@ -260,6 +263,7 @@ bool callFunction(MVM *vm, MyMoFunction *function, int argc)
         }
         frame->function = function;
         frame->captured = false;
+        frame->calleeSlot = calleeSlot;
         frame->ip = function->chunk->code;
         vm->fiber->callFrames[++vm->fiber->frameCount] = frame;
         if (argc && !function->isargs)
@@ -294,7 +298,17 @@ bool callFunction(MVM *vm, MyMoFunction *function, int argc)
     }
 }
 
+static bool callerEx(MVM *vm, MyMoObject *callee, u32 argc, bool calleeSlot);
+
+// Call `callee` with the stack laid out as [callee, args...].
 bool caller(MVM *vm, MyMoObject *callee, u32 argc)
+{
+    return callerEx(vm, callee, argc, true);
+}
+
+// calleeSlot=false: the slot below the args was reused as the first
+// argument (self), so there is no separate callee value to pop on return.
+static bool callerEx(MVM *vm, MyMoObject *callee, u32 argc, bool calleeSlot)
 {
     switch (callee->type)
     {
@@ -331,7 +345,7 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
             runtimeError(vm, "TypeError : <module '%s'> is not callable.", function->name->value);
             return false;
         }
-        return callFunction(vm, function, argc);
+        return callFunction(vm, function, argc, calleeSlot);
     }
     case OBJ_CLASS:
     {
@@ -349,7 +363,7 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
         {
             vm->classCall++;
             vm->fiber->stack.values[vm->fiber->stack.count - argc - 1] = V_OBJ_VAL(result);
-            return caller(vm, klass->init, argc + 1);
+            return callerEx(vm, klass->init, argc + 1, false); // slot holds the new instance
         }
         else
         {
@@ -382,8 +396,20 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
     case OBJ_BOUND_METHOD:
     {
         MyMoBoundMethod *bound = AS_BOUND_METHOD(callee);
+        if (bound->method->type > FN_METHOD)
+        {
+            // A plain function bound as a method (e.g. a decorator's
+            // wrapper): its OP_FRET pops a callee slot, so keep that slot
+            // and insert `self` as the first argument after it.
+            Value *first = vm->fiber->stack.values + vm->fiber->stack.count - argc;
+            memmove(first + 1, first, sizeof(Value) * argc);
+            *first = V_OBJ_VAL(bound->self);
+            vm->fiber->stack.count++;
+            return callerEx(vm, AS_OBJECT(bound->method), argc + 1, true);
+        }
+        // Real methods consume the callee slot as `self`.
         vm->fiber->stack.values[vm->fiber->stack.count - argc - 1] = V_OBJ_VAL(bound->self);
-        return caller(vm, AS_OBJECT(bound->method), argc + 1);
+        return callerEx(vm, AS_OBJECT(bound->method), argc + 1, false);
     }
     default:
         printObject(callee);
@@ -573,6 +599,40 @@ int runMVM(MVM *vm)
         // Pop the topmost handler — normal exit from the try-body
         // with no error fired.
         if (vm->fiber->handlerCount > 0) vm->fiber->handlerCount--;
+        DISPATCH();
+    }
+    OP_METV:
+    {
+        // Install a decorated method: [class, value, original] -> [class].
+        // Like OP_MET, but the method is whatever the decorators returned.
+        // The undecorated function still belongs to the class (super()
+        // inside it resolves through its klass).
+        MyMoObject *name = ReadObject();
+        MyMoFunction *original = AS_FUNCTION(V_AS_OBJ(lpop()));
+        Value value = lpop();
+        MyMoClass *klass = AS_CLASS(V_AS_OBJ(lpeek(0)));
+        original->klass = AS_OBJECT(klass);
+        if (V_IS_OBJ(value) && IS_FUNCTION(V_AS_OBJ(value)))
+        {
+            MyMoFunction *method = AS_FUNCTION(V_AS_OBJ(value));
+            if (AS_STRING(name)->length == 8 && memcmp(AS_STRING(name)->value, "__init__", 8) == 0)
+                klass->init = AS_OBJECT(method);
+            method->klass = AS_OBJECT(klass);
+        }
+        setEntryV(vm, klass->methods, name, value);
+        DISPATCH();
+    }
+    OP_DEFAULTS:
+    {
+        // [d1..dn, fn] -> [fn]: replace fn's defaults with d1..dn.
+        u8 n = ReadByte();
+        MyMoFunction *function = AS_FUNCTION(V_AS_OBJ(lpeek(0)));
+        free(function->defaults);
+        function->defaults = malloc(sizeof(Value) * n);
+        memcpy(function->defaults, sp - 1 - n, sizeof(Value) * n);
+        function->defaultCount = n;
+        sp[-1 - n] = sp[-1];
+        sp -= n;
         DISPATCH();
     }
     OP_WIDE:
@@ -1832,12 +1892,17 @@ int runMVM(MVM *vm)
             if (cobj->type == OBJ_FUNCTION)
             {
                 MyMoFunction *function = AS_FUNCTION(cobj);
-                if (function->argc != argCount)
                 {
-                    SAVE();
-                    runtimeError(vm, "TypeError : %s() Takes %d arguments but got %d.",
-                                 function->name->value, function->argc, argCount);
-                    goto _runtime_error;
+                    int fill = missingDefaults(function, argCount);
+                    if (fill < 0)
+                    {
+                        SAVE();
+                        arityError(vm, function, argCount);
+                        goto _runtime_error;
+                    }
+                    for (int i = 0; i < fill; i++)
+                        *sp++ = function->defaults[function->defaultCount - fill + i];
+                    argCount += fill;
                 }
                 if (function->type == FN_SCRIPT || function->type == FN_MODULE)
                 {
@@ -1879,6 +1944,7 @@ int runMVM(MVM *vm)
                 }
                 newFrame->function = function;
                 newFrame->captured = false;
+                newFrame->calleeSlot = true;
                 newFrame->ip = function->chunk->code;
                 vm->fiber->callFrames[++vm->fiber->frameCount] = newFrame;
                 // Pop args from operand stack (using local sp register)
@@ -1969,10 +2035,8 @@ int runMVM(MVM *vm)
             else
                 ret = getEntry(vm, &frame->locals, AS_OBJECT(frame->function->argv[0]));
         }
-        if (vm->currentClass || frame->function->type > FN_METHOD)
-        {
+        if (frame->calleeSlot)
             pop(vm);
-        }
         if (vm->fiber->frameCount == 0)
         {
             vm->fiber->state = FIBER_DEAD;
@@ -2590,7 +2654,7 @@ int runMVM(MVM *vm)
         function->name = moduleName;
         function->type = FN_MODULE;
         SAVE();
-        callFunction(vm, function, 0);
+        callFunction(vm, function, 0, false); // module bodies have no callee slot
         LOAD();
         setEntry(vm, &frame->locals, NEW_STRING(vm, "__name__", 8), AS_OBJECT(moduleName));
         MyMoModule *currentModule = newModule(vm, moduleName, modulePath);
@@ -2757,12 +2821,17 @@ int runMVM(MVM *vm)
         if (cobj->type == OBJ_FUNCTION)
         {
             MyMoFunction *function = AS_FUNCTION(cobj);
-            if (function->argc != argCount)
             {
-                SAVE();
-                runtimeError(vm, "TypeError : %s() Takes %d arguments but got %d.",
-                             function->name->value, function->argc, argCount);
-                goto _runtime_error;
+                int fill = missingDefaults(function, argCount);
+                if (fill < 0)
+                {
+                    SAVE();
+                    arityError(vm, function, argCount);
+                    goto _runtime_error;
+                }
+                for (int i = 0; i < fill; i++)
+                    *sp++ = function->defaults[function->defaultCount - fill + i];
+                argCount += fill;
             }
             if (function->type == FN_SCRIPT || function->type == FN_MODULE)
             {
@@ -2802,6 +2871,7 @@ int runMVM(MVM *vm)
             }
             newFrame->function = function;
             newFrame->captured = false;
+            newFrame->calleeSlot = true;
             newFrame->ip = function->chunk->code;
             vm->fiber->callFrames[++vm->fiber->frameCount] = newFrame;
             if (argCount && !function->isargs)

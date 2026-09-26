@@ -254,7 +254,16 @@ clamp = (v, lo, hi) =>
     return v if v < hi else hi
 
 print(area(2, 3), square(4), add(1, 2), clamp(15, 0, 10))
+
+# default parameter values (evaluated once, when the fn statement runs)
+fn greet(name, greeting="hello", punct="!"):
+    return greeting + ", " + name + punct
+
+print(greet("ana"), greet("bo", "hi"))
 ```
+
+Parameters with defaults must come after those without. As in Python, a
+mutable default such as a list is shared between calls.
 
 Functions defined inside other functions are closures. They keep access
 to the enclosing function's arguments and locals after it returns:
@@ -330,8 +339,21 @@ fn greet(name):
 print(greet("ana"), routes["/greet"]("bo"))
 ```
 
-Decorators work on top-level and nested functions, but not on class
-methods.
+Decorators work on top-level functions, nested functions and class
+methods. A method decorator receives the function, and a wrapper it returns
+is called with `self` as its first argument:
+
+```python
+fn logged(f):
+    return (self, x) => "[log] " + f(self, x)
+
+class Service:
+    @logged
+    fn handle(self, x):
+        return "handled " + x
+
+print(Service().handle("req"))
+```
 
 ### Classes
 
@@ -757,8 +779,6 @@ MyMo is an experimental language. Current gaps:
   compile error.
 - Ints are 32-bit when stored inline. Wider values fall back to slower heap
   objects.
-- Functions have no default parameter values.
-- Decorators can't be applied to class methods.
 - `mono` speaks HTTP/1.1 with `Connection: close`: no keep-alive and no
   HTTPS (put a reverse proxy in front for TLS). Non-blocking I/O isn't
   implemented on Windows yet.

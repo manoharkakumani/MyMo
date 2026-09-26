@@ -228,6 +228,10 @@ Value superfn(MVM *vm, uint argc, MyMoObject *argv[])
             if(function->type > FN_METHOD){
                 return objectToValue(klass);
             }
+            else if (klass == NULL || !IS_CLASS(klass)){
+                runtimeError(vm, "RuntimeError: super() used outside a class method.");
+                return V_EMPTY_VAL;
+            }
             else{
                 // Inside a method: return a proxy that binds the parent's
                 // methods to this method's `self` (argv[0]), so

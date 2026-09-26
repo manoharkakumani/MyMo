@@ -207,6 +207,10 @@ int disassembleInstruction(Chunk *chunk, int offset)
         // printed operand shows only the low byte.
         printf("%-16s hi=%d,%d\n", "OP_WIDE", chunk->code[offset + 1], chunk->code[offset + 2]);
         return offset + 3;
+    case OP_DEFAULTS:
+        return byteInstruction("OP_DEFAULTS", chunk, offset);
+    case OP_METV:
+        return constantInstruction("OP_METV", chunk, offset);
     default:
         printf("Unknown opcode %d\n", instruction);
         return offset + 1;

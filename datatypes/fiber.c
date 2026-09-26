@@ -28,6 +28,7 @@ MyMoFiber *newFiber(MVM *vm, MyMoFunction *function)
     CallFrame *frame = New(CallFrame, 1);
     frame->function = function;
     frame->captured = false;
+    frame->calleeSlot = true; // fiber.run() pushes the function below the args
     frame->gcEpoch = 0;
     frame->nextRetired = NULL;
     initDict(&frame->locals);
@@ -110,11 +111,15 @@ Value runFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
         return V_EMPTY_VAL;
     }
     CallFrame *frame = fiber->callFrames[0];
-    if (frame->function->argc != argc)
+    int fill = missingDefaults(frame->function, (int)argc);
+    if (fill < 0)
     {
-        runtimeError(vm, "TypeError: %s() takes exactly %d arguments (%d given)", frame->function->name->value, frame->function->argc, argc);
+        arityError(vm, frame->function, (int)argc);
         return V_EMPTY_VAL;
     }
+    for (int i = 0; i < fill; i++)
+        pushV(vm, frame->function->defaults[frame->function->defaultCount - fill + i]);
+    argc += fill;
     MyMoFunction *fiberFunction = frame->function;
     if (fiber->state == FIBER_DEAD)
     {

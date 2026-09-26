@@ -24,6 +24,8 @@ MyMoFunction *newFunction(MVM *vm)
     function->isargs = false;
     function->klass = AS_OBJECT(vm->builtInClasses[OBJ_OBJECT]);
     function->proto = NULL;
+    function->defaultCount = 0;
+    function->defaults = NULL;
     return function;
 }
 
@@ -35,7 +37,32 @@ MyMoFunction *cloneFunction(MVM *vm, MyMoFunction *proto)
     memcpy((char *)function + sizeof(MyMoObject), (char *)proto + sizeof(MyMoObject),
            sizeof(MyMoFunction) - sizeof(MyMoObject));
     function->proto = proto->proto ? proto->proto : proto;
+    if (proto->defaultCount > 0)
+    {
+        function->defaults = malloc(sizeof(Value) * (size_t)proto->defaultCount);
+        memcpy(function->defaults, proto->defaults, sizeof(Value) * (size_t)proto->defaultCount);
+    }
     return function;
+}
+
+int missingDefaults(MyMoFunction *function, int argc)
+{
+    if (argc == function->argc)
+        return 0;
+    if (argc < function->argc && argc >= function->argc - function->defaultCount)
+        return function->argc - argc;
+    return -1;
+}
+
+void arityError(MVM *vm, MyMoFunction *function, int argc)
+{
+    int required = function->argc - function->defaultCount;
+    if (required == function->argc)
+        runtimeError(vm, "TypeError : %s() takes %d argument%s but got %d.",
+                     function->name->value, function->argc, function->argc == 1 ? "" : "s", argc);
+    else
+        runtimeError(vm, "TypeError : %s() takes %d to %d arguments but got %d.",
+                     function->name->value, required, function->argc, argc);
 }
 
 MyMoClouser *newClouser(MVM *vm, MyMoFunction *function)

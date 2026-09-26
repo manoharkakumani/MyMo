@@ -768,6 +768,7 @@ void functionStatement(Compiler *compiler)
 //     @log
 //     fn show(req): ...
 //
+// (also on class methods, installed via OP_METV)
 // compiles to `show = get("/todos/:id", log(show))`: the decorated fn is
 // appended as the LAST argument of each decorator call (a bare `@log` is
 // `log(show)`), applied bottom-up. Appending instead of Python's
@@ -819,17 +820,13 @@ void decoratedStatement(Compiler *compiler)
         errorAtCurrent(compiler, "expected 'fn' after decorator.");
         return;
     }
-    if (compiler->flags.cl_fn)
-    {
-        errorAtCurrent(compiler, "decorators on methods are not supported.");
-        return;
-    }
     functionStatementDecorated(compiler, argcs, count);
 }
 
 static void functionStatementDecorated(Compiler *compiler, const u8 *decoratorArgc, int decoratorCount)
 {
     size_t indent = getIndent(compiler);
+    int defaults = 0; // trailing parameters with `= expr` defaults
     advanceToken(compiler);
     FunctionType type;
     if (compiler->flags.cl_fn)
@@ -886,6 +883,23 @@ static void functionStatementDecorated(Compiler *compiler, const u8 *decoratorAr
                         errorAtCurrent(fncompiler, "cannot have more than 255 parameters.");
                     }
                     fnParameters(fncompiler);
+                    // `name = expr`: the default is compiled into the
+                    // ENCLOSING function, so it is evaluated when this `fn`
+                    // statement runs (like Python) and can see outer names.
+                    if (matchToken(fncompiler, EQUAL))
+                    {
+                        compiler->flags.argv++; // a comma ends the expression
+                        expression(compiler);
+                        compiler->flags.argv--;
+                        if (defaults == 255)
+                            errorAtCurrent(compiler, "too many default values.");
+                        defaults++;
+                    }
+                    else if (defaults > 0)
+                    {
+                        errorAt(fncompiler, fncompiler->parser->previous,
+                                "a parameter without a default can't follow one with a default.");
+                    }
                 } while (matchToken(fncompiler, COMMA));
             }
         }
@@ -901,12 +915,31 @@ static void functionStatementDecorated(Compiler *compiler, const u8 *decoratorAr
         simpleStatement(fncompiler);
     }
     MyMoFunction *function = endFunction(fncompiler);
+    if (defaults > 0)
+    {
+        // The default values are on the stack: attach them to the function
+        // before OP_FN/OP_MET publishes it (closure copies inherit them).
+        emitConstOp(compiler, OP_CONST, makeConstant(compiler, AS_OBJECT(function)));
+        emitBytes(compiler, OP_DEFAULTS, (u8)defaults);
+        emitByte(compiler, OP_POP);
+    }
     switch (type)
     {
     case FN_INIT:
     case FN_METHOD:
     case FN_OPERATOR:
-        emitConstOp2(compiler, OP_MET, makeConstant(compiler, AS_OBJECT(function)), name);
+        if (decoratorCount > 0)
+        {
+            // [class, decorator callees/args...] + method -> decorated
+            // value, installed under `name` by OP_METV.
+            emitConstOp(compiler, OP_CONST, makeConstant(compiler, AS_OBJECT(function)));
+            for (int i = decoratorCount - 1; i >= 0; i--)
+                emitBytes(compiler, OP_CALL, decoratorArgc[i]);
+            emitConstOp(compiler, OP_CONST, makeConstant(compiler, AS_OBJECT(function)));
+            emitConstOp(compiler, OP_METV, name);
+        }
+        else
+            emitConstOp2(compiler, OP_MET, makeConstant(compiler, AS_OBJECT(function)), name);
         compiler->flags.cl_fn = true;
         break;
     case FN_FUNCTION:

@@ -55,6 +55,11 @@ typedef struct MyMoFunction
   // Non-NULL for a per-closure copy made by OP_FN; the copy shares the
   // prototype's chunk/argv, so only the prototype frees them.
   struct MyMoFunction *proto;
+  // Default values for the last `defaultCount` parameters, evaluated when
+  // the `fn` statement runs (OP_DEFAULTS). Owned by each function object
+  // (closure copies get their own copy).
+  int defaultCount;
+  Value *defaults;
 } MyMoFunction;
 
 // Function arg slots — covers up to 8 parameters with direct array access.
@@ -71,6 +76,12 @@ struct CallFrame {
     // outlives its call (never recycled into the frame pool) because the
     // closure still reads its locals/args after it returns.
     bool captured;
+    // True when the callee value sits on the stack below the arguments
+    // (a normal call), so OP_FRET must pop it. False when that slot was
+    // reused for `self` (bound methods, constructors) or never pushed
+    // (module bodies). Decided at the call site, not by function type:
+    // the same function can be called either way.
+    bool calleeSlot;
     // GC bookkeeping: epoch of the last collection that reached this
     // frame, and the link on vm->retiredFrames once it left the stack.
     u32 gcEpoch;
@@ -118,6 +129,12 @@ void defineMethod(MVM *vm, MyMoObjectType type, const char *name, BuiltInfunctio
 // receiver from the callee slot under the args, and pop the args (they
 // stay readable through argv[]). Returns NULL after raising on error.
 MyMoObject *methodEnter(MVM *vm, const char *name, uint argc, uint min, uint max);
+
+// Calls may omit trailing parameters that have defaults. Returns how many
+// defaults the caller must push (0 if every argument was given), or -1
+// if `argc` is out of range (then raise with arityError).
+int missingDefaults(MyMoFunction *function, int argc);
+void arityError(MVM *vm, MyMoFunction *function, int argc);
 
 void printFunction(MyMoFunction *function);
 void printClouser(MyMoClouser *clouser);

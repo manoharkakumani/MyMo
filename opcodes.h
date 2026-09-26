@@ -80,6 +80,16 @@ typedef enum
     //                            and second constant-pool operands, whose own
     //                            operand bytes hold the low bytes. Emitted
     //                            only when an index exceeds 255 (emitConstOp).
-    OP_WIDE
+    OP_WIDE,
+    //   OP_DEFAULTS <n>          stack: [d1..dn, fn] -> [fn]; sets fn's
+    //                            parameter defaults (see functionStatement)
+    OP_DEFAULTS,
+    //   OP_METV <name>           [class, value, original] -> [class]:
+    //                            install a decorated method (value = the
+    //                            decorators' result) and bind the original
+    OP_METV
 } OpCode;
+
+// Number of opcodes (keep in sync with the last enum entry).
+#define OP_COUNT (OP_METV + 1)
 #endif
