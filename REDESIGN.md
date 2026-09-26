@@ -162,12 +162,30 @@ green):
   round-trip through `valueToBoxedObject` → heap singleton (legacy
   `pop()` → `MyMoObject *`), so no semantic change. 19/19 tests
   green; bench within noise.
-- [ ] **1.5b (rest)** Builtin functions returning `NEW_BOOL` /
-  `NEW_NIL` (e.g. `dict.has_key`, `dict.pop`, `fiber.alive`, the
-  operator-overload fallback in `operations.c`) still produce heap
-  singletons. Migrate by changing the builtin signature from
-  `MyMoObject *fn(...)` to `Value fn(...)` and pushing inline. That
-  shifts the entire C-API surface and is its own diff.
+- [x] **1.5b (rest)** Builtin return type migrated: `BuiltInfunction`
+  is now `Value fn(MVM *, uint argc, MyMoObject *argv[])` (argv stays
+  boxed; migrating it is a separate step). All ~105 builtins across
+  `utils.c`, `datatypes/*`, `modules/*` and `examples/ext/*` were
+  rewritten: `NEW_NIL`→`V_NIL_VAL`, `NEW_BOOL(x)`→`V_BOOL_VAL(x)`,
+  `NEW_EMPTY`→`V_EMPTY_VAL` (new inline tag 5), and object results
+  wrapped in `objectToValue()` (`value.c`), which maps any stray
+  heap Nil/Bool/Empty singleton to its inline form, so builtins never
+  push heap singletons. `date.*` component getters return
+  `V_INT_VAL` directly. C-API: `MYMO_ERROR/NIL/TRUE/FALSE` are now
+  inline `Value`s, plus a new `MYMO_BOOL(b)`. This breaks the
+  extension ABI (rebuild `.so`/`.dylib`). All VM builtin call sites
+  (`caller()` ×3, the OP_CALL fast path) check `V_IS_EMPTY` and push
+  the `Value`. Non-builtin helpers that build container trees (json
+  parser, sqlite `column_to_object`) still use heap `NEW_NIL` /
+  `NEW_BOOL`; those go with 1.5b (final).
+  Drive-by: fixed a latent fiber stack underflow. The OP_CALL
+  builtin fast path didn't follow `caller()`'s cross-fiber callee-slot
+  convention for plain builtin functions (`yield()` via
+  OP_INVOKE_GLOBAL), so `resume` ate the child's frame-base slot and
+  OP_FRET popped below the stack bottom. HEAD had the same underflow
+  under ASan; the release build only started crashing (SIGBUS in
+  `fiber.my`) once memory layout shifted. 19/19 tests green; bench
+  identical to HEAD (loop 0.81 s, fib 0.07 s).
 - [ ] **1.5b (final)** Delete `MyMoNil` / `MyMoBool` structs and the
   `NilObject` / `TrueBool` / `FalseBool` global singletons. Drop the
   cross-form branches in `valuesEqual` (`valueIsNilAny`,

@@ -13,7 +13,7 @@
 //
 //     #include "mymo_module.h"
 //
-//     static MyMoObject *greet(MVM *vm, uint argc, MyMoObject *argv[]) {
+//     static Value greet(MVM *vm, uint argc, MyMoObject *argv[]) {
 //         const char *name;
 //         if (!mymo_parse(vm, "greet", argc, argv, "s", &name))
 //             return MYMO_ERROR;
@@ -53,11 +53,14 @@
 // ---------------------------------------------------------------------
 
 // Returned from a function that has already raised an error via
-// runtimeError(). The VM checks IS_EMPTY() and propagates the failure.
-#define MYMO_ERROR  NEW_EMPTY
-#define MYMO_NIL    NEW_NIL
-#define MYMO_TRUE   NEW_BOOL(1)
-#define MYMO_FALSE  NEW_BOOL(0)
+// runtimeError(). The VM checks V_IS_EMPTY() and propagates the failure.
+// Builtins return a Value: wrap object results with objectToValue(), or
+// use these inline singletons / the MYMO_BOOL helper directly.
+#define MYMO_ERROR  V_EMPTY_VAL
+#define MYMO_NIL    V_NIL_VAL
+#define MYMO_TRUE   V_TRUE_VAL
+#define MYMO_FALSE  V_FALSE_VAL
+#define MYMO_BOOL(b) V_BOOL_VAL(b)
 
 // ---------------------------------------------------------------------
 // TYPE PREDICATES — `o` is MyMoObject*; safe against NULL

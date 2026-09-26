@@ -43,7 +43,7 @@ static int resolve_ipv4(const char *host, struct in_addr *out)
     return 0;
 }
 
-static MyMoObject *sock_connect(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_connect(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *host;
     long port;
@@ -70,10 +70,10 @@ static MyMoObject *sock_connect(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "socket.connect(): connect() failed: %s", strerror(errno));
         return MYMO_ERROR;
     }
-    return mymo_int(vm, fd);
+    return objectToValue(mymo_int(vm, fd));
 }
 
-static MyMoObject *sock_listen(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_listen(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *host;
     long port, backlog;
@@ -110,10 +110,10 @@ static MyMoObject *sock_listen(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "socket.listen(): listen() failed: %s", strerror(errno));
         return MYMO_ERROR;
     }
-    return mymo_int(vm, fd);
+    return objectToValue(mymo_int(vm, fd));
 }
 
-static MyMoObject *sock_accept(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_accept(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long fd;
     if (!mymo_parse(vm, "socket.accept", argc, argv, "i", &fd))
@@ -125,10 +125,10 @@ static MyMoObject *sock_accept(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "socket.accept(): %s", strerror(errno));
         return MYMO_ERROR;
     }
-    return mymo_int(vm, cfd);
+    return objectToValue(mymo_int(vm, cfd));
 }
 
-static MyMoObject *sock_send(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_send(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long fd;
     const char *data; int dlen;
@@ -139,10 +139,10 @@ static MyMoObject *sock_send(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "socket.send(): %s", strerror(errno));
         return MYMO_ERROR;
     }
-    return mymo_int(vm, (long)n);
+    return objectToValue(mymo_int(vm, (long)n));
 }
 
-static MyMoObject *sock_recv(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_recv(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long fd, max_bytes;
     if (!mymo_parse(vm, "socket.recv", argc, argv, "ii", &fd, &max_bytes))
@@ -164,10 +164,10 @@ static MyMoObject *sock_recv(MVM *vm, uint argc, MyMoObject *argv[])
     }
     MyMoObject *s = mymo_strn(vm, buf, (int)n);
     free(buf);
-    return s;
+    return objectToValue(s);
 }
 
-static MyMoObject *sock_close(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_close(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long fd;
     if (!mymo_parse(vm, "socket.close", argc, argv, "i", &fd))
@@ -176,7 +176,7 @@ static MyMoObject *sock_close(MVM *vm, uint argc, MyMoObject *argv[])
     return MYMO_NIL;
 }
 
-static MyMoObject *sock_gethostname(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_gethostname(MVM *vm, uint argc, MyMoObject *argv[])
 {
     if (!mymo_check_args(vm, "socket.gethostname", argc, 0)) return MYMO_ERROR;
     char buf[256];
@@ -185,10 +185,10 @@ static MyMoObject *sock_gethostname(MVM *vm, uint argc, MyMoObject *argv[])
         return MYMO_ERROR;
     }
     buf[sizeof(buf) - 1] = '\0';
-    return mymo_str(vm, buf);
+    return objectToValue(mymo_str(vm, buf));
 }
 
-static MyMoObject *sock_resolve(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sock_resolve(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *host;
     if (!mymo_parse(vm, "socket.resolve", argc, argv, "s", &host))
@@ -200,7 +200,7 @@ static MyMoObject *sock_resolve(MVM *vm, uint argc, MyMoObject *argv[])
     }
     char buf[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &addr, buf, sizeof(buf));
-    return mymo_str(vm, buf);
+    return objectToValue(mymo_str(vm, buf));
 }
 
 MyMoObject *socketModule(MVM *vm)

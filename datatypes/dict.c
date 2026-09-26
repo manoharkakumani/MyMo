@@ -300,73 +300,73 @@ static MyMoDict *dictSelf(MVM *vm, const char *fn, int self_idx)
     return AS_DICT(function->self);
 }
 
-MyMoObject *dictGetMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value dictGetMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc < 1 || argc > 2)
     {
         runtimeError(vm, "TypeError: get() takes 1 or 2 arguments (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoDict *dict = dictSelf(vm, "get", (int)argc);
-    if (!dict) return NEW_EMPTY;
+    if (!dict) return V_EMPTY_VAL;
     // Pop args in reverse: default (if present) then key.
     MyMoObject *def = (argc == 2) ? pop(vm) : NEW_NIL;
     MyMoObject *key = pop(vm);
     MyMoObject *value = getEntry(vm, dict, key);
-    return value ? value : def;
+    return objectToValue(value ? value : def);
 }
 
-MyMoObject *dictPutMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value dictPutMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc != 2)
     {
         runtimeError(vm, "TypeError: put() takes exactly 2 arguments (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoDict *dict = dictSelf(vm, "put", 2);
-    if (!dict) return NEW_EMPTY;
+    if (!dict) return V_EMPTY_VAL;
     MyMoObject *value = pop(vm);
     MyMoObject *key = pop(vm);
     setEntry(vm, dict, key, value);
-    return value;
+    return objectToValue(value);
 }
 
-MyMoObject *dictHasMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value dictHasMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc != 1)
     {
         runtimeError(vm, "TypeError: has() takes exactly 1 argument (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoDict *dict = dictSelf(vm, "has", 1);
-    if (!dict) return NEW_EMPTY;
+    if (!dict) return V_EMPTY_VAL;
     MyMoObject *key = pop(vm);
-    return NEW_BOOL(getEntry(vm, dict, key) != NULL);
+    return V_BOOL_VAL(getEntry(vm, dict, key) != NULL);
 }
 
-MyMoObject *dictDeleteMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value dictDeleteMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc != 1)
     {
         runtimeError(vm, "TypeError: delete() takes exactly 1 argument (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoDict *dict = dictSelf(vm, "delete", 1);
-    if (!dict) return NEW_EMPTY;
+    if (!dict) return V_EMPTY_VAL;
     MyMoObject *key = pop(vm);
     bool existed = deleteEntry(vm, dict, key);
-    return NEW_BOOL(existed);
+    return V_BOOL_VAL(existed);
 }
 
-MyMoObject *dictKeysMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value dictKeysMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc != 0)
     {
         runtimeError(vm, "TypeError: keys() takes 0 arguments (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoDict *dict = dictSelf(vm, "keys", 0);
-    if (!dict) return NEW_EMPTY;
+    if (!dict) return V_EMPTY_VAL;
     MyMoList *out = newList(vm);
     for (int i = 0; i <= dict->capacity; i++)
     {
@@ -374,18 +374,18 @@ MyMoObject *dictKeysMethod(MVM *vm, uint argc, MyMoObject *args[])
         if (e->key != NULL)
             writeMyMoObjectArray(vm, &out->values, e->key);
     }
-    return AS_OBJECT(out);
+    return objectToValue(AS_OBJECT(out));
 }
 
-MyMoObject *dictValuesMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value dictValuesMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc != 0)
     {
         runtimeError(vm, "TypeError: values() takes 0 arguments (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoDict *dict = dictSelf(vm, "values", 0);
-    if (!dict) return NEW_EMPTY;
+    if (!dict) return V_EMPTY_VAL;
     MyMoList *out = newList(vm);
     for (int i = 0; i <= dict->capacity; i++)
     {
@@ -397,19 +397,19 @@ MyMoObject *dictValuesMethod(MVM *vm, uint argc, MyMoObject *args[])
             writeMyMoObjectArray(vm, &out->values, v);
         }
     }
-    return AS_OBJECT(out);
+    return objectToValue(AS_OBJECT(out));
 }
 
-MyMoObject *dictLenMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value dictLenMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc != 0)
     {
         runtimeError(vm, "TypeError: __len__() takes 0 arguments (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoDict *dict = dictSelf(vm, "__len__", 0);
-    if (!dict) return NEW_EMPTY;
-    return NEW_INT(vm, dict->count);
+    if (!dict) return V_EMPTY_VAL;
+    return objectToValue(NEW_INT(vm, dict->count));
 }
 
 void defineDictMethods(MVM *vm)

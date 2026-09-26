@@ -22,7 +22,7 @@
 #include <stdlib.h>
 
 // upper(s) — returns an upper-cased copy of s.
-static MyMoObject *upper(MVM *vm, uint argc, MyMoObject *argv[])
+static Value upper(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *s; int n;
     if (!mymo_parse(vm, "upper", argc, argv, "sn", &s, &n))
@@ -31,11 +31,11 @@ static MyMoObject *upper(MVM *vm, uint argc, MyMoObject *argv[])
     char buf[1024];
     if (n >= (int)sizeof(buf)) n = (int)sizeof(buf) - 1;
     for (int i = 0; i < n; i++) buf[i] = (char)toupper((unsigned char)s[i]);
-    return mymo_strn(vm, buf, n);
+    return objectToValue(mymo_strn(vm, buf, n));
 }
 
 // starts_with(haystack, needle) — bool.
-static MyMoObject *starts_with(MVM *vm, uint argc, MyMoObject *argv[])
+static Value starts_with(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *hay, *needle;
     int hlen, nlen;
@@ -44,11 +44,11 @@ static MyMoObject *starts_with(MVM *vm, uint argc, MyMoObject *argv[])
         return MYMO_ERROR;
 
     if (nlen > hlen) return MYMO_FALSE;
-    return memcmp(hay, needle, (size_t)nlen) == 0 ? MYMO_TRUE : MYMO_FALSE;
+    return MYMO_BOOL(memcmp(hay, needle, (size_t)nlen) == 0);
 }
 
 // repeat(s, n) — string `s` repeated `n` times.
-static MyMoObject *repeat(MVM *vm, uint argc, MyMoObject *argv[])
+static Value repeat(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *s; int slen; long n;
     if (!mymo_parse(vm, "repeat", argc, argv, "sni", &s, &slen, &n))
@@ -73,17 +73,17 @@ static MyMoObject *repeat(MVM *vm, uint argc, MyMoObject *argv[])
     for (long i = 0; i < n; i++) memcpy(buf + i * slen, s, (size_t)slen);
     MyMoObject *result = mymo_strn(vm, buf, (int)total);
     free(buf);
-    return result;
+    return objectToValue(result);
 }
 
 // length(s) — returns the byte length of a string.
 // Exposed under the name "len" via MYMO_FN_AS to demonstrate aliasing.
-static MyMoObject *string_length(MVM *vm, uint argc, MyMoObject *argv[])
+static Value string_length(MVM *vm, uint argc, MyMoObject *argv[])
 {
     MyMoString *s;
     if (!mymo_parse(vm, "len", argc, argv, "S", &s))
         return MYMO_ERROR;
-    return mymo_int(vm, s->length);
+    return objectToValue(mymo_int(vm, s->length));
 }
 
 MYMO_MODULE(strings,

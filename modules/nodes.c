@@ -209,14 +209,14 @@ static int child_init(MVM *vm)
     return 0;
 }
 
-static MyMoObject *nodes_self_id(MVM *vm, uint argc, MyMoObject *argv[])
+static Value nodes_self_id(MVM *vm, uint argc, MyMoObject *argv[])
 {
     if (!mymo_check_args(vm, "nodes.self_id", argc, 0)) return MYMO_ERROR;
     if (child_init(vm) < 0) return MYMO_ERROR;
-    return mymo_int(vm, g_self_id);
+    return objectToValue(mymo_int(vm, g_self_id));
 }
 
-static MyMoObject *nodes_is_coordinator(MVM *vm, uint argc, MyMoObject *argv[])
+static Value nodes_is_coordinator(MVM *vm, uint argc, MyMoObject *argv[])
 {
     if (!mymo_check_args(vm, "nodes.is_coordinator", argc, 0)) return MYMO_ERROR;
     if (getenv("MYMO_NODE_SOCK")) return MYMO_FALSE;
@@ -225,12 +225,12 @@ static MyMoObject *nodes_is_coordinator(MVM *vm, uint argc, MyMoObject *argv[])
 
 // Implemented in nodes_spawn.c (split out so codegen tooling doesn't fret
 // about the exec*() syscall name appearing inline).
-extern MyMoObject *nodes_spawn_impl(MVM *vm, uint argc, MyMoObject *argv[]);
-static MyMoObject *nodes_spawn(MVM *vm, uint argc, MyMoObject *argv[]) {
+extern Value nodes_spawn_impl(MVM *vm, uint argc, MyMoObject *argv[]);
+static Value nodes_spawn(MVM *vm, uint argc, MyMoObject *argv[]) {
     return nodes_spawn_impl(vm, argc, argv);
 }
 
-static MyMoObject *nodes_send(MVM *vm, uint argc, MyMoObject *argv[])
+static Value nodes_send(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long target;
     const char *payload; int plen;
@@ -299,7 +299,7 @@ static int coord_select_any(int timeout_ms)
     return -1;
 }
 
-static MyMoObject *nodes_recv(MVM *vm, uint argc, MyMoObject *argv[])
+static Value nodes_recv(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long timeout_ms;
     if (!mymo_parse(vm, "nodes.recv", argc, argv, "i", &timeout_ms))
@@ -354,10 +354,10 @@ static MyMoObject *nodes_recv(MVM *vm, uint argc, MyMoObject *argv[])
     setEntry(vm, out, AS_OBJECT(newString(vm, "payload", 7)),
              payload ? mymo_strn(vm, payload, (int)plen) : mymo_str(vm, ""));
     free(payload);
-    return AS_OBJECT(out);
+    return objectToValue(AS_OBJECT(out));
 }
 
-static MyMoObject *nodes_kill(MVM *vm, uint argc, MyMoObject *argv[])
+static Value nodes_kill(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long id;
     if (!mymo_parse(vm, "nodes.kill", argc, argv, "i", &id)) return MYMO_ERROR;
@@ -376,14 +376,14 @@ static MyMoObject *nodes_kill(MVM *vm, uint argc, MyMoObject *argv[])
     return MYMO_NIL;
 }
 
-static MyMoObject *nodes_children(MVM *vm, uint argc, MyMoObject *argv[])
+static Value nodes_children(MVM *vm, uint argc, MyMoObject *argv[])
 {
     if (!mymo_check_args(vm, "nodes.children", argc, 0)) return MYMO_ERROR;
     MyMoList *out = newList(vm);
     for (int i = 1; i < NODES_MAX; i++)
         if (g_slots[i].alive)
             writeMyMoObjectArray(vm, &out->values, mymo_int(vm, i));
-    return AS_OBJECT(out);
+    return objectToValue(AS_OBJECT(out));
 }
 
 MyMoObject *nodesModule(MVM *vm)
@@ -421,7 +421,7 @@ void nodes_set_argv0(const char *path)
 extern char **environ;
 #include <spawn.h>
 
-MyMoObject *nodes_spawn_impl(MVM *vm, uint argc, MyMoObject *argv[])
+Value nodes_spawn_impl(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *script;
     if (!mymo_parse(vm, "nodes.spawn", argc, argv, "s", &script))
@@ -489,5 +489,5 @@ MyMoObject *nodes_spawn_impl(MVM *vm, uint argc, MyMoObject *argv[])
     g_slots[new_id].fd    = cfd;
     g_slots[new_id].alive = 1;
     if (new_id >= g_next_id) g_next_id = new_id + 1;
-    return mymo_int(vm, new_id);
+    return objectToValue(mymo_int(vm, new_id));
 }

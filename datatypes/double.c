@@ -28,26 +28,26 @@ void printDouble(MyMoDouble *number)
     printf("%.16g", number->value);
 }
 
-MyMoObject *newDoubleMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value newDoubleMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc > 1)
     {
         runtimeError(vm, "double() takes  1 argument (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     else if (argc == 0)
     {
-        return NEW_DOUBLE(vm, 0);
+        return objectToValue(NEW_DOUBLE(vm, 0));
     }
     else
     {
         if (IS_DOUBLE(args[0]))
         {
-            return pop(vm);
+            return objectToValue(pop(vm));
         }
         else if (IS_INT(args[0]))
         {
-            return NEW_DOUBLE(vm, (double)INT_VAL(pop(vm)));
+            return objectToValue(NEW_DOUBLE(vm, (double)INT_VAL(pop(vm))));
         }
         else if (IS_STRING(args[0]))
         {
@@ -57,14 +57,14 @@ MyMoObject *newDoubleMethod(MVM *vm, uint argc, MyMoObject *args[])
             if (*end != '\0')
             {
                 runtimeError(vm, "invalid literal for double(): '%s'", str);
-                return NEW_EMPTY;
+                return V_EMPTY_VAL;
             }
-            return NEW_DOUBLE(vm, value);
+            return objectToValue(NEW_DOUBLE(vm, value));
         }
         else
         {
             runtimeError(vm, "invalid literal for double(): '%s'", getType(args[0]));
-            return NEW_EMPTY;
+            return V_EMPTY_VAL;
         }
     }
 }

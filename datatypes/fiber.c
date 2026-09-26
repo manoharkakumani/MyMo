@@ -60,46 +60,46 @@ void printFiber(MyMoFiber *fiber)
     printf("<object fiber of %s at %p>", fiber->callFrames[0]->function->name->value, fiber);
 }
 
-MyMoObject *newFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value newFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc != 1)
     {
         runtimeError(vm, "__new__() takes exactly 1 argument (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoObject *function = pop(vm);
     if (!IS_FUNCTION(args[0]))
     {
         runtimeError(vm, "fiber() takes a <object 'function'> as argument but %s is given", getType(function));
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
-    return NEW_FIBER(vm, AS_FUNCTION(function));
+    return objectToValue(NEW_FIBER(vm, AS_FUNCTION(function)));
 }
 
-MyMoObject *runFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value runFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     MyMoBuiltInFunction *function = AS_BUILTIN_FUNCTION(peek(vm, argc));
     if (function->self == NULL)
     {
         runtimeError(vm, "TypeError: run() can only be applied on instance");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoFiber *fiber = AS_FIBER(function->self);
     if (fiber->state == FIBER_RUNNING)
     {
         runtimeError(vm, "RuntimeError: cannot run a running fiber");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     else if (fiber->state == FIBER_YIELD)
     {
         runtimeError(vm, "RuntimeError: cannot run a yielded fiber");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     CallFrame *frame = fiber->callFrames[0];
     if (frame->function->argc != argc)
     {
         runtimeError(vm, "TypeError: %s() takes exactly %d arguments (%d given)", frame->function->name->value, frame->function->argc, argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoFunction *fiberFunction = frame->function;
     if (fiber->state == FIBER_DEAD)
@@ -117,32 +117,32 @@ MyMoObject *runFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
     fiber->parent = vm->fiber;
     vm->fiber = fiber;
     push(vm, AS_OBJECT(function));
-    return AS_OBJECT(fiberFunction);
+    return objectToValue(AS_OBJECT(fiberFunction));
 }
 
-MyMoObject *resumFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value resumFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     MyMoBuiltInFunction *function = AS_BUILTIN_FUNCTION(peek(vm, argc));
     if (function->self == NULL)
     {
         runtimeError(vm, "TypeError: resume() can only be applied on instance");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoFiber *fiber = AS_FIBER(function->self);
     if (fiber->state == FIBER_DEAD)
     {
         runtimeError(vm, "RuntimeError: cannot resume a dead fiber");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     else if (fiber->state == FIBER_RUNNING)
     {
         runtimeError(vm, "RuntimeError: cannot resume a running fiber");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     else if (fiber->state == FIBER_READY)
     {
         runtimeError(vm, "RuntimeError: cannot resume a ready fiber");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoObject *value = NEW_NIL;
     if (argc)
@@ -150,54 +150,54 @@ MyMoObject *resumFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
         if (argc > 1)
         {
             runtimeError(vm, "TypeError: resume() takes exactly 0 or 1 argument (%d given)", argc);
-            return NEW_EMPTY;
+            return V_EMPTY_VAL;
         }
         value = pop(vm);
     }
     fiber->state = FIBER_RUNNING;
     fiber->parent = vm->fiber;
     vm->fiber = fiber;
-    return value;
+    return objectToValue(value);
 }
 
-MyMoObject *aliveFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value aliveFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc != 0)
     {
         runtimeError(vm, "alive() takes exactly 0 arguments (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoBuiltInFunction *function = AS_BUILTIN_FUNCTION(peek(vm, argc));
     if (function->self == NULL)
     {
         runtimeError(vm, "TypeError: alive() can only be applied on instance");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoFiber *fiber = AS_FIBER(function->self);
-    return NEW_BOOL(fiber->state != FIBER_DEAD);
+    return V_BOOL_VAL(fiber->state != FIBER_DEAD);
 }
 
-MyMoObject *killFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value killFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc != 0)
     {
         runtimeError(vm, "kill() takes exactly 0 arguments (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoBuiltInFunction *function = AS_BUILTIN_FUNCTION(peek(vm, argc));
     if (function->self == NULL)
     {
         runtimeError(vm, "TypeError: kill() can only be applied on instance");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoFiber *fiber = AS_FIBER(function->self);
     if (fiber->state == FIBER_DEAD)
     {
         runtimeError(vm, "RuntimeError: cannot kill a dead fiber");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     fiber->state = FIBER_DEAD;
-    return NEW_BOOL(1);
+    return V_BOOL_VAL(1);
 }
 
 void defineFiberMethods(MVM *vm)

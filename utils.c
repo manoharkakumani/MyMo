@@ -18,25 +18,25 @@ typedef struct _stat  Stat;
 typedef struct stat  Stat;
 #endif
 
-MyMoObject *clockfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value clockfn(MVM *vm, uint argc, MyMoObject *argv[])
 {
     UNUSED(vm);
     UNUSED(argv);
     if (argc)
     {
         runtimeError(vm, "TypeError: clock() takes no arguments (%d given).", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
-    return NEW_DOUBLE(vm, (double)clock() / CLOCKS_PER_SEC);
+    return objectToValue(NEW_DOUBLE(vm, (double)clock() / CLOCKS_PER_SEC));
 }
 
 
-MyMoObject *inputfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value inputfn(MVM *vm, uint argc, MyMoObject *argv[])
 {
     if (argc > 1)
     {
         runtimeError(vm, "TypeError: input() takes 1 argument (%d given).", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     if (argc != 0)
     {
@@ -44,7 +44,7 @@ MyMoObject *inputfn(MVM *vm, uint argc, MyMoObject *argv[])
         if (!IS_STRING(prompt))
         {
             runtimeError(vm, "TypeError: input() only takes a <object 'str'> got %s.", getType(prompt));
-            return NEW_EMPTY;
+            return V_EMPTY_VAL;
         }
         printf("%s", STRING_VAL(prompt));
     }
@@ -66,16 +66,16 @@ MyMoObject *inputfn(MVM *vm, uint argc, MyMoObject *argv[])
     line[i] = '\0';
     MyMoObject *l = AS_OBJECT(NEW_STRING(vm, line, strlen(line)));
     free(line);
-    return l;
+    return objectToValue(l);
 }
 
-MyMoObject *printfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value printfn(MVM *vm, uint argc, MyMoObject *argv[])
 {
     UNUSED(vm);
     if (argc == 0)
     {
         printf("\n");
-        return NEW_BOOL(0);
+        return V_BOOL_VAL(0);
     }
     int i = 0;
     for (i = 0; i < (argc - 1); i++)
@@ -87,101 +87,101 @@ MyMoObject *printfn(MVM *vm, uint argc, MyMoObject *argv[])
     printObject(argv[i]);
     pop(vm);
     printf("\n");
-    return NEW_BOOL(1);
+    return V_BOOL_VAL(1);
 }
 
-MyMoObject *typefn(MVM *vm, uint argc, MyMoObject *argv[])
+Value typefn(MVM *vm, uint argc, MyMoObject *argv[])
 {
     UNUSED(vm);
     if (argc != 1)
     {
         runtimeError(vm, "type() only takes 1 argument");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     char *type = getType(pop(vm));
-    return NEW_STRING(vm, type, strlen(type));
+    return objectToValue(NEW_STRING(vm, type, strlen(type)));
 }
 
-MyMoObject *globalsfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value globalsfn(MVM *vm, uint argc, MyMoObject *argv[])
 {
     if (argc)
     {
         runtimeError(vm, "globals() takes no arguments (%d given).", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
-    return AS_OBJECT(&vm->globals);
+    return objectToValue(AS_OBJECT(&vm->globals));
 }
 
-MyMoObject *compilefn(MVM *vm, uint argc, MyMoObject *argv[])
+Value compilefn(MVM *vm, uint argc, MyMoObject *argv[])
 {
     if (argc != 1)
     {
         runtimeError(vm, "TypeError: compile() takes 1 argument (%d given).", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     if (!IS_STRING(argv[0]))
     {
         runtimeError(vm, "TypeError: compile() takes a <object 'str'> argument but got %s.", getType(argv[0]));
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     char *source = STRING_VAL(pop(vm));
     MyMoCode *code = newCode(vm);
     MyMoFunction *function = compile(code->vm, source, "@compile", COMPILE_STRING);
     if (function == NULL)
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     code->function = function;
-    return AS_OBJECT(code);
+    return objectToValue(AS_OBJECT(code));
 }
 
-MyMoObject *execfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value execfn(MVM *vm, uint argc, MyMoObject *argv[])
 {
     if (argc != 1)
     {
         runtimeError(vm, "TypeError: exec() takes 1 argument (%d given).", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     if (!(IS_CODE(argv[0])))
     {
         runtimeError(vm, "TypeError: exec() takes <object 'code'> got %s.",getType(argv[0]));
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoCode *code = AS_CODE(pop(vm));
     I_Result result = interpreter(code->vm, code->function);
     if (result == RUNTIME_ERROR)
-        return NEW_EMPTY;
-    return NEW_BOOL(1);
+        return V_EMPTY_VAL;
+    return V_BOOL_VAL(1);
 }
 
-MyMoObject *lenfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value lenfn(MVM *vm, uint argc, MyMoObject *argv[])
 {
     if (argc != 1)
     {
         runtimeError(vm, "TypeError: len() takes 1 argument (%d given).", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoObject *obj = pop(vm);
     switch (obj->type)
     {
     case OBJ_STRING:
-        return NEW_INT(vm, AS_STRING(obj)->length);
+        return objectToValue(NEW_INT(vm, AS_STRING(obj)->length));
     case OBJ_LIST:
-        return NEW_INT(vm, AS_LIST(obj)->values.count);
+        return objectToValue(NEW_INT(vm, AS_LIST(obj)->values.count));
     case OBJ_TUPLE:
-        return NEW_INT(vm, AS_TUPLE(obj)->values.count);
+        return objectToValue(NEW_INT(vm, AS_TUPLE(obj)->values.count));
     case OBJ_DICT:
-        return NEW_INT(vm, AS_DICT(obj)->count);
+        return objectToValue(NEW_INT(vm, AS_DICT(obj)->count));
     default:
         runtimeError(vm, "TypeError: %s has no len()", getType(obj));
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
 }
 
-MyMoObject *yieldfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value yieldfn(MVM *vm, uint argc, MyMoObject *argv[])
 {
     if (argc > 1)
     {
         runtimeError(vm, "TypeError: yeild() takes 0 or 1 argument (%d given).", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoObject *obj = NEW_NIL;
     if (argc)
@@ -190,10 +190,10 @@ MyMoObject *yieldfn(MVM *vm, uint argc, MyMoObject *argv[])
     }
     vm->fiber->state = FIBER_YIELD;
     vm->fiber = vm->fiber->parent;
-    return obj;
+    return objectToValue(obj);
 }
 
-// MyMoObject *awaitfn(MVM *vm, uint argc, MyMoObject *argv[])
+// Value awaitfn(MVM *vm, uint argc, MyMoObject *argv[])
 // {
 //     if (argc > 1)
 //     {
@@ -214,18 +214,18 @@ MyMoObject *yieldfn(MVM *vm, uint argc, MyMoObject *argv[])
 //     return obj;
 // }
 
-MyMoObject *superfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value superfn(MVM *vm, uint argc, MyMoObject *argv[])
 {
     MyMoFunction *function = vm->fiber->callFrames[vm->fiber->frameCount]->function;
     MyMoObject *klass = function ->klass; 
     switch(argc){
         case 0:{
             if(function->type > FN_METHOD){
-                return klass;
+                return objectToValue(klass);
             }
             else{
                 MyMoClass *superClass = AS_CLASS(klass);
-                return superClass->superClasses.objects[superClass->superClasses.count-1];
+                return objectToValue(superClass->superClasses.objects[superClass->superClasses.count-1]);
             }
         }
         case 1:{
@@ -234,22 +234,22 @@ MyMoObject *superfn(MVM *vm, uint argc, MyMoObject *argv[])
                 if (!(IS_CLASS(object)))
                 {
                     runtimeError(vm, "TypeError: super() expected <object 'class'>  got %s.",getType(object));
-                    return NEW_EMPTY;
+                    return V_EMPTY_VAL;
                 }
                 MyMoClass *superClass = AS_CLASS(object);
-                return superClass->superClasses.count ? superClass->superClasses.objects[superClass->superClasses.count - 1] : klass;
+                return objectToValue(superClass->superClasses.count ? superClass->superClasses.objects[superClass->superClasses.count - 1] : klass);
             }
             else{
                 if (!(IS_INT(object)))
                 {
                     runtimeError(vm, "TypeError: super() expected <object 'int'>  got %s.",getType(object));
-                    return NEW_EMPTY;
+                    return V_EMPTY_VAL;
                 }
                 MyMoClass *superClass = AS_CLASS(klass);
                 if(INT_VAL(object) > (superClass->superClasses.count - 1) || INT_VAL(object) < 0 ){
-                    return AS_OBJECT(vm->builtInClasses[OBJ_OBJECT]);
+                    return objectToValue(AS_OBJECT(vm->builtInClasses[OBJ_OBJECT]));
                 }
-                return superClass->superClasses.objects[superClass->superClasses.count - INT_VAL(object) -1];
+                return objectToValue(superClass->superClasses.objects[superClass->superClasses.count - INT_VAL(object) -1]);
             }
         }
         case 2:{
@@ -257,25 +257,25 @@ MyMoObject *superfn(MVM *vm, uint argc, MyMoObject *argv[])
             MyMoObject *object2 = pop(vm);
             if(!(IS_CLASS(object2))){
                 runtimeError(vm, "TypeError: super() expected <object 'class'> as 1st argv got %s.",getType(object2));
-                return NEW_EMPTY;
+                return V_EMPTY_VAL;
             }
             if(!(IS_INT(object1))){
                 runtimeError(vm, "TypeError: super() expected < object 'int'> as 2st argv got %s.",getType(object1));
-                return NEW_EMPTY;
+                return V_EMPTY_VAL;
             }            
             MyMoClass *superClass = AS_CLASS(object2);
             if(INT_VAL(object1) > (superClass->superClasses.count - 1) || INT_VAL(object1) < 0 ){
-                return AS_OBJECT(vm->builtInClasses[OBJ_OBJECT]);
+                return objectToValue(AS_OBJECT(vm->builtInClasses[OBJ_OBJECT]));
             }
-            return superClass->superClasses.count ? superClass->superClasses.objects[superClass->superClasses.count - INT_VAL(object1)-1 ] : klass;
+            return objectToValue(superClass->superClasses.count ? superClass->superClasses.objects[superClass->superClasses.count - INT_VAL(object1)-1 ] : klass);
         }
         default:{
             runtimeError(vm, "TypeError: super() takes 0 or 1 or 2 argument (%d given).", argc);
-            return NEW_EMPTY;
+            return V_EMPTY_VAL;
         }
     }
 
-    return NEW_NIL;
+    return V_NIL_VAL;
 }
 
 void defineBuiltInFunction(MVM *vm, const char *name, BuiltInfunction function)

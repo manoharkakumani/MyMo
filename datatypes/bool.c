@@ -27,16 +27,16 @@ void boolean(MVM *vm)
     TrueBool->value = true;
 }
 
-MyMoObject *newBoolMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value newBoolMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc > 1)
     {
         runtimeError(vm, "bool() takes  1 argument (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     else if (argc == 0)
     {
-        return NEW_BOOL(0);
+        return V_BOOL_VAL(0);
     }
     else
     {
@@ -45,35 +45,35 @@ MyMoObject *newBoolMethod(MVM *vm, uint argc, MyMoObject *args[])
             long value = INT_VAL(pop(vm));
             if (value)
             {
-                return NEW_BOOL(1);
+                return V_BOOL_VAL(1);
             }
-            return NEW_BOOL(0);
+            return V_BOOL_VAL(0);
         }
         else if (IS_DOUBLE(args[0]))
         {
             double value = DOUBLE_VAL(pop(vm));
             if (value)
             {
-                return NEW_BOOL(1);
+                return V_BOOL_VAL(1);
             }
-            return NEW_BOOL(0);
+            return V_BOOL_VAL(0);
         }
         else if (IS_STRING(args[0]))
         {
             MyMoString *string = (MyMoString *)pop(vm);
             if (string->length)
             {
-                return NEW_BOOL(1);
+                return V_BOOL_VAL(1);
             }
-            return NEW_BOOL(0);
+            return V_BOOL_VAL(0);
         }
         else if (IS_BOOL(args[0]))
         {
-            return pop(vm);
+            return objectToValue(pop(vm));
         }
         else
         {
-            return NEW_BOOL(1);
+            return V_BOOL_VAL(1);
         }
     }
 }

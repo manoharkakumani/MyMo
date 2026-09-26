@@ -41,13 +41,13 @@ static struct tm to_utc(time_t t)
 }
 
 #define COMPONENT_FN(NAME, EXPR)                                            \
-    static MyMoObject *date_##NAME(MVM *vm, uint argc, MyMoObject *argv[])  \
+    static Value date_##NAME(MVM *vm, uint argc, MyMoObject *argv[])        \
     {                                                                       \
         double epoch;                                                       \
         if (!mymo_parse(vm, "date." #NAME, argc, argv, "d", &epoch))        \
             return MYMO_ERROR;                                              \
         struct tm tm = to_local((time_t)epoch);                             \
-        return mymo_int(vm, (long)(EXPR));                                  \
+        return V_INT_VAL(EXPR);                                             \
     }
 
 COMPONENT_FN(year,    tm.tm_year + 1900)
@@ -61,17 +61,17 @@ COMPONENT_FN(yearday, tm.tm_yday + 1)
 
 #undef COMPONENT_FN
 
-static MyMoObject *date_iso(MVM *vm, uint argc, MyMoObject *argv[])
+static Value date_iso(MVM *vm, uint argc, MyMoObject *argv[])
 {
     double epoch;
     if (!mymo_parse(vm, "date.iso", argc, argv, "d", &epoch)) return MYMO_ERROR;
     struct tm tm = to_utc((time_t)epoch);
     char buf[32];
     size_t n = strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
-    return mymo_strn(vm, buf, (int)n);
+    return objectToValue(mymo_strn(vm, buf, (int)n));
 }
 
-static MyMoObject *date_parse(MVM *vm, uint argc, MyMoObject *argv[])
+static Value date_parse(MVM *vm, uint argc, MyMoObject *argv[])
 {
 #ifdef _WIN32
     runtimeError(vm, "date.parse(): not implemented on Windows");
@@ -95,11 +95,11 @@ static MyMoObject *date_parse(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "date.parse(): mktime failed");
         return MYMO_ERROR;
     }
-    return mymo_int(vm, (long)t);
+    return objectToValue(mymo_int(vm, (long)t));
 #endif
 }
 
-static MyMoObject *date_make(MVM *vm, uint argc, MyMoObject *argv[])
+static Value date_make(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long y, mo, d, h, mi, s;
     if (!mymo_parse(vm, "date.make", argc, argv, "iiiiii",
@@ -120,7 +120,7 @@ static MyMoObject *date_make(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "date.make(): invalid date");
         return MYMO_ERROR;
     }
-    return mymo_int(vm, (long)t);
+    return objectToValue(mymo_int(vm, (long)t));
 }
 
 MyMoObject *dateModule(MVM *vm)

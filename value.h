@@ -30,6 +30,7 @@ typedef uint64_t Value;
 #define V_TAG_FALSE 2ULL
 #define V_TAG_TRUE  3ULL
 #define V_TAG_INT   4ULL
+#define V_TAG_EMPTY 5ULL  // builtin error sentinel; never stored or user-visible
 #define V_TAG_MASK  0x7ULL
 
 // ---- Type predicates -------------------------------------------------------
@@ -41,6 +42,7 @@ typedef uint64_t Value;
 #define V_IS_TRUE(v)   ((v) == (V_QNAN | V_TAG_TRUE))
 #define V_IS_BOOL(v)   (((v) | 1ULL) == (V_QNAN | V_TAG_TRUE))
 #define V_IS_INT(v)    ((!V_IS_OBJ(v)) && (((v) & (V_QNAN | V_TAG_MASK)) == (V_QNAN | V_TAG_INT)))
+#define V_IS_EMPTY(v)  ((v) == (V_QNAN | V_TAG_EMPTY))
 #define V_IS_NUMBER(v) (V_IS_INT(v) || V_IS_DOUBLE(v))
 
 // ---- Singletons ------------------------------------------------------------
@@ -49,6 +51,8 @@ typedef uint64_t Value;
 #define V_FALSE_VAL ((Value)(V_QNAN | V_TAG_FALSE))
 #define V_TRUE_VAL  ((Value)(V_QNAN | V_TAG_TRUE))
 #define V_BOOL_VAL(b) ((b) ? V_TRUE_VAL : V_FALSE_VAL)
+// Returned by a builtin that already raised via runtimeError().
+#define V_EMPTY_VAL ((Value)(V_QNAN | V_TAG_EMPTY))
 
 // ---- Int packing -----------------------------------------------------------
 // 32-bit signed int packed into bits 35..4. Wider ints fall back to a heap
@@ -173,6 +177,11 @@ static inline double valueAsNumber(Value v) {
     if (o->type == OBJ_INT)    return (double)((MyMoInt *)o)->value;
     return ((MyMoDouble *)o)->value;
 }
+
+// Inverse of valueToBoxedObject for builtin return values: maps the
+// legacy heap singletons (NilObject / TrueBool / FalseBool / EmptyObject)
+// to their inline encodings so they never reach the operand stack.
+Value objectToValue(MyMoObject *o);
 
 // Allocates a MyMoInt for inline ints; legacy boxing helper.
 MyMoObject *valueToBoxedObject(MVM *vm, Value v);

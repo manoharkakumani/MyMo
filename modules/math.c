@@ -5,94 +5,94 @@
 #define FLOAT_TOLERANCE 0.00001
 
 
-MyMoObject *floorfn(MVM *vm, uint argc, MyMoObject *argv[])
+Value floorfn(MVM *vm, uint argc, MyMoObject *argv[])
 {
     if (argc != 1)
     {
         runtimeError(vm, "TypeError: math.floor()  takes 1 argument (%d given).", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     if (!IS_NUMBER(argv[0]))
     {
         runtimeError(vm, "TypeError: must be <object 'int'> or <object 'double'>, not (%s)",getType(argv[0]));
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     // NUMBER_VAL is a macro that expands its argument three times,
     // so `NUMBER_VAL(pop(vm))` used to pop three values off the
     // stack and segfault. Pop once into a local, then read it.
     MyMoObject *object = pop(vm);
-    return NEW_INT(vm, floor(NUMBER_VAL(object)));
+    return objectToValue(NEW_INT(vm, floor(NUMBER_VAL(object))));
 }
 
-MyMoObject *ceilfn(MVM *vm, uint argc, MyMoObject *argv[]) 
+Value ceilfn(MVM *vm, uint argc, MyMoObject *argv[]) 
 {
     if (argc != 1) 
     {
         runtimeError(vm, "TypeError: math.ceil() takes 1 argument (%d given).", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
 
     if (!IS_NUMBER(argv[0])) 
     {
         runtimeError(vm, "TypeError: must be <object 'int'> or <object 'double'>, not (%s)",getType(argv[0]));
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoObject *object = pop(vm);
-    return NEW_INT(vm, ceil(NUMBER_VAL(object)));
+    return objectToValue(NEW_INT(vm, ceil(NUMBER_VAL(object))));
 }
 
-MyMoObject *sqrtfn(MVM *vm, uint argc, MyMoObject *argv[]) {
+Value sqrtfn(MVM *vm, uint argc, MyMoObject *argv[]) {
     if (argc != 1) {
         runtimeError(vm, "TypeError: math.sqrt() takes 1 argument (%d given).", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     if (!IS_NUMBER(argv[0])) {
         runtimeError(vm, "TypeError: must be <object 'int'> or <object 'double'>, not (%s)",getType(argv[0]));
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoObject *object = pop(vm);
-    return NEW_DOUBLE(vm, sqrt(NUMBER_VAL(object)));
+    return objectToValue(NEW_DOUBLE(vm, sqrt(NUMBER_VAL(object))));
 }
 
-MyMoObject *sinfn(MVM *vm, uint argc, MyMoObject *argv[]) {
+Value sinfn(MVM *vm, uint argc, MyMoObject *argv[]) {
     if (argc != 1) {
         runtimeError(vm, "TypeError: math.sin() takes 1 argument (%d given).", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     if (!IS_NUMBER(argv[0])) {
         runtimeError(vm, "A non-number value passed to sin()");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoObject *object = pop(vm);
-    return NEW_DOUBLE(vm, sin(NUMBER_VAL(object)));
+    return objectToValue(NEW_DOUBLE(vm, sin(NUMBER_VAL(object))));
 }
 
-MyMoObject *cosfn(MVM *vm, uint argc, MyMoObject *argv[]) {
+Value cosfn(MVM *vm, uint argc, MyMoObject *argv[]) {
     if (argc != 1) {
         runtimeError(vm, "TypeError: math.cos() takes 1 argument (%d given).", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
 
     if (!IS_NUMBER(argv[0])) {
         runtimeError(vm, "A non-number value passed to cos()");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoObject *object = pop(vm);
-    return NEW_DOUBLE(vm, cos(NUMBER_VAL(object)));
+    return objectToValue(NEW_DOUBLE(vm, cos(NUMBER_VAL(object))));
 }
 
-MyMoObject *tanfn(MVM *vm, uint argc, MyMoObject *argv[]) {
+Value tanfn(MVM *vm, uint argc, MyMoObject *argv[]) {
     if (argc != 1) {
         runtimeError(vm, "TypeError: math.tan() takes 1 argument (%d given).", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
 
     if (!IS_NUMBER(argv[0])) {
         runtimeError(vm, "A non-number value passed to tan()");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoObject *object = pop(vm);
-    return NEW_DOUBLE(vm, tan(NUMBER_VAL(object)));
+    return objectToValue(NEW_DOUBLE(vm, tan(NUMBER_VAL(object))));
 }
 
 // static long long gcd(long long a, long long b) {

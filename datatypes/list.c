@@ -44,12 +44,12 @@ MyMoObject *getValueByIndex(MyMoList *list, uint index)
     }
 }
 
-MyMoObject *newListMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value newListMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
 
     if (argc == 0)
     {
-        return AS_OBJECT(newList(vm));
+        return objectToValue(AS_OBJECT(newList(vm)));
     }
     else if (argc > 1)
     {
@@ -62,7 +62,7 @@ MyMoObject *newListMethod(MVM *vm, uint argc, MyMoObject *args[])
         {
             pop(vm);
         }
-        return AS_OBJECT(list);
+        return objectToValue(AS_OBJECT(list));
     }
     else
     {
@@ -75,7 +75,7 @@ MyMoObject *newListMethod(MVM *vm, uint argc, MyMoObject *args[])
             {
                 writeMyMoObjectArray(vm, &copyList->values, list->values.objects[i]);
             }
-            return AS_OBJECT(copyList);
+            return objectToValue(AS_OBJECT(copyList));
         }
         else if (IS_TUPLE(object))
         {
@@ -85,7 +85,7 @@ MyMoObject *newListMethod(MVM *vm, uint argc, MyMoObject *args[])
             {
                 writeMyMoObjectArray(vm, &list->values, tuple->values.objects[i]);
             }
-            return AS_OBJECT(list);
+            return objectToValue(AS_OBJECT(list));
         }
         else if (IS_STRING(object))
         {
@@ -95,80 +95,80 @@ MyMoObject *newListMethod(MVM *vm, uint argc, MyMoObject *args[])
             {
                 writeMyMoObjectArray(vm, &list->values, NEW_STRING(vm, &string->value[i], 1));
             }
-            return AS_OBJECT(list);
+            return objectToValue(AS_OBJECT(list));
         }
         else
         {
             MyMoList *list = newList(vm);
             writeMyMoObjectArray(vm, &list->values, object);
-            return AS_OBJECT(list);
+            return objectToValue(AS_OBJECT(list));
         }
     }
 }
 
-MyMoObject *lenListMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value lenListMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc)
     {
         runtimeError(vm, "TypeError: __len__() takes no arguments (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoBuiltInFunction *function = AS_BUILTIN_FUNCTION(peek(vm, 0));
     if (function->self == NULL)
     {
         runtimeError(vm, "TypeError: __len__() can only be applied on instance");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
-    return NEW_INT(vm, AS_LIST(function->self)->values.count);
+    return objectToValue(NEW_INT(vm, AS_LIST(function->self)->values.count));
 }
 
-MyMoObject *appendListMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value appendListMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc != 1)
     {
         runtimeError(vm, "TypeError: append() takes exactly one argument (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoBuiltInFunction *function = AS_BUILTIN_FUNCTION(peek(vm, 1));
     if (function->self == NULL)
     {
         runtimeError(vm, "TypeError: append() can only be applied on instance");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoList *list = AS_LIST(function->self);
     writeMyMoObjectArray(vm, &list->values, pop(vm));
-    return NEW_NIL;
+    return V_NIL_VAL;
 }
 
-MyMoObject *copyListMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value copyListMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc)
     {
         runtimeError(vm, "TypeError: copy() takes zero argument (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoList *copyList = newList(vm);
     MyMoBuiltInFunction *function = AS_BUILTIN_FUNCTION(peek(vm, 0));
     if (function->self == NULL)
     {
         runtimeError(vm, "TypeError: copy() can only be applied on instance");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoList *list = AS_LIST(function->self);
     for (int i = 0; i < list->values.count; i++)
     {
         writeMyMoObjectArray(vm, &copyList->values, list->values.objects[i]);
     }
-    return AS_OBJECT(copyList);
+    return objectToValue(AS_OBJECT(copyList));
 }
 
-MyMoObject *addListMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value addListMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     MyMoList *resultList = newList(vm);
     if (!(IS_LIST(peek(vm,0))) || !(IS_LIST(peek(vm,1))))
     {
         runtimeError(vm, "TypeError: can't perform + between  %s and %s", getType(peek(vm,1)), getType(peek(vm,0)));
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoList *bList = AS_LIST(pop(vm));
     MyMoList *aList = AS_LIST(pop(vm));
@@ -181,7 +181,7 @@ MyMoObject *addListMethod(MVM *vm, uint argc, MyMoObject *args[])
     {
         writeMyMoObjectArray(vm, &resultList->values, bList->values.objects[i]);
     }
-    return AS_OBJECT(resultList);
+    return objectToValue(AS_OBJECT(resultList));
 }
 
 void defineListMethods(MVM *vm)

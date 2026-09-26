@@ -40,7 +40,7 @@
 #include <errno.h>
 #include <ctype.h>
 
-static MyMoObject *srv_listen(MVM *vm, uint argc, MyMoObject *argv[])
+static Value srv_listen(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *host;
     long port, backlog;
@@ -77,7 +77,7 @@ static MyMoObject *srv_listen(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "server.listen(): listen(): %s", strerror(errno));
         return MYMO_ERROR;
     }
-    return mymo_int(vm, fd);
+    return objectToValue(mymo_int(vm, fd));
 }
 
 // Read until we see "\r\n\r\n" or buffer fills. Returns total bytes read or -1.
@@ -105,7 +105,7 @@ static void lower_inplace(char *s, size_t n)
     for (size_t i = 0; i < n; i++) s[i] = (char)tolower((unsigned char)s[i]);
 }
 
-static MyMoObject *srv_accept(MVM *vm, uint argc, MyMoObject *argv[])
+static Value srv_accept(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long sfd;
     if (!mymo_parse(vm, "server.accept", argc, argv, "i", &sfd))
@@ -215,7 +215,7 @@ static MyMoObject *srv_accept(MVM *vm, uint argc, MyMoObject *argv[])
     setEntry(vm, req, AS_OBJECT(newString(vm, "body", 4)),
              body ? mymo_strn(vm, body, (int)body_len) : mymo_str(vm, ""));
     free(body);
-    return AS_OBJECT(req);
+    return objectToValue(AS_OBJECT(req));
 }
 
 static int send_all(int fd, const char *data, size_t len)
@@ -229,10 +229,10 @@ static int send_all(int fd, const char *data, size_t len)
     return 0;
 }
 
-static MyMoObject *do_respond(MVM *vm, const char *fn,
-                              long cfd, long status,
-                              const char *body, int blen,
-                              const char *content_type)
+static Value do_respond(MVM *vm, const char *fn,
+                        long cfd, long status,
+                        const char *body, int blen,
+                        const char *content_type)
 {
     char head[512];
     int n = snprintf(head, sizeof(head),
@@ -253,7 +253,7 @@ static MyMoObject *do_respond(MVM *vm, const char *fn,
     return MYMO_NIL;
 }
 
-static MyMoObject *srv_respond(MVM *vm, uint argc, MyMoObject *argv[])
+static Value srv_respond(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long cfd, status;
     const char *body; int blen;
@@ -264,7 +264,7 @@ static MyMoObject *srv_respond(MVM *vm, uint argc, MyMoObject *argv[])
                       "text/plain; charset=utf-8");
 }
 
-static MyMoObject *srv_respond_json(MVM *vm, uint argc, MyMoObject *argv[])
+static Value srv_respond_json(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long cfd, status;
     const char *body; int blen;
@@ -275,7 +275,7 @@ static MyMoObject *srv_respond_json(MVM *vm, uint argc, MyMoObject *argv[])
                       "application/json");
 }
 
-static MyMoObject *srv_close(MVM *vm, uint argc, MyMoObject *argv[])
+static Value srv_close(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long fd;
     if (!mymo_parse(vm, "server.close", argc, argv, "i", &fd)) return MYMO_ERROR;

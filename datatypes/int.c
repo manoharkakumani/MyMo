@@ -27,26 +27,26 @@ void printInt(MyMoInt *number)
     printf("%ld", number->value);
 }
 
-MyMoObject *newIntMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value newIntMethod(MVM *vm, uint argc, MyMoObject *args[])
 {
     if (argc > 1)
     {
         runtimeError(vm, "int() takes  1 argument (%d given)", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     else if (argc == 0)
     {
-        return NEW_INT(vm, 0);
+        return objectToValue(NEW_INT(vm, 0));
     }
     else
     {
         if (IS_INT(args[0]))
         {
-            return pop(vm);
+            return objectToValue(pop(vm));
         }
         else if (IS_DOUBLE(args[0]))
         {
-            return NEW_INT(vm, (long)DOUBLE_VAL(pop(vm)));
+            return objectToValue(NEW_INT(vm, (long)DOUBLE_VAL(pop(vm))));
         }
         else if (IS_STRING(args[0]))
         {
@@ -56,15 +56,15 @@ MyMoObject *newIntMethod(MVM *vm, uint argc, MyMoObject *args[])
             if (*end != '\0')
             {
                 runtimeError(vm, "invalid literal for int(): '%s'", str);
-                return NEW_EMPTY;
+                return V_EMPTY_VAL;
             }
-            return NEW_INT(vm, value);
+            return objectToValue(NEW_INT(vm, value));
         }
         else
         {
             char *a = getType(pop(vm));
             runtimeError(vm, "invalid literal for int(): '%s'", a);
-            return NEW_EMPTY;
+            return V_EMPTY_VAL;
         }
     }
 }

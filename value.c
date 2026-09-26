@@ -20,6 +20,15 @@ MyMoObject *valueToBoxedObject(MVM *vm, Value v) {
     return V_AS_OBJ(v);
 }
 
+Value objectToValue(MyMoObject *o) {
+    switch (o->type) {
+    case OBJ_NIL:    return V_NIL_VAL;
+    case OBJ_BOOL:   return V_BOOL_VAL(((MyMoBool *)o)->value);
+    case OBJ_OBJECT: return V_EMPTY_VAL;  // EmptyObject (see IS_EMPTY)
+    default:         return V_OBJ_VAL(o);
+    }
+}
+
 void initValueArray(MVM *vm, ValueArray *arr) {
     UNUSED(vm);
     arr->capacity = 0;

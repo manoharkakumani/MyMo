@@ -63,7 +63,7 @@ static int ensure_queue(MVM *vm)
 }
 #endif
 
-static MyMoObject *rl_nonblock(MVM *vm, uint argc, MyMoObject *argv[])
+static Value rl_nonblock(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long fd;
     if (!mymo_parse(vm, "runloop.nonblock", argc, argv, "i", &fd))
@@ -150,7 +150,7 @@ static int wait_one(int fd, int want_read, long timeout_ms)
 #endif
 }
 
-static MyMoObject *rl_readable(MVM *vm, uint argc, MyMoObject *argv[])
+static Value rl_readable(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long fd, timeout_ms;
     if (!mymo_parse(vm, "runloop.readable", argc, argv, "ii",
@@ -165,10 +165,10 @@ static MyMoObject *rl_readable(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "runloop.readable(): %s", strerror(errno));
         return MYMO_ERROR;
     }
-    return r ? MYMO_TRUE : MYMO_FALSE;
+    return MYMO_BOOL(r);
 }
 
-static MyMoObject *rl_writable(MVM *vm, uint argc, MyMoObject *argv[])
+static Value rl_writable(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long fd, timeout_ms;
     if (!mymo_parse(vm, "runloop.writable", argc, argv, "ii",
@@ -183,7 +183,7 @@ static MyMoObject *rl_writable(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "runloop.writable(): %s", strerror(errno));
         return MYMO_ERROR;
     }
-    return r ? MYMO_TRUE : MYMO_FALSE;
+    return MYMO_BOOL(r);
 }
 
 // runloop.select([fd1, fd2, ...], timeout_ms) -> int
@@ -191,7 +191,7 @@ static MyMoObject *rl_writable(MVM *vm, uint argc, MyMoObject *argv[])
 // -1 on timeout. Uses select(2) for portability — kqueue/epoll could
 // be wired in but select is enough for the modest fd counts our
 // example programs deal with.
-static MyMoObject *rl_select(MVM *vm, uint argc, MyMoObject *argv[])
+static Value rl_select(MVM *vm, uint argc, MyMoObject *argv[])
 {
     MyMoList *fds;
     long timeout_ms;
@@ -213,7 +213,7 @@ static MyMoObject *rl_select(MVM *vm, uint argc, MyMoObject *argv[])
         FD_SET(fd, &rset);
         if (fd > maxfd) maxfd = fd;
     }
-    if (maxfd < 0) return mymo_int(vm, -1);
+    if (maxfd < 0) return objectToValue(mymo_int(vm, -1));
     struct timeval tv;
     struct timeval *tvp = NULL;
     if (timeout_ms >= 0)
@@ -228,13 +228,13 @@ static MyMoObject *rl_select(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "runloop.wait_any(): select(): %s", strerror(errno));
         return MYMO_ERROR;
     }
-    if (n == 0) return mymo_int(vm, -1);
+    if (n == 0) return objectToValue(mymo_int(vm, -1));
     for (size_t i = 0; i < (size_t)fds->values.count; i++)
     {
         int fd = (int)((MyMoInt *)fds->values.objects[i])->value;
-        if (FD_ISSET(fd, &rset)) return mymo_int(vm, (long)i);
+        if (FD_ISSET(fd, &rset)) return objectToValue(mymo_int(vm, (long)i));
     }
-    return mymo_int(vm, -1);
+    return objectToValue(mymo_int(vm, -1));
 }
 
 MyMoObject *runloopModule(MVM *vm)

@@ -17,12 +17,12 @@ fits on two screens.
 ```c
 #include "mymo_module.h"
 
-static MyMoObject *greet(MVM *vm, uint argc, MyMoObject *argv[])
+static Value greet(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *name;
     if (!mymo_parse(vm, "greet", argc, argv, "s", &name))
         return MYMO_ERROR;
-    return mymo_strf(vm, "hello, %s!", name);
+    return objectToValue(mymo_strf(vm, "hello, %s!", name));
 }
 
 MYMO_MODULE(hello,
@@ -57,7 +57,8 @@ A module is a single `.c` file that:
 
 1. Includes `mymo_module.h`.
 2. Defines one or more **functions** with the signature
-   `MyMoObject *fn(MVM *vm, uint argc, MyMoObject *argv[])`.
+   `Value fn(MVM *vm, uint argc, MyMoObject *argv[])`. Arguments
+   arrive as objects; the result is a NaN-boxed `Value`.
 3. Calls `MYMO_MODULE(name, ...)` to declare the entry point.
 
 The compiled artefact must be named **`<name>mod.<ext>`** — the loader
@@ -93,7 +94,13 @@ simplest layout.
 | `mymo_strf(vm, "%d!", n)` | printf-style (≤4 KiB)  |
 | `MYMO_NIL`                | `nil`                  |
 | `MYMO_TRUE` / `MYMO_FALSE`| `true` / `false`       |
+| `MYMO_BOOL(cond)`         | `true` / `false`       |
 | `MYMO_ERROR`              | sentinel: error raised |
+
+The `mymo_*` constructors return a `MyMoObject *` (so you can store
+them in lists and dicts). To **return** one from a builtin, wrap it
+with `objectToValue(...)`. The `MYMO_*` constants are already inline
+`Value`s: return them directly, and don't store them in containers.
 
 `MYMO_ERROR` is what you return *after* calling `runtimeError(vm,
 ...)` (or after `mymo_parse` returned false — it has already raised
@@ -212,7 +219,7 @@ if (n < 0) {
 ```
 
 The format string takes the usual printf specifiers. After
-`runtimeError`, you must return `MYMO_ERROR` (== `NEW_EMPTY`) so the
+`runtimeError`, you must return `MYMO_ERROR` (== `V_EMPTY_VAL`) so the
 VM unwinds.
 
 ---

@@ -243,50 +243,50 @@ bool isEqual(MyMoObject *a, MyMoObject *b)
     }
 }
 
-MyMoObject *newObjectMethod(MVM *vm, uint argc, MyMoObject **argv)
+Value newObjectMethod(MVM *vm, uint argc, MyMoObject **argv)
 {
     if (argc != 1)
     {
         runtimeError(vm, "__new__ method takes 1 argument (%d given).", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     if (!(IS_CLASS(peek(vm, 0))))
     {
         runtimeError(vm, "TypeError: object.__new__(X): X is not a type class");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     MyMoClass *klass = AS_CLASS(pop(vm));
     MyMoInstance *instance = newInstance(vm, klass);
-    return AS_OBJECT(instance);
+    return objectToValue(AS_OBJECT(instance));
 }
 
-MyMoObject *strObjectMethod(MVM *vm, uint argc, MyMoObject **argv)
+Value strObjectMethod(MVM *vm, uint argc, MyMoObject **argv)
 {
     UNUSED(vm);
     UNUSED(argv);
     if (argc != 1)
     {
         runtimeError(vm, "__str__ method takes 1 argument (%d given).", argc);
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     char *type = getType(pop(vm));
-    return NEW_STRING(vm, type, strlen(type));
+    return objectToValue(NEW_STRING(vm, type, strlen(type)));
 }
 
-MyMoObject *initObjectMethod(MVM *vm, uint argc, MyMoObject **argv)
+Value initObjectMethod(MVM *vm, uint argc, MyMoObject **argv)
 {
     UNUSED(vm);
     UNUSED(argv);
     if (!argc)
     {
         runtimeError(vm, "TypeError: descriptor '__init__' of 'object' object needs an argument");
-        return NEW_EMPTY;
+        return V_EMPTY_VAL;
     }
     while (argc--)
     {
         pop(vm);
     }
-    return NEW_NIL;
+    return V_NIL_VAL;
 }
 
 void defineObjectClassMethods(MVM *vm)

@@ -55,9 +55,9 @@ static MyMoObject *make_response(MVM *vm, long status, const char *body, size_t 
     return AS_OBJECT(d);
 }
 
-static MyMoObject *do_request(MVM *vm, const char *funcname,
-                              const char *method, const char *url,
-                              const char *body, size_t blen)
+static Value do_request(MVM *vm, const char *funcname,
+                        const char *method, const char *url,
+                        const char *body, size_t blen)
 {
     CURL *h = curl_easy_init();
     if (!h) {
@@ -101,17 +101,17 @@ static MyMoObject *do_request(MVM *vm, const char *funcname,
 
     MyMoObject *resp = make_response(vm, status, out.data, out.len);
     free(out.data);
-    return resp;
+    return objectToValue(resp);
 }
 
-static MyMoObject *http_get(MVM *vm, uint argc, MyMoObject *argv[])
+static Value http_get(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *url;
     if (!mymo_parse(vm, "http.get", argc, argv, "s", &url)) return MYMO_ERROR;
     return do_request(vm, "http.get", "GET", url, NULL, 0);
 }
 
-static MyMoObject *http_post(MVM *vm, uint argc, MyMoObject *argv[])
+static Value http_post(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *url, *body; int blen;
     if (!mymo_parse(vm, "http.post", argc, argv, "ssn", &url, &body, &blen))
@@ -119,7 +119,7 @@ static MyMoObject *http_post(MVM *vm, uint argc, MyMoObject *argv[])
     return do_request(vm, "http.post", "POST", url, body, (size_t)blen);
 }
 
-static MyMoObject *http_request(MVM *vm, uint argc, MyMoObject *argv[])
+static Value http_request(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *method, *url, *body; int blen;
     if (!mymo_parse(vm, "http.request", argc, argv, "sssn",

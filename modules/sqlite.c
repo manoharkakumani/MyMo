@@ -37,7 +37,7 @@ static sqlite3 *get_slot(MVM *vm, const char *fn, long h)
     return db_pool[h];
 }
 
-static MyMoObject *sql_open(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sql_open(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *path;
     if (!mymo_parse(vm, "sqlite.open", argc, argv, "s", &path)) return MYMO_ERROR;
@@ -56,10 +56,10 @@ static MyMoObject *sql_open(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "sqlite.open(): too many open connections (max %d)", DB_POOL_MAX);
         return MYMO_ERROR;
     }
-    return mymo_int(vm, slot);
+    return objectToValue(mymo_int(vm, slot));
 }
 
-static MyMoObject *sql_run(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sql_run(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long h;
     const char *sql;
@@ -76,7 +76,7 @@ static MyMoObject *sql_run(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "sqlite.run(): %s", msg);
         return MYMO_ERROR;
     }
-    return mymo_int(vm, sqlite3_changes(db));
+    return objectToValue(mymo_int(vm, sqlite3_changes(db)));
 }
 
 static MyMoObject *column_to_object(MVM *vm, sqlite3_stmt *st, int i)
@@ -92,18 +92,18 @@ static MyMoObject *column_to_object(MVM *vm, sqlite3_stmt *st, int i)
             return mymo_strn(vm, t, n);
         }
         case SQLITE_NULL:
-            return MYMO_NIL;
+            return NEW_NIL;
         case SQLITE_BLOB: {
             const void *blob = sqlite3_column_blob(st, i);
             int n = sqlite3_column_bytes(st, i);
             return mymo_strn(vm, (const char *)blob, n);
         }
         default:
-            return MYMO_NIL;
+            return NEW_NIL;
     }
 }
 
-static MyMoObject *sql_query(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sql_query(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long h;
     const char *sql;
@@ -129,10 +129,10 @@ static MyMoObject *sql_query(MVM *vm, uint argc, MyMoObject *argv[])
         writeMyMoObjectArray(vm, &rows->values, AS_OBJECT(row));
     }
     sqlite3_finalize(st);
-    return AS_OBJECT(rows);
+    return objectToValue(AS_OBJECT(rows));
 }
 
-static MyMoObject *sql_close(MVM *vm, uint argc, MyMoObject *argv[])
+static Value sql_close(MVM *vm, uint argc, MyMoObject *argv[])
 {
     long h;
     if (!mymo_parse(vm, "sqlite.close", argc, argv, "i", &h)) return MYMO_ERROR;

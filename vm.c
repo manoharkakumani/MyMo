@@ -239,11 +239,11 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
         MyMoObject *legacy_argv[256];
         Value *vargs = vm->fiber->stack.values + vm->fiber->stack.count - argc;
         for (u32 i = 0; i < argc; i++) legacy_argv[i] = valueToBoxedObject(vm, vargs[i]);
-        MyMoObject *result = function(vm, argc, legacy_argv);
-        if (IS_EMPTY(result))
+        Value result = function(vm, argc, legacy_argv);
+        if (V_IS_EMPTY(result))
             return false;
         pop(vm);
-        push(vm, result);
+        pushV(vm, result);
         return true;
     }
     case OBJ_FUNCTION:
@@ -274,9 +274,11 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
         MyMoObject *__new__ = getEntry(vm, vm->builtInClasses[OBJ_OBJECT]->methods, newMethed);
         BuiltInfunction function = AS_BUILTIN_FUNCTION(__new__)->function;
         push(vm, callee);
-        MyMoObject *result = function(vm, 1, &callee);
-        if (IS_EMPTY(result))
+        // __new__ always returns a fresh instance object.
+        Value resultV = function(vm, 1, &callee);
+        if (V_IS_EMPTY(resultV))
             return false;
+        MyMoObject *result = V_AS_OBJ(resultV);
         if (klass->init)
         {
             vm->classCall++;
@@ -304,11 +306,11 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
         MyMoObject *legacy_argv[256];
         Value *vargs = vm->fiber->stack.values + vm->fiber->stack.count - argc;
         for (u32 i = 0; i < argc; i++) legacy_argv[i] = valueToBoxedObject(vm, vargs[i]);
-        MyMoObject *result = function(vm, argc, legacy_argv);
-        if (IS_EMPTY(result))
+        Value result = function(vm, argc, legacy_argv);
+        if (V_IS_EMPTY(result))
             return false;
         pop(vm);
-        push(vm, result);
+        pushV(vm, result);
         return true;
     }
     case OBJ_BOUND_METHOD:
@@ -2663,16 +2665,33 @@ int runMVM(MVM *vm)
             Value *vargs = vm->fiber->stack.values + vm->fiber->stack.count - argCount;
             for (u32 i = 0; i < argCount; i++)
                 legacy_argv[i] = valueToBoxedObject(vm, vargs[i]);
-            MyMoObject *result = fn(vm, argCount, legacy_argv);
-            if (IS_EMPTY(result)) goto _runtime_error;
-            LOAD();   // builtin popped argc items via legacy pop()
-            if (cobj->type == OBJ_BUILTIN_METHOD)
+            MyMoFiber *callerFiber = vm->fiber;
+            Value result = fn(vm, argCount, legacy_argv);
+            if (V_IS_EMPTY(result)) goto _runtime_error;
+            if (vm->fiber != callerFiber)
             {
-                // Pop the callee we inserted (still on the stack
-                // since the builtin only pops `argc` items).
+                // run/resume/yield switched fibers. Match caller()'s
+                // convention: the fiber we left keeps a callee slot
+                // (consumed when control returns to it) and the fiber
+                // we entered gives up its pending one. Methods already
+                // left their inserted callee behind; plain functions
+                // (e.g. `yield()` via OP_INVOKE_GLOBAL) have none.
+                if (cobj->type == OBJ_BUILTIN_FUNCTION)
+                    callerFiber->stack.values[callerFiber->stack.count++] = V_OBJ_VAL(cobj);
+                LOAD();
                 sp--;
             }
-            lpushObj(result);
+            else
+            {
+                LOAD();   // builtin popped argc items via legacy pop()
+                if (cobj->type == OBJ_BUILTIN_METHOD)
+                {
+                    // Pop the callee we inserted (still on the stack
+                    // since the builtin only pops `argc` items).
+                    sp--;
+                }
+            }
+            *sp++ = result;
             DISPATCH();
         }
 

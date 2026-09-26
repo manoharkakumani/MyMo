@@ -153,7 +153,7 @@ static int enc_value(Buf *b, MyMoObject *v)
     }
 }
 
-static MyMoObject *json_encode(MVM *vm, uint argc, MyMoObject *argv[])
+static Value json_encode(MVM *vm, uint argc, MyMoObject *argv[])
 {
     if (!mymo_check_args(vm, "json.encode", argc, 1)) return MYMO_ERROR;
     Buf b = {0};
@@ -167,7 +167,7 @@ static MyMoObject *json_encode(MVM *vm, uint argc, MyMoObject *argv[])
     }
     MyMoObject *s = mymo_strn(vm, b.data ? b.data : "", (int)b.len);
     free(b.data);
-    return s;
+    return objectToValue(s);
 }
 
 // --------------------------------------------------------------------
@@ -334,16 +334,16 @@ static MyMoObject *parse_value(Parser *p)
     if (c == '[') return parse_array(p);
     if (c == '-' || (c >= '0' && c <= '9')) return parse_number(p);
     if (c == 't' && p->pos + 4 <= p->len && memcmp(p->s + p->pos, "true", 4) == 0)
-        { p->pos += 4; return MYMO_TRUE; }
+        { p->pos += 4; return NEW_BOOL(1); }
     if (c == 'f' && p->pos + 5 <= p->len && memcmp(p->s + p->pos, "false", 5) == 0)
-        { p->pos += 5; return MYMO_FALSE; }
+        { p->pos += 5; return NEW_BOOL(0); }
     if (c == 'n' && p->pos + 4 <= p->len && memcmp(p->s + p->pos, "null", 4) == 0)
-        { p->pos += 4; return MYMO_NIL; }
+        { p->pos += 4; return NEW_NIL; }
     p->err = "unexpected character";
     return NULL;
 }
 
-static MyMoObject *json_decode(MVM *vm, uint argc, MyMoObject *argv[])
+static Value json_decode(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *s; int slen;
     if (!mymo_parse(vm, "json.decode", argc, argv, "sn", &s, &slen))
@@ -360,7 +360,7 @@ static MyMoObject *json_decode(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "json.decode(): trailing data at byte %zu", p.pos);
         return MYMO_ERROR;
     }
-    return r;
+    return objectToValue(r);
 }
 
 MyMoObject *jsonModule(MVM *vm)

@@ -21,7 +21,7 @@
   #define F_OK_COMPAT F_OK
 #endif
 
-static MyMoObject *io_read(MVM *vm, uint argc, MyMoObject *argv[])
+static Value io_read(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *path;
     if (!mymo_parse(vm, "io.read", argc, argv, "s", &path)) return MYMO_ERROR;
@@ -49,12 +49,12 @@ static MyMoObject *io_read(MVM *vm, uint argc, MyMoObject *argv[])
     fclose(f);
     MyMoObject *s = mymo_strn(vm, buf, (int)n);
     free(buf);
-    return s;
+    return objectToValue(s);
 }
 
-static MyMoObject *io_write_mode(MVM *vm, const char *funcname,
-                                 uint argc, MyMoObject *argv[],
-                                 const char *mode)
+static Value io_write_mode(MVM *vm, const char *funcname,
+                           uint argc, MyMoObject *argv[],
+                           const char *mode)
 {
     const char *path, *content;
     int clen;
@@ -76,24 +76,24 @@ static MyMoObject *io_write_mode(MVM *vm, const char *funcname,
     return MYMO_NIL;
 }
 
-static MyMoObject *io_write(MVM *vm, uint argc, MyMoObject *argv[])
+static Value io_write(MVM *vm, uint argc, MyMoObject *argv[])
 {
     return io_write_mode(vm, "io.write", argc, argv, "wb");
 }
 
-static MyMoObject *io_append(MVM *vm, uint argc, MyMoObject *argv[])
+static Value io_append(MVM *vm, uint argc, MyMoObject *argv[])
 {
     return io_write_mode(vm, "io.append", argc, argv, "ab");
 }
 
-static MyMoObject *io_exists(MVM *vm, uint argc, MyMoObject *argv[])
+static Value io_exists(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *path;
     if (!mymo_parse(vm, "io.exists", argc, argv, "s", &path)) return MYMO_ERROR;
-    return access_compat(path, F_OK_COMPAT) == 0 ? MYMO_TRUE : MYMO_FALSE;
+    return MYMO_BOOL(access_compat(path, F_OK_COMPAT) == 0);
 }
 
-static MyMoObject *io_remove(MVM *vm, uint argc, MyMoObject *argv[])
+static Value io_remove(MVM *vm, uint argc, MyMoObject *argv[])
 {
     const char *path;
     if (!mymo_parse(vm, "io.remove", argc, argv, "s", &path)) return MYMO_ERROR;
