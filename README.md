@@ -707,7 +707,9 @@ source ──► lexer ──► single-pass Pratt compiler ──► bytecode c
   object (`value.h`).
 - **Dispatch** uses computed gotos on GCC/Clang (`dispatch.h`), with
   fused instructions such as `OP_INVOKE_GLOBAL` and inline caches for
-  variable access.
+  variable access. Constant operands are one byte. An index above 255 gets
+  an `OP_WIDE` prefix carrying the high byte, so small programs pay
+  nothing for it.
 - **Fibers** each own an operand stack and call-frame chain. Switching
   fibers swaps `vm->fiber`.
 - **Closures** are per-call copies of a function bound to their defining
@@ -750,10 +752,9 @@ make clean && make && make test && make bench
 
 MyMo is an experimental language. Current gaps:
 
-- A single function (including a script's top level) can hold at most 256
-  distinct constants (names and literals), which is roughly 128 top-level
-  `fn`s per file. Beyond that there is a compile error; split the code into
-  modules.
+- A single function (including a script's top level) can hold at most
+  65,536 distinct constants (names and literals). Beyond that there is a
+  compile error.
 - Ints are 32-bit when stored inline. Wider values fall back to slower heap
   objects.
 - Functions have no default parameter values.

@@ -9,9 +9,9 @@ uint makeConstant(Compiler *compiler, MyMoObject *value)
     int constant = addConstant(compiler->parser->vm, currentChunk(compiler), value);
     // Constant operands are one byte wide; a larger index would silently
     // wrap and read the wrong constant.
-    if (constant > UINT8_MAX)
+    if (constant > UINT16_MAX)
     {
-        error(compiler, "Too many distinct constants in one function (max 256); split it into smaller functions or modules.");
+        error(compiler, "Too many distinct constants in one function (max 65536); split it into smaller functions or modules.");
         return 0;
     }
     return (uint)constant;
@@ -22,12 +22,32 @@ uint makeConstantV(Compiler *compiler, Value v)
     int constant = addConstantV(compiler->parser->vm, currentChunk(compiler), v);
     // Constant operands are one byte wide; a larger index would silently
     // wrap and read the wrong constant.
-    if (constant > UINT8_MAX)
+    if (constant > UINT16_MAX)
     {
-        error(compiler, "Too many distinct constants in one function (max 256); split it into smaller functions or modules.");
+        error(compiler, "Too many distinct constants in one function (max 65536); split it into smaller functions or modules.");
         return 0;
     }
     return (uint)constant;
+}
+
+void emitConstOp2(Compiler *compiler, u8 op, uint first, uint second)
+{
+    if (first > UINT8_MAX || second > UINT8_MAX)
+    {
+        emitByte(compiler, OP_WIDE);
+        emitByte(compiler, (u8)(first >> 8));
+        emitByte(compiler, (u8)(second >> 8));
+        compiler->lastWideTarget = currentChunk(compiler)->count;
+    }
+    emitByte(compiler, op);
+    emitByte(compiler, (u8)(first & 0xff));
+    if (op == OP_MET)
+        emitByte(compiler, (u8)(second & 0xff));
+}
+
+void emitConstOp(Compiler *compiler, u8 op, uint index)
+{
+    emitConstOp2(compiler, op, index, 0);
 }
 
 uint identifierConstant(Compiler *compiler, Token *name)
@@ -37,17 +57,17 @@ uint identifierConstant(Compiler *compiler, Token *name)
 
 void emitConstant(Compiler *compiler, MyMoObject *value)
 {
-    emitBytes(compiler, OP_CONST, makeConstant(compiler, value));
+    emitConstOp(compiler, OP_CONST, makeConstant(compiler, value));
 }
 
 void emitConstantV(Compiler *compiler, Value v)
 {
-    emitBytes(compiler, OP_CONST, makeConstantV(compiler, v));
+    emitConstOp(compiler, OP_CONST, makeConstantV(compiler, v));
 }
 
-static void emitNameOpWithIC(Compiler *compiler, u8 op, u8 nameIdx)
+static void emitNameOpWithIC(Compiler *compiler, u8 op, uint nameIdx)
 {
-    emitBytes(compiler, op, nameIdx);
+    emitConstOp(compiler, op, nameIdx);
     // Reserve IC slots, all zero-initialized so dict_tag starts cold (0).
     // Cold tag is 0xff, but for a fresh emit any tag value works because the
     // version check immediately sees modifyCount > 0 mismatch on first hit.
@@ -56,19 +76,19 @@ static void emitNameOpWithIC(Compiler *compiler, u8 op, u8 nameIdx)
     for (int i = 1; i < IC_BYTES; i++) emitByte(compiler, 0);
 }
 
-void emitGetV(Compiler *compiler, u8 nameIdx)
+void emitGetV(Compiler *compiler, uint nameIdx)
 {
     emitNameOpWithIC(compiler, OP_GETV, nameIdx);
 }
 
-void emitSetV(Compiler *compiler, u8 nameIdx)
+void emitSetV(Compiler *compiler, uint nameIdx)
 {
     emitNameOpWithIC(compiler, OP_SETV, nameIdx);
 }
 
-void emitIncrVar(Compiler *compiler, u8 nameIdx, int32_t delta)
+void emitIncrVar(Compiler *compiler, uint nameIdx, int32_t delta)
 {
-    emitBytes(compiler, OP_INCR_VAR, nameIdx);
+    emitConstOp(compiler, OP_INCR_VAR, nameIdx);
     // 8 IC scratch bytes (same layout as OP_GETV/OP_SETV — first byte cold).
     emitByte(compiler, IC_TAG_COLD);
     for (int i = 1; i < IC_BYTES; i++) emitByte(compiler, 0);

@@ -315,14 +315,14 @@ void binary(Compiler *compiler, bool canAssign)
 // IC-aware emitters for the get/set ops inside assign(): when the op is
 // OP_GETV/OP_SETV, also reserve the inline-cache scratch bytes. Property
 // ops (OP_GETP/OP_SETP/OP_AGETP) keep the legacy 2-byte encoding.
-static void emitGetSet(Compiler *c, u8 op, u8 name)
+static void emitGetSet(Compiler *c, u8 op, uint name)
 {
     if (op == OP_GETV) emitGetV(c, name);
     else if (op == OP_SETV) emitSetV(c, name);
-    else emitBytes(c, op, name);
+    else emitConstOp(c, op, name);
 }
 
-bool assign(Compiler *compiler, bool canAssign, u8 set, u8 get, u8 name)
+bool assign(Compiler *compiler, bool canAssign, u8 set, u8 get, uint name)
 {
     if (!canAssign)
         return false;
@@ -474,7 +474,7 @@ void dot(Compiler *compiler, bool canAssign)
     u32 name = identifierConstant(compiler, &compiler->parser->previous);
     if (!assign(compiler, canAssign, OP_SETP, OP_AGETP, name))
     {
-        emitBytes(compiler, OP_GETP, name);
+        emitConstOp(compiler, OP_GETP, name);
     }
 }
 
@@ -486,7 +486,7 @@ void optDot(Compiler *compiler, bool canAssign)
 {
     consumeToken(compiler, NAME, "Expect property name after '?.'.");
     u32 name = identifierConstant(compiler, &compiler->parser->previous);
-    emitBytes(compiler, OP_OGETP, name);
+    emitConstOp(compiler, OP_OGETP, name);
 }
 
 // Resolve an identifier to a function-arg slot if we're inside a function
@@ -573,7 +573,7 @@ void variable(Compiler *compiler, bool canAssign)
             Token nameTok = *t;
             nameTok.token = t->token + 1;
             nameTok.length = t->length - 1;
-            u8 nameIdx = identifierConstant(compiler, &nameTok);
+            uint nameIdx = identifierConstant(compiler, &nameTok);
             int bIdx = compiler->flags.bindingsCount++;
             compiler->flags.bindingNameIdx[bIdx] = nameIdx;
             // Build path from the per-depth position stack. Outermost
@@ -595,7 +595,7 @@ void variable(Compiler *compiler, bool canAssign)
         // fall through: treat `__name`, `_name` at depth>1, or overflow as
         // a regular variable reference (current semantics).
     }
-    u8 name = identifierConstant(compiler, &compiler->parser->previous);
+    uint name = identifierConstant(compiler, &compiler->parser->previous);
     u8 set, get;
     set = OP_SETV;
     get = OP_GETV;
@@ -631,7 +631,7 @@ void variable(Compiler *compiler, bool canAssign)
                 emitByte(arrowCompiler, OP_FRET);
             }
             MyMoFunction *arrowFunction = endFunction(arrowCompiler);
-            emitBytes(compiler, OP_FN, makeConstant(compiler, AS_OBJECT(arrowFunction)));
+            emitConstOp(compiler, OP_FN, makeConstant(compiler, AS_OBJECT(arrowFunction)));
             // printf("arrow function");
         }
         else
@@ -712,7 +712,7 @@ void grouping(Compiler *compiler, bool canAssign)
             emitByte(arrowCompiler, OP_FRET);
         }
         MyMoFunction *arrowFunction = endFunction(arrowCompiler);
-        emitBytes(compiler, OP_FN, makeConstant(compiler, AS_OBJECT(arrowFunction)));
+        emitConstOp(compiler, OP_FN, makeConstant(compiler, AS_OBJECT(arrowFunction)));
     }
     else
     {
@@ -788,8 +788,11 @@ void call(Compiler *compiler, bool canAssign)
     // OP_INVOKE_GLOBAL after the args. Saves a dispatch (1 op vs 2) and
     // ~3 bytes of bytecode for every `print(x)` / `len(s)` style call.
     int markBeforeArgs = ch->count;
+    // Not when the OP_GETV carries an OP_WIDE prefix: the fused
+    // instruction lands after the arguments, away from its prefix.
     bool fuseable = (markBeforeArgs >= 10
-                     && ch->code[markBeforeArgs - 10] == OP_GETV);
+                     && ch->code[markBeforeArgs - 10] == OP_GETV
+                     && compiler->lastWideTarget != markBeforeArgs - 10);
     u8 fusedNameIdx = 0;
     if (fuseable)
     {
@@ -1051,7 +1054,7 @@ static void listComprehension(Compiler *compiler, const char *exprText, int expr
     appendTok.token = "append";
     appendTok.length = 6;
     u32 appendName = identifierConstant(compiler, &appendTok);
-    emitBytes(compiler, OP_GETP, appendName);
+    emitConstOp(compiler, OP_GETP, appendName);
 
     // Sub-parse the saved expression text — same swap-and-restore
     // pattern as f-string interpolations. The new lexer reads from
@@ -1149,7 +1152,7 @@ void pipeThrough(Compiler *compiler, bool canAssign)
         {
             consumeToken(compiler, NAME, "Expected property name after '.'.");
             u32 name = identifierConstant(compiler, &compiler->parser->previous);
-            emitBytes(compiler, OP_GETP, name);
+            emitConstOp(compiler, OP_GETP, name);
         }
         emitByte(compiler, OP_PITHRU);
         if (matchToken(compiler, LPAR))

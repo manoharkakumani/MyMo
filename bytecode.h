@@ -19,14 +19,20 @@ void emitConstantV(Compiler *compiler, Value v);
 #define IC_TAG_COLD    0xff
 #define IC_TAG_GLOBALS 0
 #define IC_TAG_LOCALS  1
-void emitGetV(Compiler *compiler, u8 nameIdx);
-void emitSetV(Compiler *compiler, u8 nameIdx);
+void emitGetV(Compiler *compiler, uint nameIdx);
+void emitSetV(Compiler *compiler, uint nameIdx);
+
+// Emit `op` followed by one (or, for emitConstOp2, two) constant-pool
+// operands. Indices above 255 get an OP_WIDE prefix carrying their high
+// bytes, so a function can use up to 65536 constants.
+void emitConstOp(Compiler *compiler, u8 op, uint index);
+void emitConstOp2(Compiler *compiler, u8 op, uint first, uint second);
 
 // Super-instruction emit: name += delta (delta is i32, can be negative).
 // Layout: opcode (1) + name_idx (1) + IC (8) + delta (4) = 14 bytes.
 // Replaces 25 bytes of GETV+CONST+ADD+SETV+POP for the common
 // `i += literal` pattern. Eliminates 4 dispatches per increment.
-void emitIncrVar(Compiler *compiler, u8 nameIdx, int32_t delta);
+void emitIncrVar(Compiler *compiler, uint nameIdx, int32_t delta);
 void emitByte(Compiler *compiler, u8 byte);
 void emitBytes(Compiler *compiler, u8 byte1, u8 byte2);
 void patchJump(Compiler *compiler, int offset);

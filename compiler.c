@@ -214,6 +214,7 @@ Compiler *initCompiler(MVM *vm, Parser *parser, FunctionType type)
     compiler->parser = parser;
     compiler->loop = NULL;
     compiler->tryDepth = 0;
+    compiler->lastWideTarget = -1;
     compiler->flags.cl_fn = false;
     compiler->flags.dontSetVar = 0;
     compiler->flags.pithru = 0;

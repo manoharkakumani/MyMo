@@ -202,6 +202,11 @@ int disassembleInstruction(Chunk *chunk, int offset)
         return simpleInstruction("OP_ENDTRY", offset);
     case OP_RAISE:
         return simpleInstruction("OP_RAISE", offset);
+    case OP_WIDE:
+        // High bytes for the next instruction's constant operands; its
+        // printed operand shows only the low byte.
+        printf("%-16s hi=%d,%d\n", "OP_WIDE", chunk->code[offset + 1], chunk->code[offset + 2]);
+        return offset + 3;
     default:
         printf("Unknown opcode %d\n", instruction);
         return offset + 1;

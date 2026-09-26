@@ -71,6 +71,7 @@ void *dispatchTable[] = {
     &&OP_INVOKE_GLOBAL,
     &&OP_TRY,
     &&OP_ENDTRY,
-    &&OP_RAISE
+    &&OP_RAISE,
+    &&OP_WIDE
     };
 #endif

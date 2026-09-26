@@ -61,7 +61,7 @@ typedef struct CompilerFlags
     // to the matched position, so nested patterns like `((_a, _b), _c)`
     // emit correct subscript chains. pathLen == 0 means the whole-
     // scrutinee binding (top-level `_name:` pattern).
-    u8  bindingNameIdx[16];
+    u16 bindingNameIdx[16];
     int bindingPath[16][4];
     int bindingPathLen[16];
     int bindingsCount;
@@ -78,6 +78,10 @@ typedef struct Compiler
     // one OP_ENDTRY per try they jump out of, or the VM's handler stack
     // would keep a stale entry (and overflow after 32).
     int tryDepth;
+    // Chunk offset of the instruction the most recent OP_WIDE prefixes
+    // (-1 if none). Peepholes that rewind an instruction must not split
+    // it from its prefix.
+    int lastWideTarget;
 } Compiler;
 
 typedef enum

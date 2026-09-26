@@ -472,10 +472,15 @@ int runMVM(MVM *vm)
     // inspect them, LOAD() pulls them back. Idiomatic Lua-style.
     register u8 *ip = frame->ip;
     register Value *sp = vm->fiber->stack.values + vm->fiber->stack.count;
+    // High bytes set by OP_WIDE for the next instruction's constant
+    // operands: bits 8-15 for the first read, 24-31 for the second.
+    // Zero except right after an OP_WIDE, so normal reads are unchanged.
+    u32 wide = 0, constIndex;
 #include "dispatch.h"
 #define ReadByte()     (*ip++)
 #define ReadShort()    (ip += 2, (u16)(ip[-2] << 8) | ip[-1])
-#define ReadConstant() (frame->function->chunk->constants.values[ReadByte()])
+#define ReadConstIndex() (constIndex = (u32)ReadByte() | (wide & 0xff00u), wide >>= 16, constIndex)
+#define ReadConstant() (frame->function->chunk->constants.values[ReadConstIndex()])
 #define ReadObject()   (V_AS_OBJ(ReadConstant()))
 
 // Stack ops on the cached register `sp`. Hot paths use these.
@@ -568,6 +573,12 @@ int runMVM(MVM *vm)
         // Pop the topmost handler — normal exit from the try-body
         // with no error fired.
         if (vm->fiber->handlerCount > 0) vm->fiber->handlerCount--;
+        DISPATCH();
+    }
+    OP_WIDE:
+    {
+        wide = ((u32)ip[0] << 8) | ((u32)ip[1] << 24);
+        ip += 2;
         DISPATCH();
     }
     OP_RAISE:

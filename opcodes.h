@@ -75,6 +75,11 @@ typedef enum
     //   OP_RAISE                 pop the top value and raise it as an exception
     OP_TRY,
     OP_ENDTRY,
-    OP_RAISE
+    OP_RAISE,
+    //   OP_WIDE <hi1> <hi2>      high bytes for the NEXT instruction's first
+    //                            and second constant-pool operands, whose own
+    //                            operand bytes hold the low bytes. Emitted
+    //                            only when an index exceeds 255 (emitConstOp).
+    OP_WIDE
 } OpCode;
 #endif

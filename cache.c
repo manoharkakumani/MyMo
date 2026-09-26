@@ -10,7 +10,7 @@
 //
 //   magic   "MYMC"
 //   u32     MYMO_CACHE_VERSION   bump on any format or opcode change
-//   u32     OP_RAISE + 1         opcode count, as a cheap extra guard
+//   u32     OP_WIDE + 1         opcode count, as a cheap extra guard
 //   u64     build id             hash of MYMO_BUILD_ID: bytecode from a
 //                                different interpreter build is never reused
 //   u64     source hash          FNV-1a of the .my text (0 = unknown)
@@ -34,7 +34,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#define MYMO_CACHE_VERSION 2
+#define MYMO_CACHE_VERSION 3 // 3: OP_WIDE prefix for constant indices > 255
 
 // Stamped by the Makefile, which rebuilds cache.o whenever any other object
 // changes; so any compiler/VM change invalidates existing caches.
@@ -153,7 +153,7 @@ bool cacheWrite(MyMoFunction *fn, const char *cachePath, uint64_t sourceHash)
         free(tmp);
         return false; // read-only directory etc.: just run uncached
     }
-    uint32_t version = MYMO_CACHE_VERSION, ops = OP_RAISE + 1;
+    uint32_t version = MYMO_CACHE_VERSION, ops = OP_WIDE + 1;
     uint64_t build = buildId();
     bool ok = put(f, CACHE_MAGIC, sizeof CACHE_MAGIC) && put(f, &version, sizeof version)
               && put(f, &ops, sizeof ops) && put(f, &build, sizeof build)
@@ -299,7 +299,7 @@ MyMoFunction *cacheRead(MVM *vm, const char *cachePath, uint64_t sourceHash)
     MyMoFunction *fn = NULL;
     if (get(f, magic, sizeof magic) && memcmp(magic, CACHE_MAGIC, sizeof magic) == 0
         && get(f, &version, sizeof version) && version == MYMO_CACHE_VERSION
-        && get(f, &ops, sizeof ops) && ops == (uint32_t)(OP_RAISE + 1)
+        && get(f, &ops, sizeof ops) && ops == (uint32_t)(OP_WIDE + 1)
         && get(f, &build, sizeof build) && build == buildId()
         && get(f, &hash, sizeof hash) && (sourceHash == 0 || hash == sourceHash))
         fn = getFunction(vm, f);

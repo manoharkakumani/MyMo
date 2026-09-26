@@ -155,16 +155,16 @@ void deleteStatement(Compiler *compiler)
     {
         errorAtCurrent(compiler, "expected variable");
     }
-    u8 name = identifierConstant(compiler, &compiler->parser->previous);
+    uint name = identifierConstant(compiler, &compiler->parser->previous);
     if (matchToken(compiler, DOT))
     {
-        emitBytes(compiler, OP_GETP, name);
+        emitConstOp(compiler, OP_GETP, name);
         consumeToken(compiler, NAME, "expected property name after '.'.");
         name = identifierConstant(compiler, &compiler->parser->previous);
         emitBytes(compiler, OP_DELP, name);
     }
     else
-        emitBytes(compiler, OP_DELV, name);
+        emitConstOp(compiler, OP_DELV, name);
 }
 
 void block(Compiler *compiler, size_t indent)
@@ -371,7 +371,7 @@ void loopStatement(Compiler *compiler)
 // binding patterns can extract from it without touching the operand
 // stack. The leading `<` is outside the identifier alphabet, so it can
 // never collide with a user-declared name.
-static u8 caseScrutineeName(Compiler *compiler)
+static uint caseScrutineeName(Compiler *compiler)
 {
     static const char NAME[] = "<scrutinee>";
     Token tok;
@@ -388,10 +388,10 @@ static void emitBindingExtractions(Compiler *compiler)
 {
     int n = compiler->flags.bindingsCount;
     if (n == 0) return;
-    u8 scrutIdx = caseScrutineeName(compiler);
+    uint scrutIdx = caseScrutineeName(compiler);
     for (int i = 0; i < n; i++)
     {
-        u8 nameIdx = compiler->flags.bindingNameIdx[i];
+        uint nameIdx = compiler->flags.bindingNameIdx[i];
         int pathLen = compiler->flags.bindingPathLen[i];
         emitGetV(compiler, scrutIdx);  // push scrutinee root
         for (int d = 0; d < pathLen; d++)
@@ -906,12 +906,11 @@ static void functionStatementDecorated(Compiler *compiler, const u8 *decoratorAr
     case FN_INIT:
     case FN_METHOD:
     case FN_OPERATOR:
-        emitBytes(compiler, OP_MET, makeConstant(compiler, AS_OBJECT(function)));
-        emitByte(compiler, name);
+        emitConstOp2(compiler, OP_MET, makeConstant(compiler, AS_OBJECT(function)), name);
         compiler->flags.cl_fn = true;
         break;
     case FN_FUNCTION:
-        emitBytes(compiler, OP_FN, makeConstant(compiler, AS_OBJECT(function)));
+        emitConstOp(compiler, OP_FN, makeConstant(compiler, AS_OBJECT(function)));
         for (int i = decoratorCount - 1; i >= 0; i--)
             emitBytes(compiler, OP_CALL, decoratorArgc[i]);
         emitSetV(compiler, name);
@@ -930,9 +929,9 @@ void classStatement(Compiler *compiler)
     {
         errorAtCurrent(compiler, "expected class name");
     }
-    u8 name = identifierConstant(compiler, &compiler->parser->previous);
+    uint name = identifierConstant(compiler, &compiler->parser->previous);
     u8 superClasses = 0;
-    emitBytes(compiler, OP_CLASS, name);
+    emitConstOp(compiler, OP_CLASS, name);
     if (matchToken(compiler, LPAR))
     {
         if (!checkToken(compiler, RPAR))
@@ -951,7 +950,7 @@ void classStatement(Compiler *compiler)
         }
         if (superClasses)
         {
-            emitBytes(compiler, OP_SUPERARGS, makeConstantV(compiler, V_INT_VAL((int32_t)superClasses)));
+            emitConstOp(compiler, OP_SUPERARGS, makeConstantV(compiler, V_INT_VAL((int32_t)superClasses)));
         }
         consumeToken(compiler, RPAR, "expected ')' after arguments.");
     }
@@ -1026,20 +1025,20 @@ void fromStatement(Compiler *compiler)
     if (matchToken(compiler, STAR))
     {
         emitByte(compiler, OP_FALSE);
-        emitBytes(compiler, OP_USE, path);
+        emitConstOp(compiler, OP_USE, path);
         consumeToken(compiler, NEWLINE, "expected newline after * iin use statement");
         emitByte(compiler, OP_COPY);
         return;
     }
 multiFrom:
     emitByte(compiler, OP_FALSE);
-    emitBytes(compiler, OP_USE, path);
+    emitConstOp(compiler, OP_USE, path);
     if (!matchToken(compiler, NAME))
     {
         errorAtCurrent(compiler, "expected property name Ex:- 'from \"module\" use abc'");
     }
     u32 name = identifierConstant(compiler, &compiler->parser->previous);
-    emitBytes(compiler, OP_GETP, name);
+    emitConstOp(compiler, OP_GETP, name);
     if (checkToken(compiler, AS))
     {
         advanceToken(compiler);
@@ -1076,7 +1075,7 @@ multiUse:
     }
     u32 path = identifierConstant(compiler, &compiler->parser->previous);
     emitByte(compiler, OP_TRUE);
-    emitBytes(compiler, OP_USE, path);
+    emitConstOp(compiler, OP_USE, path);
     if (checkToken(compiler, AS))
     {
         advanceToken(compiler);
