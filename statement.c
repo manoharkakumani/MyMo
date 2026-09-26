@@ -98,6 +98,70 @@ void trenaryCond2(Compiler *compiler, bool canAssign)
     patchJump(compiler, endJump);
 }
 
+// Is the statement at `current` a multiple assignment `a, b (, c)* = ...`?
+// Scans ahead on a copy of the lexer (it's a plain struct), so nothing is
+// consumed when the answer is no.
+static bool isUnpackAssignment(Compiler *compiler)
+{
+    if (!checkToken(compiler, NAME))
+        return false;
+    Lexer probe = *compiler->parser->lexer;
+    int names = 1;
+    bool expectComma = true;
+    for (;;)
+    {
+        Token t = getToken(&probe);
+        if (expectComma)
+        {
+            if (t.type == COMMA) { expectComma = false; continue; }
+            return t.type == EQUAL && names >= 2;
+        }
+        if (t.type != NAME)
+            return false;
+        names++;
+        expectComma = true;
+    }
+}
+
+// Parse `NAME (, NAME)*` into `names`; returns the count.
+static int parseNameList(Compiler *compiler, Token *names, int max)
+{
+    int n = 0;
+    do
+    {
+        consumeToken(compiler, NAME, "expected a name.");
+        if (n == max)
+        {
+            error(compiler, "too many names to unpack.");
+            return n;
+        }
+        names[n++] = compiler->parser->previous;
+    } while (matchToken(compiler, COMMA));
+    return n;
+}
+
+// After OP_UNPACK n pushed the elements in order, store them into the
+// names (last element is on top).
+static void storeUnpacked(Compiler *compiler, Token *names, int n)
+{
+    for (int i = n - 1; i >= 0; i--)
+    {
+        emitStoreName(compiler, &names[i]);
+        emitByte(compiler, OP_POP);
+    }
+}
+
+// `a, b = expr` (expr is usually a tuple: `a, b = b, a` swaps).
+static void unpackAssignment(Compiler *compiler)
+{
+    Token names[64];
+    int n = parseNameList(compiler, names, 64);
+    consumeToken(compiler, EQUAL, "expected '=' after names.");
+    expression(compiler);
+    emitBytes(compiler, OP_UNPACK, (u8)n);
+    storeUnpacked(compiler, names, n);
+}
+
 void expressionStatement(Compiler *compiler)
 {
     expression(compiler);
@@ -337,15 +401,23 @@ void loopStatement(Compiler *compiler)
     size_t indent = getIndent(compiler);
     if (matchToken(compiler, FOR))
     {
-        consumeToken(compiler, NAME, "expected an iterator name");
-        uint name = identifierConstant(compiler, &compiler->parser->previous);
+        // `for x in xs` or `for a, b in pairs` (each element unpacked).
+        Token names[64];
+        int n = parseNameList(compiler, names, 64);
         consumeToken(compiler, IN, "expected 'in' after iterator name");
         expression(compiler);
         emitByte(compiler, OP_GETI);
         startLoop(compiler, &loop);
         loop.isFor = true;
         compiler->loop->loopJump = emitJump(compiler, OP_ITER);
-        emitSetV(compiler, name);
+        if (n == 1)
+            emitStoreName(compiler, &names[0]);
+        else
+        {
+            emitBytes(compiler, OP_UNPACK, (u8)n);
+            storeUnpacked(compiler, names, n);
+            emitByte(compiler, OP_NIL); // the loop body starts with OP_POP
+        }
     }
     else
     {
@@ -649,6 +721,10 @@ void simpleStatement(Compiler *compiler)
     else if (checkToken(compiler, RAISE))
     {
         raiseStatement(compiler);
+    }
+    else if (isUnpackAssignment(compiler))
+    {
+        unpackAssignment(compiler);
     }
     else
     {

@@ -17,6 +17,7 @@ u8 argumentList(Compiler *compiler);
 void optDot(Compiler *compiler, bool canAssign);
 void isOp(Compiler *compiler, bool canAssign);
 void inOp(Compiler *compiler, bool canAssign);
+void emitStoreName(Compiler *compiler, Token *t);
 void notInOp(Compiler *compiler, bool canAssign);
 void expression(Compiler *compiler);
 void call(Compiler *compiler, bool canAssign);

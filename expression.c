@@ -515,6 +515,19 @@ void optDot(Compiler *compiler, bool canAssign)
 // Resolve an identifier to a function-arg slot if we're inside a function
 // body and the name matches one of the function's declared parameters.
 // Returns the slot index (0..argc-1) or -1 if not an arg.
+static int resolveArgSlot(Compiler *compiler, Token *t);
+
+// Store the value on top of the stack into variable `t` (parameter slot
+// or variable), leaving it on the stack like an assignment expression.
+void emitStoreName(Compiler *compiler, Token *t)
+{
+    int slot = resolveArgSlot(compiler, t);
+    if (slot >= 0)
+        emitBytes(compiler, OP_SETARG, (u8)slot);
+    else
+        emitSetV(compiler, identifierConstant(compiler, t));
+}
+
 static int resolveArgSlot(Compiler *compiler, Token *t)
 {
     MyMoFunction *fn = compiler->function;

@@ -888,12 +888,48 @@ int runMVM(MVM *vm)
     }
     OP_UNPACK:
     {
-        // u32 count = ReadByte();
-        // MyMoObject *object = pop(vm);
-        // if (IS_LIST(object))
-        // {
-        //     MyMoList *list = AS_LIST(object);
-        // }
+        // [seq] -> [seq[0], ..., seq[n-1]] for a list, tuple or string of
+        // exactly n elements (`a, b = pair`, `for k, v in pairs`).
+        u32 count = ReadByte();
+        Value seq = lpop();
+        ValueArray *values = NULL;
+        MyMoString *chars = NULL;
+        int length = -1;
+        if (V_IS_OBJ_TYPE(seq, OBJ_LIST))
+            values = &AS_LIST(V_AS_OBJ(seq))->values;
+        else if (V_IS_OBJ_TYPE(seq, OBJ_TUPLE))
+            values = &AS_TUPLE(V_AS_OBJ(seq))->values;
+        else if (V_IS_OBJ_TYPE(seq, OBJ_STRING))
+            chars = AS_STRING(V_AS_OBJ(seq));
+        else
+        {
+            SAVE();
+            runtimeError(vm, "TypeError: cannot unpack %s", valueTypeName(seq));
+            goto _runtime_error;
+        }
+        length = values ? values->count : chars->length;
+        if (length != (int)count)
+        {
+            SAVE();
+            runtimeError(vm, "ValueError: expected %u values to unpack, got %d", count, length);
+            goto _runtime_error;
+        }
+        if (values)
+        {
+            for (int i = 0; i < length; i++)
+                lpush(values->values[i]);
+        }
+        else
+        {
+            // Keep the string reachable while the characters are allocated.
+            lpush(seq);
+            SAVE();
+            for (int i = 0; i < length; i++)
+                lpush(V_OBJ_VAL(NEW_STRING(vm, chars->value + i, 1)));
+            for (int i = 0; i < length; i++)
+                sp[-length - 1 + i] = sp[-length + i];
+            sp--;
+        }
         DISPATCH();
     }
     OP_SLICE:
