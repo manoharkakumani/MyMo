@@ -13,6 +13,7 @@
 #include "vm.h"
 #include "memory.h"
 #include "operations.h"
+#include "format.h"
 #include "include/mymo.h"
 #include "datatypes/datatypes.h"
 #include <math.h>
@@ -62,6 +63,18 @@ static bool needNumber(MVM *vm, const char *fn, Value v)
 }
 
 static Value listValue(MyMoList *list) { return V_OBJ_VAL(AS_OBJECT(list)); }
+
+MyMoDict *takeAllKeywords(MVM *vm)
+{
+    MyMoDict *keywords = vm->kwargs;
+    if (keywords == NULL || keywords->count == 0)
+        return NULL;
+    MyMoDict *taken = newDict(vm);
+    copyDict(vm, keywords, taken);
+    FreeArray(vm, Entry, keywords->entries, keywords->capacity + 1);
+    initDict(keywords);
+    return taken;
+}
 
 bool takeKeyword(MVM *vm, const char *name, Value *out)
 {
@@ -801,6 +814,23 @@ static Value callablefn(MVM *vm, uint argc, Value argv[])
     return V_BOOL_VAL(result);
 }
 
+// format(value[, spec]) — see format.c for the spec language.
+static Value formatfn(MVM *vm, uint argc, Value argv[])
+{
+    if (!arity(vm, "format", argc, 1, 2))
+        return V_EMPTY_VAL;
+    if (argc == 2 && !V_IS_OBJ_TYPE(argv[1], OBJ_STRING))
+    {
+        runtimeError(vm, "TypeError: format() spec must be a string, not %s", valueTypeName(argv[1]));
+        return V_EMPTY_VAL;
+    }
+    MyMoString *spec = argc == 2 ? AS_STRING(V_AS_OBJ(argv[1])) : NULL;
+    Value out = formatValueToString(vm, argv[0], spec ? spec->value : "", spec ? spec->length : 0);
+    if (!V_IS_EMPTY(out))
+        popArgs(vm, argc);
+    return out;
+}
+
 // exit([code]) — flushes output and ends the process.
 static Value exitfn(MVM *vm, uint argc, Value argv[])
 {
@@ -840,8 +870,7 @@ static Value newDictMethod(MVM *vm, uint argc, Value argv[])
     MyMoDict *dict = newDict(vm);
     // dict(a=1, b=2): keyword arguments become entries (after any
     // positional source).
-    MyMoDict *keywords = vm->kwargs;
-    vm->kwargs = NULL;
+    MyMoDict *keywords = takeAllKeywords(vm);
     if (argc == 1)
     {
         Value src = argv[0];
@@ -873,11 +902,7 @@ static Value newDictMethod(MVM *vm, uint argc, Value argv[])
         }
     }
     if (keywords)
-    {
         copyDict(vm, keywords, dict);
-        keywords->count = 0; // all taken (only the count is checked)
-        vm->kwargs = keywords;
-    }
     popArgs(vm, argc);
     return V_OBJ_VAL(AS_OBJECT(dict));
 }
@@ -907,6 +932,7 @@ void defineBuiltInHelpers(MVM *vm)
     defineBuiltInFunction(vm, "isinstance", isinstancefn);
     defineBuiltInFunction(vm, "callable", callablefn);
     defineBuiltInFunction(vm, "exit", exitfn);
+    defineBuiltInFunction(vm, "format", formatfn);
 
     // tuple and dict constructors; `float` is another name for double.
     MyMoObject *tupleName = AS_OBJECT(newString(vm, "tuple", 5));

@@ -162,6 +162,50 @@ void fstring_(Compiler *compiler, bool canAssign)
         int expr_len = i - expr_start;
         i++; // past `}`
 
+        // `{expr!r:spec}`: split off a conversion and a format spec at the
+        // first top-level `!r`/`!s` or `:` (inside brackets or strings
+        // they belong to the expression; `a ? b : c` needs parentheses).
+        int field_len = expr_len;
+        char conversion = 0;
+        const char *spec = NULL;
+        int spec_len = 0;
+        {
+            int d = 0;
+            for (int k = expr_start; k < expr_start + expr_len; k++)
+            {
+                char c = content[k];
+                if (c == '"' || c == '\'' || c == '`')
+                {
+                    for (k++; k < expr_start + expr_len && content[k] != c; k++)
+                        if (content[k] == '\\') k++;
+                    continue;
+                }
+                if (c == '(' || c == '[' || c == '{') d++;
+                else if (c == ')' || c == ']' || c == '}') d--;
+                else if (d == 0 && c == '!' && k + 1 < expr_start + expr_len
+                         && (content[k + 1] == 'r' || content[k + 1] == 's')
+                         && (k + 2 == expr_start + expr_len || content[k + 2] == ':'))
+                {
+                    field_len = k - expr_start;
+                    conversion = content[k + 1];
+                    if (k + 2 < expr_start + expr_len)
+                    {
+                        spec = content + k + 3;
+                        spec_len = expr_start + expr_len - (k + 3);
+                    }
+                    break;
+                }
+                else if (d == 0 && c == ':')
+                {
+                    field_len = k - expr_start;
+                    spec = content + k + 1;
+                    spec_len = expr_start + expr_len - (k + 1);
+                    break;
+                }
+            }
+        }
+        expr_len = field_len;
+
         // Build a null-terminated buffer for the embedded expression.
         // We append a `\n` so the sub-lexer's NEWLINE check is
         // satisfied at end-of-source.
@@ -184,7 +228,13 @@ void fstring_(Compiler *compiler, bool canAssign)
         compiler->parser->current = outerCurrent;
         compiler->parser->previous = outerPrevious;
 
-        emitByte(compiler, OP_TOSTRING);
+        if (conversion || spec)
+        {
+            emitConstant(compiler, NEW_STRING(vm, spec ? spec : "", spec_len));
+            emitBytes(compiler, OP_FORMAT, (u8)conversion);
+        }
+        else
+            emitByte(compiler, OP_TOSTRING);
         piece_count++;
         if (piece_count > 1) emitBytes(compiler, OP_ADD, 0);
     }

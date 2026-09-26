@@ -79,6 +79,7 @@ void *dispatchTable[] = {
     &&OP_SUBSCRK,
     &&OP_DELSUBSCR,
     &&OP_CALLKW,
-    &&OP_SET
+    &&OP_SET,
+    &&OP_FORMAT
     };
 #endif

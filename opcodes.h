@@ -99,9 +99,11 @@ typedef enum
     //                             named by kwc u16 constant indices
     OP_CALLKW,
     //   OP_SET n                 [x0 .. xn-1] -> [set] (set literal)
-    OP_SET
+    OP_SET,
+    //   OP_FORMAT conv           [value, spec] -> [string] (f"{value!conv:spec}")
+    OP_FORMAT
 } OpCode;
 
 // Number of opcodes (keep in sync with the last enum entry).
-#define OP_COUNT (OP_SET + 1)
+#define OP_COUNT (OP_FORMAT + 1)
 #endif

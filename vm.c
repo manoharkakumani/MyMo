@@ -1,6 +1,7 @@
 #include "common.h"
 #include "vm.h"
 #include "repr.h"
+#include "format.h"
 #include <limits.h>
 #include "include/mymo.h"
 #include "stack.h"
@@ -1124,169 +1125,90 @@ int runMVM(MVM *vm)
     }
     OP_SLICE:
     {
-        MyMoObject *st = pop(vm);
-        MyMoObject *ed = pop(vm);
-        MyMoObject *sta = pop(vm);
-        if (IS_NIL(st) && IS_NIL(ed) && IS_NIL(sta))
+        // [seq, start, stop, step] -> [seq[start:stop:step]] with Python's
+        // rules: Nil bounds default by direction, negative bounds count
+        // from the end, out-of-range bounds clamp. Always a new sequence.
+        Value stepV = lpeek(0), stopV = lpeek(1), startV = lpeek(2), seqV = lpeek(3);
+        long bounds[3];
+        Value boundVals[3] = {startV, stopV, stepV};
+        for (int i = 0; i < 3; i++)
         {
-            DISPATCH();
+            if (valueIsNil(boundVals[i]))
+                continue;
+            if (!valueLooksLikeInt(boundVals[i]))
+            {
+                SAVE();
+                runtimeError(vm, "TypeError: slice indices must be integers or Nil, not %s", valueTypeName(boundVals[i]));
+                goto _runtime_error;
+            }
+            bounds[i] = valueToLong(boundVals[i]);
         }
-        if ((!IS_INT(st) && !IS_NIL(st)) || (!IS_INT(ed) && !IS_NIL(ed)) || (!IS_INT(sta) && !IS_NIL(sta)))
+        long step = valueIsNil(stepV) ? 1 : bounds[2];
+        if (step == 0)
         {
-            runtimeError(vm, "TypeError: expect integer as index to slice");
+            SAVE();
+            runtimeError(vm, "ValueError: slice step cannot be zero");
             goto _runtime_error;
         }
-        int step = IS_NIL(st) ? 1 : AS_INT(st)->value;
-        if (step < 0)
+        long length;
+        if (V_IS_OBJ_TYPE(seqV, OBJ_STRING))
+            length = AS_STRING(V_AS_OBJ(seqV))->length;
+        else if (V_IS_OBJ_TYPE(seqV, OBJ_LIST))
+            length = AS_LIST(V_AS_OBJ(seqV))->values.count;
+        else if (V_IS_OBJ_TYPE(seqV, OBJ_TUPLE))
+            length = AS_TUPLE(V_AS_OBJ(seqV))->values.count;
+        else
         {
-            st = sta;
-            sta = ed;
-            ed = st;
-        }
-        int start = IS_NIL(sta) ? 0 : AS_INT(sta)->value;
-        if (!step)
-        {
-            runtimeError(vm, "TypeError: slice step cannot be zero");
+            SAVE();
+            runtimeError(vm, "TypeError: %s can't be sliced", valueTypeName(seqV));
             goto _runtime_error;
         }
-        MyMoObject *object = pop(vm);
-        switch (object->type)
+        long lower = step > 0 ? 0 : -1, upper = step > 0 ? length : length - 1;
+        long ends[2];
+        for (int i = 0; i < 2; i++)
         {
-        case OBJ_STRING:
-        {
-            MyMoString *str = AS_STRING(object);
-            char _str[str->length];
-            int end = IS_NIL(ed) ? (step < 0 ? str->length - 1 : str->length) : AS_INT(ed)->value;
-            int j = 0;
-            if (start < 0)
-            {
-                start += str->length;
-            }
-            if (end < 0)
-            {
-                end += str->length;
-            }
-            if (end > str->length)
-            {
-                end = step < 0 ? str->length - 1 : str->length;
-            }
-            if (start > end || (start >= str->length && end > str->length) || start >= str->length)
-            {
-                push(vm, NEW_STRING(vm, "", 0));
-                break;
-            }
-            if (step > 0)
-            {
-                for (int i = start; i < end; i += step)
-                {
-                    _str[j++] = str->value[i];
-                }
-                _str[j] = '\0';
-                push(vm, NEW_STRING(vm, _str, j));
-                break;
-            }
+            if (valueIsNil(boundVals[i]))
+                ends[i] = (i == 0) == (step > 0) ? lower : upper;
             else
             {
-                start = IS_NIL(sta) ? -1 : start;
-                for (int i = end; i > start; i += step)
+                long v = bounds[i];
+                if (v < 0)
                 {
-                    _str[j++] = str->value[i];
+                    v += length;
+                    if (v < lower)
+                        v = lower;
                 }
-                _str[j] = '\0';
-                push(vm, NEW_STRING(vm, _str, j));
-                break;
+                else if (v > upper)
+                    v = upper;
+                ends[i] = v;
             }
         }
-        case OBJ_LIST:
+        long start = ends[0], stop = ends[1];
+        long count = step > 0 ? (stop > start ? (stop - start - 1) / step + 1 : 0)
+                              : (start > stop ? (start - stop - 1) / -step + 1 : 0);
+        Value result;
+        SAVE();
+        if (V_IS_OBJ_TYPE(seqV, OBJ_STRING))
         {
-            MyMoList *lst = AS_LIST(object);
-            MyMoList *list = newList(vm);
-            int end = IS_NIL(ed) ? (step < 0 ? lst->values.count - 1 : lst->values.count) : AS_INT(ed)->value;
-            if (start < 0)
-            {
-                start += lst->values.count;
-            }
-            if (end < 0)
-            {
-                end += lst->values.count;
-            }
-            else if (end > lst->values.count)
-            {
-                end = step < 0 ? lst->values.count - 1 : lst->values.count;
-            }
-            if (start > end || (start >= lst->values.count && end > lst->values.count) || start >= lst->values.count)
-            {
-                push(vm, AS_OBJECT(list));
-                break;
-            }
-            if (step > 0)
-            {
-                for (int i = start; i < end; i += step)
-                {
-                    writeValueArray(vm, &list->values, lst->values.values[i]);
-                }
-                push(vm, AS_OBJECT(list));
-                break;
-            }
-            else
-            {
-                start = IS_NIL(sta) ? -1 : start;
-                for (int i = end; i > start; i += step)
-                {
-                    writeValueArray(vm, &list->values, lst->values.values[i]);
-                }
-                push(vm, AS_OBJECT(list));
-                break;
-            }
+            MyMoString *str = AS_STRING(V_AS_OBJ(seqV));
+            char *buf = New(char, count + 1);
+            for (long i = 0; i < count; i++)
+                buf[i] = str->value[start + i * step];
+            result = V_OBJ_VAL(AS_OBJECT(newString(vm, buf, (int)count)));
+            free(buf);
         }
-        case OBJ_TUPLE:
+        else
         {
-            MyMoTuple *tpl = AS_TUPLE(object);
-            MyMoTuple *tuple = newTuple(vm);
-            int end = IS_NIL(ed) ? (step < 0 ? tpl->values.count - 1 : tpl->values.count) : AS_INT(ed)->value;
-            if (start < 0)
-            {
-                start += tpl->values.count;
-            }
-            if (end < 0)
-            {
-                end += tpl->values.count;
-            }
-            else if (end > tpl->values.count)
-            {
-                end = step < 0 ? tpl->values.count - 1 : tpl->values.count;
-            }
-
-            if (start > end || (start >= tpl->values.count && end > tpl->values.count) || start >= tpl->values.count)
-            {
-                push(vm, AS_OBJECT(tuple));
-                break;
-            }
-            if (step > 0)
-            {
-                for (int i = start; i < end; i += step)
-                {
-                    writeValueArray(vm, &tuple->values, tpl->values.values[i]);
-                }
-                push(vm, AS_OBJECT(tuple));
-                break;
-            }
-            else
-            {
-                start = IS_NIL(sta) ? -1 : start;
-                for (int i = end; i > start; i += step)
-                {
-                    writeValueArray(vm, &tuple->values, tpl->values.values[i]);
-                }
-                push(vm, AS_OBJECT(tuple));
-                break;
-            }
+            bool isList = V_IS_OBJ_TYPE(seqV, OBJ_LIST);
+            ValueArray *src = isList ? &AS_LIST(V_AS_OBJ(seqV))->values : &AS_TUPLE(V_AS_OBJ(seqV))->values;
+            MyMoObject *out = isList ? AS_OBJECT(newList(vm)) : AS_OBJECT(newTuple(vm));
+            ValueArray *dst = isList ? &AS_LIST(out)->values : &AS_TUPLE(out)->values;
+            for (long i = 0; i < count; i++)
+                writeValueArray(vm, dst, src->values[start + i * step]);
+            result = V_OBJ_VAL(out);
         }
-        default:
-            runtimeError(vm, "TypeError: can only slice on List and String but got %s", getType(object));
-            goto _runtime_error;
-            break;
-        }
+        sp -= 4;
+        lpush(result);
         DISPATCH();
     }
     OP_NOT:
@@ -2269,6 +2191,28 @@ int runMVM(MVM *vm)
         if (!caller(vm, V_AS_OBJ(calleeV), argCount))
             goto _runtime_error;
         LOAD();
+        DISPATCH();
+    }
+    OP_FORMAT:
+    {
+        // [value, spec] -> [text]; conversion 'r' / 's' applies repr/str
+        // before the spec.
+        u8 conversion = ReadByte();
+        MyMoString *spec = AS_STRING(V_AS_OBJ(lpeek(0)));
+        Value value = lpeek(1);
+        SAVE();
+        if (conversion)
+        {
+            value = conversion == 'r' ? valueToRepr(vm, value) : valueToStr(vm, value);
+            if (V_IS_EMPTY(value))
+                goto _runtime_error;
+            sp[-2] = value; // keep it rooted
+        }
+        Value text = formatValueToString(vm, value, spec->value, spec->length);
+        if (V_IS_EMPTY(text))
+            goto _runtime_error;
+        sp -= 2;
+        lpush(text);
         DISPATCH();
     }
     OP_SET:

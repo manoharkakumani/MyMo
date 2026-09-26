@@ -23,5 +23,7 @@ void defineBuiltInFunction(MVM *vm, const char *name, BuiltInfunction function);
 // (f(x, name=value)): true and *out set if it was given. Keywords a
 // builtin doesn't take are reported as errors after it returns.
 bool takeKeyword(MVM *vm, const char *name, Value *out);
+// Takes every remaining keyword argument: a dict of them, or NULL.
+MyMoDict *takeAllKeywords(MVM *vm);
 
 #endif

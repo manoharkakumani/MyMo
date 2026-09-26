@@ -10,6 +10,7 @@
 #include <ctype.h>
 #include "../repr.h"
 #include "../builtins.h"
+#include "../format.h"
 
 MyMoString *newString(MVM *vm, const char *chars, int length)
 {
@@ -603,6 +604,14 @@ static Value removeAffix(MVM *vm, const char *fn, uint argc, Value args[], bool 
 Value removeprefixStringMethod(MVM *vm, uint argc, Value args[]) { return removeAffix(vm, "removeprefix", argc, args, true); }
 Value removesuffixStringMethod(MVM *vm, uint argc, Value args[]) { return removeAffix(vm, "removesuffix", argc, args, false); }
 
+// "{} is {age:>3}".format(name, age=7) — see formatTemplate.
+Value formatStringMethod(MVM *vm, uint argc, Value args[])
+{
+    MyMoObject *self = methodEnter(vm, "format", argc, 0, 255);
+    if (!self) return V_EMPTY_VAL;
+    return formatTemplate(vm, AS_STRING(self), (int)argc, args, takeAllKeywords(vm));
+}
+
 void defineStringMethods(MVM *vm)
 {
     defineMethod(vm, OBJ_STRING, "__new__", newStringMethod);
@@ -617,6 +626,7 @@ void defineStringMethods(MVM *vm)
     defineMethod(vm, OBJ_STRING, "replace", replaceStringMethod);
     defineMethod(vm, OBJ_STRING, "split", splitStringMethod);
     defineMethod(vm, OBJ_STRING, "join", joinStringMethod);
+    defineMethod(vm, OBJ_STRING, "format", formatStringMethod);
     defineMethod(vm, OBJ_STRING, "lstrip", lstripStringMethod);
     defineMethod(vm, OBJ_STRING, "rstrip", rstripStringMethod);
     defineMethod(vm, OBJ_STRING, "rfind", rfindStringMethod);
