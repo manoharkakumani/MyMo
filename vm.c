@@ -1,5 +1,6 @@
 #include "common.h"
 #include "vm.h"
+#include "repr.h"
 #include "stack.h"
 #include "operations.h"
 #include "datatypes/datatypes.h"
@@ -2538,61 +2539,17 @@ int runMVM(MVM *vm)
     }
     OP_TOSTRING:
     {
-        // Pop a Value, push its MyMoString representation. Used by
-        // f-string interpolation so `f"x={x}"` works regardless of
-        // x's type. Inline primitives format via snprintf; strings
-        // pass through; everything else falls back to `getType()` so
-        // we don't dereference arbitrary objects.
-        Value v = popV(vm);
-        char buf[64];
-        const char *src = NULL;
-        int srclen = 0;
-        if (V_IS_INT(v))
-        {
-            srclen = snprintf(buf, sizeof(buf), "%d", V_AS_INT(v));
-            src = buf;
-        }
-        else if (V_IS_DOUBLE(v))
-        {
-            srclen = snprintf(buf, sizeof(buf), "%.16g", V_AS_DOUBLE(v)); // like print()
-            src = buf;
-        }
-        else if (V_IS_NIL(v))   { src = "Nil"; srclen = 3; }
-        else if (V_IS_TRUE(v))  { src = "True"; srclen = 4; }
-        else if (V_IS_FALSE(v)) { src = "False"; srclen = 5; }
-        else if (V_IS_OBJ(v))
-        {
-            MyMoObject *o = V_AS_OBJ(v);
-            switch (o->type)
-            {
-            case OBJ_STRING:
-            {
-                MyMoString *s = AS_STRING(o);
-                src = s->value; srclen = s->length;
-                break;
-            }
-            case OBJ_INT:
-                srclen = snprintf(buf, sizeof(buf), "%ld", AS_INT(o)->value);
-                src = buf; break;
-            case OBJ_DOUBLE:
-                srclen = snprintf(buf, sizeof(buf), "%g", AS_DOUBLE(o)->value);
-                src = buf; break;
-            case OBJ_NIL:   src = "Nil";   srclen = 3; break;
-            case OBJ_BOOL:
-                if (AS_BOOL(o)->value) { src = "True";  srclen = 4; }
-                else                   { src = "False"; srclen = 5; }
-                break;
-            default:
-                src = getType(o);
-                srclen = (int)strlen(src);
-                break;
-            }
-        }
-        else
-        {
-            src = "<unknown>"; srclen = 9;
-        }
-        push(vm, AS_OBJECT(newString(vm, src, srclen)));
+        // Pop a Value, push its str() form (f-string interpolation).
+        // Strings pass through; instances may run their __str__.
+        Value v = lpeek(0);
+        if (V_IS_OBJ_TYPE(v, OBJ_STRING))
+            DISPATCH();
+        SAVE(); // __str__ runs on this stack, above v (which stays rooted)
+        Value text = valueToStr(vm, v);
+        if (V_IS_EMPTY(text))
+            goto _runtime_error;
+        lpop();
+        lpush(text);
         DISPATCH();
     }
     OP_DELP:

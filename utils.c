@@ -1,3 +1,4 @@
+#include "repr.h"
 #include "memory.h"
 #include "compiler.h"
 #include "utils.h"
@@ -71,23 +72,39 @@ Value inputfn(MVM *vm, uint argc, Value argv[])
 
 Value printfn(MVM *vm, uint argc, Value argv[])
 {
-    UNUSED(vm);
-    if (argc == 0)
+    // Format everything first, then pop: a user __str__ runs on the
+    // stack above the arguments, which keeps them alive meanwhile.
+    StrBuf b;
+    strbufInit(&b);
+    for (uint i = 0; i < argc; i++)
     {
-        printf("\n");
-        return V_BOOL_VAL(0);
+        if (i)
+            strbufAppend(&b, " ", 1);
+        if (!formatValue(vm, &b, argv[i], false))
+        {
+            strbufFree(&b);
+            return V_EMPTY_VAL;
+        }
     }
-    int i = 0;
-    for (i = 0; i < (argc - 1); i++)
-    {
-        printValue(argv[i]);
+    strbufAppend(&b, "\n", 1);
+    fwrite(b.data, 1, (size_t)b.length, stdout);
+    strbufFree(&b);
+    for (uint i = 0; i < argc; i++)
         popV(vm);
-        printf(" ");
+    return V_NIL_VAL;
+}
+
+Value reprfn(MVM *vm, uint argc, Value argv[])
+{
+    if (argc != 1)
+    {
+        runtimeError(vm, "TypeError: repr() takes 1 argument (%u given)", argc);
+        return V_EMPTY_VAL;
     }
-    printValue(argv[i]);
-    popV(vm);
-    printf("\n");
-    return V_BOOL_VAL(1);
+    Value out = valueToRepr(vm, argv[0]);
+    if (!V_IS_EMPTY(out))
+        popV(vm);
+    return out;
 }
 
 Value typefn(MVM *vm, uint argc, Value argv[])
@@ -316,6 +333,7 @@ void defineBuiltInFunctions(MVM *vm)
     defineBuiltInFunction(vm, "clock", clockfn);
     defineBuiltInFunction(vm, "input", inputfn);
     defineBuiltInFunction(vm, "print", printfn);
+    defineBuiltInFunction(vm, "repr", reprfn);
     defineBuiltInFunction(vm, "type", typefn);
     defineBuiltInFunction(vm, "globals", globalsfn);
     defineBuiltInFunction(vm, "compile", compilefn);

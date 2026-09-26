@@ -8,6 +8,7 @@
 #include "tuple.h"
 #include "../operations.h"
 #include <ctype.h>
+#include "../repr.h"
 
 MyMoString *newString(MVM *vm, const char *chars, int length)
 {
@@ -42,23 +43,10 @@ Value newStringMethod(MVM *vm, uint argc, Value args[])
     }
     if (argc == 0)
         return objectToValue(NEW_STRING(vm, "", 0));
-    Value v = args[0];
-    popV(vm);
-    if (V_IS_OBJ_TYPE(v, OBJ_STRING))
-        return v;
-    char buf[64];
-    const char *text;
-    if (valueLooksLikeInt(v))
-        snprintf(buf, sizeof(buf), "%ld", valueToLong(v)), text = buf;
-    else if (valueLooksLikeDouble(v))
-        snprintf(buf, sizeof(buf), "%.16g", valueToDouble(v)), text = buf; // like print()
-    else if (valueIsNil(v))
-        text = "Nil";
-    else if (valueIsBool(v))
-        text = valueAsBool(v) ? "True" : "False";
-    else
-        text = valueTypeName(v);
-    return objectToValue(NEW_STRING(vm, text, (int)strlen(text)));
+    Value out = valueToStr(vm, args[0]);
+    if (!V_IS_EMPTY(out))
+        popV(vm);
+    return out;
 }
 
 Value stringLengthMethod(MVM *vm, uint argc, Value args[])
