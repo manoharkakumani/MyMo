@@ -22,6 +22,10 @@ struct vm
     MyMoDict integers;
     MyMoDict doubles;
     MyMoDict tupleKeys; // canonical tuples used as dict keys (dict.c)
+    // Keyword arguments of the builtin being called (NULL when none).
+    // Builtins take the ones they understand with takeKeyword(); any
+    // left over after the call is an error. See OP_CALLKW.
+    MyMoDict *kwargs;
     MyMoDict builtInModules;
     MyMoObject *objects;
     u32 classCall;

@@ -294,7 +294,10 @@ Value sortListMethod(MVM *vm, uint argc, Value args[])
     MyMoObject *self = methodEnter(vm, "sort", argc, 0, 2);
     if (!self) return V_EMPTY_VAL;
     Value key = argc > 0 ? args[0] : V_NIL_VAL;
-    bool reverse = argc > 1 && !valueIsFalsey(args[1]);
+    Value reverseV = argc > 1 ? args[1] : V_FALSE_VAL;
+    takeKeyword(vm, "key", &key);
+    takeKeyword(vm, "reverse", &reverseV);
+    bool reverse = !valueIsFalsey(reverseV);
     if (!sortValues(vm, &AS_LIST(self)->values, key, reverse))
         return V_EMPTY_VAL;
     return V_NIL_VAL;

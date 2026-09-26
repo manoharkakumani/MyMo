@@ -13,7 +13,7 @@ void grouping(Compiler *compiler, bool canAssign);
 void literal(Compiler *compiler, bool canAssign);
 void variable(Compiler *compiler, bool canAssign);
 void dot(Compiler *compiler, bool canAssign);
-u8 argumentList(Compiler *compiler);
+u8 argumentList(Compiler *compiler, u16 *kwNames, u8 *kwCount);
 void optDot(Compiler *compiler, bool canAssign);
 void isOp(Compiler *compiler, bool canAssign);
 void inOp(Compiler *compiler, bool canAssign);

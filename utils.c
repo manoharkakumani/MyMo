@@ -75,19 +75,32 @@ Value printfn(MVM *vm, uint argc, Value argv[])
 {
     // Format everything first, then pop: a user __str__ runs on the
     // stack above the arguments, which keeps them alive meanwhile.
+    // print(..., sep=" ", end="\n")
+    Value sep = V_EMPTY_VAL, end = V_EMPTY_VAL;
+    takeKeyword(vm, "sep", &sep);
+    takeKeyword(vm, "end", &end);
     StrBuf b;
     strbufInit(&b);
     for (uint i = 0; i < argc; i++)
     {
-        if (i)
+        bool ok = true;
+        if (i && V_IS_EMPTY(sep))
             strbufAppend(&b, " ", 1);
-        if (!formatValue(vm, &b, argv[i], false))
+        else if (i)
+            ok = formatValue(vm, &b, sep, false);
+        if (!ok || !formatValue(vm, &b, argv[i], false))
         {
             strbufFree(&b);
             return V_EMPTY_VAL;
         }
     }
-    strbufAppend(&b, "\n", 1);
+    if (V_IS_EMPTY(end))
+        strbufAppend(&b, "\n", 1);
+    else if (!formatValue(vm, &b, end, false))
+    {
+        strbufFree(&b);
+        return V_EMPTY_VAL;
+    }
     fwrite(b.data, 1, (size_t)b.length, stdout);
     strbufFree(&b);
     for (uint i = 0; i < argc; i++)

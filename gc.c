@@ -215,6 +215,8 @@ static void markRoots(MVM *vm)
     // Values the embedding host retained (mymo_retain).
     for (int i = 0; i < vm->hostRoots.count; i++)
         markValue(vm, vm->hostRoots.values[i]);
+    if (vm->kwargs)
+        markObject(vm, AS_OBJECT(vm->kwargs));
 }
 
 // Drop unmarked keys from an intern table and rebuild it without

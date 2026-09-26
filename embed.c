@@ -106,6 +106,10 @@ MyMoResult mymo_call(MVM *vm, Value callable, int argc, const Value *argv, Value
 
     int savedExitFrame = vm->exitFrame;
     MyMoFiber *savedExitFiber = vm->exitFiber;
+    // The callee must not see keyword arguments meant for the builtin
+    // that is calling back into MyMo.
+    MyMoDict *savedKwargs = vm->kwargs;
+    vm->kwargs = NULL;
     vm->exitFrame = (int)baseFrames;
     vm->exitFiber = fiber;
 
@@ -121,6 +125,7 @@ MyMoResult mymo_call(MVM *vm, Value callable, int argc, const Value *argv, Value
 
     vm->exitFrame = savedExitFrame;
     vm->exitFiber = savedExitFiber;
+    vm->kwargs = savedKwargs;
 
     if (r == OK && vm->fiber == fiber && fiber->stack.count == baseStack + 1)
     {

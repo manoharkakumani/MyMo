@@ -19,4 +19,9 @@ bool sortValues(MVM *vm, ValueArray *values, Value key, bool reverse);
 
 void defineBuiltInFunction(MVM *vm, const char *name, BuiltInfunction function);
 
+// Takes the keyword argument `name` passed to the builtin being called
+// (f(x, name=value)): true and *out set if it was given. Keywords a
+// builtin doesn't take are reported as errors after it returns.
+bool takeKeyword(MVM *vm, const char *name, Value *out);
+
 #endif

@@ -56,6 +56,12 @@ int disassembleInstruction(Chunk *chunk, int offset)
         return byteInstruction("OP_SUBSCR", chunk, offset);
     case OP_SETSUBSCR:
         return byteInstruction("OP_SETSUBSCR", chunk, offset);
+    case OP_CALLKW:
+    {
+        u8 argc = chunk->code[offset + 1], kwc = chunk->code[offset + 2];
+        printf("%-16s %4d (%d keyword)\n", "OP_CALLKW", argc, kwc);
+        return offset + 3 + 2 * kwc;
+    }
     case OP_SUBSCRK:
         return simpleInstruction("OP_SUBSCRK", offset);
     case OP_DELSUBSCR:

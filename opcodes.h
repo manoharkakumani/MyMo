@@ -93,9 +93,13 @@ typedef enum
     //   OP_SUBSCRK               [obj, key] -> [obj, key, obj[key]] (obj[key] op= v)
     OP_SUBSCRK,
     //   OP_DELSUBSCR             [obj, key] -> [] (del obj[key])
-    OP_DELSUBSCR
+    OP_DELSUBSCR,
+    //   OP_CALLKW argc kwc name*  call with keyword arguments: the last kwc
+    //                             of the argc values are keyword values
+    //                             named by kwc u16 constant indices
+    OP_CALLKW
 } OpCode;
 
 // Number of opcodes (keep in sync with the last enum entry).
-#define OP_COUNT (OP_DELSUBSCR + 1)
+#define OP_COUNT (OP_CALLKW + 1)
 #endif

@@ -798,16 +798,97 @@ void grouping(Compiler *compiler, bool canAssign)
     }
 }
 
-u8 argumentList(Compiler *compiler)
+// Is the token after `current` an `=`? (`name=value` keyword argument)
+static bool atKeywordArgument(Compiler *compiler)
+{
+    if (!checkToken(compiler, NAME))
+        return false;
+    Lexer probe = *compiler->parser->lexer;
+    return getToken(&probe).type == EQUAL;
+}
+
+// Does the argument list starting at `current` contain a keyword
+// argument at its top level? Scans a copy of the lexer; consumes nothing.
+static bool hasKeywordArguments(Compiler *compiler)
+{
+    Lexer probe = *compiler->parser->lexer;
+    Token token = compiler->parser->current;
+    int depth = 0;
+    bool argStart = true;
+    for (;;)
+    {
+        switch (token.type)
+        {
+        case END:
+            return false;
+        case LPAR:
+        case LSQB:
+        case LBRACE:
+            depth++;
+            break;
+        case RPAR:
+        case RSQB:
+        case RBRACE:
+            if (depth-- == 0)
+                return false;
+            break;
+        case COMMA:
+            if (depth == 0)
+                argStart = true;
+            token = getToken(&probe);
+            continue;
+        case NAME:
+            if (depth == 0 && argStart)
+            {
+                Token next = getToken(&probe);
+                if (next.type == EQUAL)
+                    return true;
+                argStart = false;
+                token = next;
+                continue;
+            }
+            break;
+        default:
+            break;
+        }
+        argStart = false;
+        token = getToken(&probe);
+    }
+}
+
+// Parses `(args)` after the `(`. Keyword arguments (`name=value`) must
+// follow the positional ones; their name constants go to `kwNames` and
+// their count to *kwCount. Returns the total number of arguments.
+u8 argumentList(Compiler *compiler, u16 *kwNames, u8 *kwCount)
 {
     uint8_t argCount = 0;
+    *kwCount = 0;
     if (!checkToken(compiler, RPAR))
     {
         do
         {
+            skipNewLines(compiler);
+            if (checkToken(compiler, RPAR))
+                break; // trailing comma
             if (argCount == 255)
                 error(compiler, "Can't have more than 255 arguments.");
+            if (kwNames && atKeywordArgument(compiler))
+            {
+                advanceToken(compiler);
+                Token name = compiler->parser->previous;
+                for (int i = 0; i < *kwCount; i++)
+                {
+                    MyMoString *seen = AS_STRING(V_AS_OBJ(currentChunk(compiler)->constants.values[kwNames[i]]));
+                    if (seen->length == name.length && memcmp(seen->value, name.token, (size_t)name.length) == 0)
+                        error(compiler, "Keyword argument repeated.");
+                }
+                kwNames[(*kwCount)++] = (u16)identifierConstant(compiler, &name);
+                advanceToken(compiler); // `=`
+            }
+            else if (*kwCount > 0)
+                errorAtCurrent(compiler, "Positional argument after keyword argument.");
             expression(compiler);
+            skipNewLines(compiler);
             argCount++;
         } while (matchToken(compiler, COMMA));
     }
@@ -824,9 +905,10 @@ void call(Compiler *compiler, bool canAssign)
     // OP_INVOKE_GLOBAL after the args. Saves a dispatch (1 op vs 2) and
     // ~3 bytes of bytecode for every `print(x)` / `len(s)` style call.
     int markBeforeArgs = ch->count;
+    bool keywords = hasKeywordArguments(compiler);
     // Not when the OP_GETV carries an OP_WIDE prefix: the fused
     // instruction lands after the arguments, away from its prefix.
-    bool fuseable = (markBeforeArgs >= 10
+    bool fuseable = (!keywords && markBeforeArgs >= 10
                      && ch->code[markBeforeArgs - 10] == OP_GETV
                      && compiler->lastWideTarget != markBeforeArgs - 10);
     u8 fusedNameIdx = 0;
@@ -837,12 +919,27 @@ void call(Compiler *compiler, bool canAssign)
     }
 
     compiler->flags.argv++;
-    u8 argCount = argumentList(compiler);
+    u16 kwNames[255];
+    u8 kwCount = 0;
+    u8 argCount = argumentList(compiler, keywords ? kwNames : NULL, &kwCount);
     if (compiler->flags.pithru)
     {
+        if (kwCount)
+            error(compiler, "Keyword arguments can't be used with |>.");
         argCount++;
     }
-    if (fuseable)
+    if (kwCount)
+    {
+        emitByte(compiler, OP_CALLKW);
+        emitByte(compiler, argCount);
+        emitByte(compiler, kwCount);
+        for (int i = 0; i < kwCount; i++)
+        {
+            emitByte(compiler, (u8)(kwNames[i] >> 8));
+            emitByte(compiler, (u8)(kwNames[i] & 0xff));
+        }
+    }
+    else if (fuseable)
     {
         // Layout: opcode | name_idx | IC[8] | argc — 11 bytes total.
         emitByte(compiler, OP_INVOKE_GLOBAL);

@@ -1,0 +1,34 @@
+# Keyword arguments: functions, methods, constructors, and builtins
+# (sorted/sort key= reverse=, min/max key= default=, print sep= end=, dict(a=1)).
+fn greet(name, greeting="Hello", punct="!"):
+    return f"{greeting}, {name}{punct}"
+print(greet("Ann"), greet("Bo", punct="?"), greet(name="Cy", greeting="Hi"), greet("Di", "Yo", punct="."))
+class Point:
+    fn __init__(self, x, y=0):
+        self.x = x
+        self.y = y
+    fn moved(self, dx=0, dy=0):
+        return Point(x=self.x + dx, y=self.y + dy)
+p = Point(1, y=5).moved(dy=10)
+print(p.x, p.y, Point(y=2, x=3).x)
+fn f(a, b=2):
+    return a * b
+print(f(3), f(3, b=4), f(b=5, a=2))
+print(sorted([3, 1, 2], reverse=True), sorted(["bb", "a", "ccc"], key=len), sorted(["bb", "a"], key=len, reverse=True))
+xs = [5, 2, 9]
+xs.sort(reverse=True)
+print(xs, min(["aaa", "b", "cc"], key=len), max([1, -5, 3], key=abs), max([], default="none"))
+print("a", "b", "c", sep="-")
+print("no newline", end="")
+print(" <- same line", end="\n")
+print(1, 2, sep=", ", end=" END\n")
+print(enumerate("ab", start=1), dict(a=1, b=2), dict([("x", 1)], y=2))
+fn deco(tag, upper=False):
+    fn wrap(fn_):
+        return fn_
+    return wrap
+for bad in [() => greet("x", nope=1), () => greet(punct="!"), () => greet("a", name="b"), () => len([1], x=2), () => print(1, bogus=2)]:
+    try:
+        bad()
+    catch e:
+        print(e)

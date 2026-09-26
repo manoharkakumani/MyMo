@@ -40,6 +40,7 @@ MVM *initVM()
     initDict(&vm->integers);
     initDict(&vm->doubles);
     initDict(&vm->tupleKeys);
+    vm->kwargs = NULL;
     initDict(&vm->modules);
     initDict(&vm->builtInModules);
     defineBuiltInClasses(vm);
@@ -429,6 +430,113 @@ static bool callerEx(MVM *vm, MyMoObject *callee, u32 argc, bool calleeSlot)
         runtimeError(vm, "Can only call functions and classes.");
         return false;
     }
+}
+
+// Keyword arguments. The stack holds [callee, positional..., keyword
+// values...]. For a MyMo function (or a method, or a class's __init__)
+// the keyword values move into their parameter positions, missing ones
+// take their defaults, and unknown/duplicate/missing names are errors;
+// *argc becomes the full parameter count. Builtins get the keywords as
+// a dict in *kwargs (see takeKeyword) and only the positional arguments
+// stay on the stack.
+static bool bindKeywords(MVM *vm, Value calleeV, u32 *argc, int kwc, MyMoString **names, MyMoDict **kwargs)
+{
+    *kwargs = NULL;
+    MyMoObject *callee = V_IS_OBJ(calleeV) ? V_AS_OBJ(calleeV) : NULL;
+    MyMoFunction *fn = NULL;
+    int offset = 0; // 1 when the first parameter is `self`, passed implicitly
+    if (callee)
+    {
+        switch (callee->type)
+        {
+        case OBJ_FUNCTION:
+            fn = AS_FUNCTION(callee);
+            break;
+        case OBJ_BOUND_METHOD:
+            fn = AS_BOUND_METHOD(callee)->method;
+            offset = 1;
+            break;
+        case OBJ_CLASS:
+            if (AS_CLASS(callee)->init)
+            {
+                fn = AS_FUNCTION(AS_CLASS(callee)->init);
+                offset = 1;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+    Value *base = vm->fiber->stack.values + vm->fiber->stack.count - *argc;
+    int positional = (int)*argc - kwc;
+    if (fn == NULL)
+    {
+        if (callee && (callee->type == OBJ_BUILTIN_FUNCTION || callee->type == OBJ_BUILTIN_METHOD ||
+                       callee->type == OBJ_BUILTIN_CLASS))
+        {
+            MyMoDict *dict = newDict(vm);
+            for (int i = 0; i < kwc; i++)
+                setEntryV(vm, dict, AS_OBJECT(names[i]), base[positional + i]);
+            vm->fiber->stack.count -= kwc;
+            *argc = (u32)positional;
+            *kwargs = dict;
+            return true;
+        }
+        runtimeError(vm, "TypeError: %s doesn't take keyword arguments", valueTypeName(calleeV));
+        return false;
+    }
+    const char *fname = fn->name ? fn->name->value : "function";
+    if (fn->isargs)
+    {
+        runtimeError(vm, "TypeError: %s() doesn't take keyword arguments", fname);
+        return false;
+    }
+    int nparams = fn->argc - offset;
+    if (positional > nparams)
+    {
+        runtimeError(vm, "TypeError: %s() takes %d positional argument%s but %d were given", fname, nparams,
+                     nparams == 1 ? "" : "s", positional);
+        return false;
+    }
+    Value slots[256];
+    for (int i = 0; i < nparams; i++)
+        slots[i] = i < positional ? base[i] : V_EMPTY_VAL;
+    for (int k = 0; k < kwc; k++)
+    {
+        int p = -1;
+        for (int i = offset; i < fn->argc && p < 0; i++)
+            if (fn->argv[i] && fn->argv[i]->length == names[k]->length &&
+                memcmp(fn->argv[i]->value, names[k]->value, (size_t)names[k]->length) == 0)
+                p = i - offset;
+        if (p < 0)
+        {
+            runtimeError(vm, "TypeError: %s() got an unexpected keyword argument '%s'", fname, names[k]->value);
+            return false;
+        }
+        if (!V_IS_EMPTY(slots[p]))
+        {
+            runtimeError(vm, "TypeError: %s() got multiple values for argument '%s'", fname, names[k]->value);
+            return false;
+        }
+        slots[p] = base[positional + k];
+    }
+    int firstDefault = fn->argc - fn->defaultCount;
+    for (int i = 0; i < nparams; i++)
+    {
+        if (!V_IS_EMPTY(slots[i]))
+            continue;
+        int param = i + offset;
+        if (param < firstDefault)
+        {
+            runtimeError(vm, "TypeError: %s() missing required argument '%s'", fname, fn->argv[param]->value);
+            return false;
+        }
+        slots[i] = fn->defaults[param - firstDefault];
+    }
+    memcpy(base, slots, sizeof(Value) * (size_t)nparams);
+    vm->fiber->stack.count = (int)(base - vm->fiber->stack.values) + nparams;
+    *argc = (u32)nparams;
+    return true;
 }
 
 // Integer-only binary operators (& | ^ << >>) on Values.
@@ -2143,6 +2251,37 @@ int runMVM(MVM *vm)
         // the generic dispatch with full SAVE/LOAD.
         SAVE();
         if (!caller(vm, V_AS_OBJ(calleeV), argCount))
+            goto _runtime_error;
+        LOAD();
+        DISPATCH();
+    }
+    OP_CALLKW:
+    {
+        GC_SAFEPOINT();
+        u32 argc = ReadByte();
+        int kwc = ReadByte();
+        MyMoString *names[255];
+        for (int i = 0; i < kwc; i++)
+            names[i] = AS_STRING(V_AS_OBJ(frame->function->chunk->constants.values[ReadShort()]));
+        Value calleeV = lpeek((int)argc);
+        SAVE();
+        MyMoDict *kwargs;
+        if (!bindKeywords(vm, calleeV, &argc, kwc, names, &kwargs))
+            goto _runtime_error;
+        MyMoDict *outer = vm->kwargs;
+        vm->kwargs = kwargs;
+        bool ok = caller(vm, V_AS_OBJ(calleeV), argc);
+        if (ok && kwargs && kwargs->count > 0)
+        {
+            MyMoObject *c = V_AS_OBJ(calleeV);
+            const char *fname = c->type == OBJ_BUILTIN_CLASS ? AS_BUILTIN_CLASS(c)->name->value
+                                                             : AS_BUILTIN_FUNCTION(c)->name->value;
+            runtimeError(vm, "TypeError: %s() got an unexpected keyword argument '%s'", fname,
+                         AS_STRING(kwargs->entries[kwargs->head].key)->value);
+            ok = false;
+        }
+        vm->kwargs = outer;
+        if (!ok)
             goto _runtime_error;
         LOAD();
         DISPATCH();

@@ -949,7 +949,8 @@ void decoratedStatement(Compiler *compiler)
         if (matchToken(compiler, LPAR))
         {
             compiler->flags.argv++;
-            argc = argumentList(compiler);
+            u8 kwCount;
+            argc = argumentList(compiler, NULL, &kwCount); // no keywords in decorator arguments
             compiler->flags.argv--;
         }
         if (argc == 255)

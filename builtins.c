@@ -63,6 +63,17 @@ static bool needNumber(MVM *vm, const char *fn, Value v)
 
 static Value listValue(MyMoList *list) { return V_OBJ_VAL(AS_OBJECT(list)); }
 
+bool takeKeyword(MVM *vm, const char *name, Value *out)
+{
+    if (vm->kwargs == NULL || vm->kwargs->count == 0)
+        return false;
+    MyMoObject *key = AS_OBJECT(newString(vm, name, (int)strlen(name)));
+    if (!getEntryV(vm->kwargs, key, out))
+        return false;
+    deleteEntry(vm, vm->kwargs, key);
+    return true;
+}
+
 // Appends the elements of an iterable (list, tuple, string characters,
 // dict keys, range) to `out`.
 bool appendIterable(MVM *vm, const char *fn, Value v, ValueArray *out)
@@ -193,16 +204,20 @@ bool sortValues(MVM *vm, ValueArray *values, Value key, bool reverse)
     return ok;
 }
 
-// sorted(iterable[, key[, reverse]]) — key may be Nil.
+// sorted(iterable[, key[, reverse]]) — key may be Nil; key= and
+// reverse= may also be given by name.
 static Value sortedfn(MVM *vm, uint argc, Value argv[])
 {
     if (!arity(vm, "sorted", argc, 1, 3))
         return V_EMPTY_VAL;
+    Value key = argc > 1 ? argv[1] : V_NIL_VAL;
+    Value reverseV = argc > 2 ? argv[2] : V_FALSE_VAL;
+    takeKeyword(vm, "key", &key);
+    takeKeyword(vm, "reverse", &reverseV);
+    bool reverse = !valueIsFalsey(reverseV);
     MyMoList *list = iterableToList(vm, "sorted", argv[0]);
     if (!list)
         return V_EMPTY_VAL;
-    Value key = argc > 1 ? argv[1] : V_NIL_VAL;
-    bool reverse = argc > 2 && !valueIsFalsey(argv[2]);
     pushV(vm, listValue(list)); // keep it rooted while key functions run
     bool ok = sortValues(vm, &list->values, key, reverse);
     popV(vm);
@@ -215,8 +230,13 @@ static Value sortedfn(MVM *vm, uint argc, Value argv[])
 // ------------------------------------------------------------ aggregates
 
 // min/max over either the arguments or a single iterable argument.
+// key= compares key(x) instead of x; default= is returned for an empty
+// iterable instead of raising.
 static Value extremum(MVM *vm, const char *fn, uint argc, Value argv[], bool wantMax)
 {
+    Value key = V_NIL_VAL, fallback = V_EMPTY_VAL;
+    takeKeyword(vm, "key", &key);
+    bool hasDefault = takeKeyword(vm, "default", &fallback);
     if (argc == 0)
     {
         runtimeError(vm, "TypeError: %s() expects at least 1 argument", fn);
@@ -238,19 +258,33 @@ static Value extremum(MVM *vm, const char *fn, uint argc, Value argv[], bool wan
     }
     if (items.count == 0)
     {
+        if (hasDefault)
+        {
+            popArgs(vm, argc);
+            return fallback;
+        }
         runtimeError(vm, "ValueError: %s() of an empty sequence", fn);
         return V_EMPTY_VAL;
     }
-    Value best = items.values[0];
+    bool hasKey = !valueIsNil(key);
+    Value best = items.values[0], bestKey = best;
+    if (hasKey && !call1(vm, key, best, &bestKey))
+        return V_EMPTY_VAL;
     for (int i = 1; i < items.count; i++)
     {
+        Value candidateKey = items.values[i];
+        if (hasKey && !call1(vm, key, items.values[i], &candidateKey))
+            return V_EMPTY_VAL;
         bool better;
-        bool ok = wantMax ? lessThan(vm, best, items.values[i], &better)
-                          : lessThan(vm, items.values[i], best, &better);
+        bool ok = wantMax ? lessThan(vm, bestKey, candidateKey, &better)
+                          : lessThan(vm, candidateKey, bestKey, &better);
         if (!ok)
             return V_EMPTY_VAL;
         if (better)
+        {
             best = items.values[i];
+            bestKey = candidateKey;
+        }
     }
     popArgs(vm, argc);
     return best;
@@ -337,7 +371,9 @@ static Value enumeratefn(MVM *vm, uint argc, Value argv[])
     if (!arity(vm, "enumerate", argc, 1, 2))
         return V_EMPTY_VAL;
     long start = 0;
-    if (argc > 1 && !needInt(vm, "enumerate", argv[1], &start))
+    Value startV = argc > 1 ? argv[1] : V_INT_VAL(0);
+    takeKeyword(vm, "start", &startV);
+    if (!needInt(vm, "enumerate", startV, &start))
         return V_EMPTY_VAL;
     MyMoList *list = iterableToList(vm, "enumerate", argv[0]);
     if (!list)
@@ -801,6 +837,10 @@ static Value newDictMethod(MVM *vm, uint argc, Value argv[])
     if (!arity(vm, "dict", argc, 0, 1))
         return V_EMPTY_VAL;
     MyMoDict *dict = newDict(vm);
+    // dict(a=1, b=2): keyword arguments become entries (after any
+    // positional source).
+    MyMoDict *keywords = vm->kwargs;
+    vm->kwargs = NULL;
     if (argc == 1)
     {
         Value src = argv[0];
@@ -830,6 +870,12 @@ static Value newDictMethod(MVM *vm, uint argc, Value argv[])
                 setEntryV(vm, dict, key, kv->values[1]);
             }
         }
+    }
+    if (keywords)
+    {
+        copyDict(vm, keywords, dict);
+        keywords->count = 0; // all taken (only the count is checked)
+        vm->kwargs = keywords;
     }
     popArgs(vm, argc);
     return V_OBJ_VAL(AS_OBJECT(dict));
