@@ -153,17 +153,32 @@ Comments start with `#`. A block comment is wrapped in `##`:
 print("comments are ignored")   # trailing comment
 ```
 
-Operators: `+ - * / // % **`, comparisons `== != < <= > >=`, bitwise
-`& | ^ << >>`, and logical `and or not`. `/` on two ints gives an int when
+Operators: `+ - * / // % **`, comparisons `== != < <= > >=` (chainable:
+`0 <= i < n`), membership `in` / `not in`, identity `is` / `is not`,
+bitwise `& | ^ << >>`, and logical `and or not`. Ints are 64-bit; an
+overflowing `+ - *` gives a double instead of wrapping. `/` on two ints gives an int when
 the result is whole (`6 / 2` is `3`) and a double otherwise (`7 / 2` is
 `3.5`). `//` and `%` follow Python: `-7 // 2` is `-4`, `-7 % 3` is `2`, and
 both raise `ZeroDivisionError` on zero. Ints and doubles compare by value
-(`0 == 0.0`). Convert with `int(x)`, `float(x)` (or `double(x)`) and `str(x)`.
+(`0 == 0.0`). Convert with `int(x)` (also `int("ff", 16)`), `float(x)` (or
+`double(x)`) and `str(x)`.
+
+`Nil`, `False`, `0`, `0.0` and empty strings, lists, tuples, dicts, sets and
+ranges are falsy; everything else is truthy.
+
+Several names can be assigned at once, from any sequence:
+
+```python
+a, b = 1, 2
+a, b = b, a                 # swap
+first, second = "hi"
+```
 
 ### Strings
 
 Strings use `'single'`, `"double"` or `` `backtick` `` quotes. Backtick
-strings can span lines.
+strings can span lines. Strings are UTF-8, and `len`, indexing, slicing and
+iteration count characters (code points): `len("日本語")` is 3.
 
 ```python
 name = "MyMo"
@@ -173,7 +188,13 @@ print(name + "!", name[0], name[1:], len(name))
 x = 3
 print(f"x = {x}, x squared = {x * x}")
 
-# Escapes: \n \t \r \0 \\ \' \" \` \xHH, plus \{ \} for literal braces
+# format specs, like Python: fill/align, sign, width, grouping, precision, type
+pi = 3.14159
+print(f"{pi:.2f} {1234567:,} {42:08d} {255:#x} {"hi":>6} {0.25:%} {[1]!r}")
+print("{} is {age:>3}".format("bo", age=7), format(pi, ".1f"))
+print("%s has %d items (%.1f%%)" % ("cart", 3, 12.5))
+
+# Escapes: \n \t \r \0 \\ \' \" \` \xHH \uXXXX \UXXXXXXXX, plus \{ \} for literal braces
 print("line one\nline two\ttabbed \"quoted\"")
 print(f"literal \{braces\} next to {x}")
 
@@ -184,7 +205,11 @@ print("a,b,,c".split(","), "one  two".split(), "-".join(["x", "y"]))
 print("hello".find("ll"), "hello".contains("ell"), "hello".replace("l", "L"))
 print("file.my".startswith("file"), "file.my".endswith(".my"))
 print("apple" < "banana")   # strings compare lexicographically
+print("hello"[::-1], "a-b-c".split("-", 1), "k=v".partition("="), "7".zfill(3))
 ```
+
+A `:` at the top level of an f-string field starts the format spec, so
+write a `c ? a : b` ternary in parentheses there.
 
 Unknown escapes keep their backslash, so `"C:\dir"` stays as written.
 
@@ -216,8 +241,31 @@ for name in ages:         # iterates keys
     print(name, ages[name])
 ```
 
-`dict.get(key)` returns `Nil` for a missing key, while `dict[key]` raises.
-Dict fields can also be read with a dot: `ages.ana`.
+`dict.get(key[, default])` returns `Nil` (or the default) for a missing
+key, while `dict[key]` raises `KeyError`. Dicts keep insertion order. Dict
+fields can also be read with a dot: `ages.ana`. Keys may be strings,
+numbers, bools, `Nil` or tuples of those.
+
+```python
+print(nums[1:3], nums[::-1], nums[-1])      # slicing like Python
+del nums[0]
+counts = {}
+for word in "a b a".split():
+    counts[word] = counts.get(word, 0) + 1   # or: counts[word] += 1
+for word, n in counts.items():               # unpacking in for
+    print(word, n)
+grid = {(0, 0): "start"}                     # tuple keys
+
+squares = [x * x for x in range(10) if x % 2 == 0]
+pairs = [(x, y) for x in range(3) for y in "ab"]
+index = {name: i for i, name in enumerate(["a", "b"])}
+
+seen = {1, 2, 3}                             # sets: | & - ^, add, remove, ...
+print(seen | {4}, seen & {2, 9}, 2 in seen, set("hello"))
+```
+
+`range(stop)` / `range(start, stop[, step])` is lazy, so
+`for i in range(1000000)` doesn't build a list.
 
 ### Control flow
 
@@ -242,6 +290,7 @@ while i < 3:
 ```
 
 `break` and `continue` work in both loops. `pass` is an empty statement.
+`assert cond, "message"` raises `AssertionError` when `cond` is false.
 
 ### `cond` and `case`
 
@@ -312,6 +361,23 @@ print(greet("ana"), greet("bo", "hi"))
 Parameters with defaults must come after those without. As in Python, a
 mutable default such as a list is shared between calls.
 
+Arguments can be passed by name, extra ones collected, and sequences or
+dicts unpacked into a call:
+
+```python
+print(greet(punct="?", name="cy"))
+
+fn log(level, *messages, **context):     # tuple and dict of the extras
+    print(level, messages, context)
+
+log("info", "started", "ok", user="ana")
+args = ["warn", "disk"]
+log(*args, **{"free": "2%"})
+```
+
+A decorator can forward everything with `fn wrapper(*args, **kwargs):
+return f(*args, **kwargs)`.
+
 Functions defined inside other functions are closures. They keep access
 to the enclosing function's arguments and locals after it returns:
 
@@ -334,9 +400,24 @@ tick()
 print(tick())
 ```
 
-Assigning to a captured name inside the closure creates a new local rather
-than changing the outer variable. To share mutable state, keep it in a dict
-or list, as `counter` does.
+Assigning to a name creates a local variable. Declare `nonlocal n` to
+assign the enclosing function's `n`, or `global n` to assign a module-level
+variable:
+
+```python
+fn make_counter():
+    n = 0
+    fn bump():
+        nonlocal n
+        n += 1
+        return n
+    return bump
+
+total = 0
+fn add(x):
+    global total
+    total += x
+```
 
 ### Pipes and ternaries
 
@@ -425,6 +506,14 @@ q = p + Point(1, 1)
 print(p.norm2(), q.x, q.y, Point3(1, 2).describe())
 ```
 
+Operators can also be defined with Python's names: `__add__`, `__sub__`,
+`__mul__`, `__eq__`, `__lt__`, `__le__`, `__neg__`, `__iadd__`, ... An
+in-place operator without its own method uses the plain one. Other hooks:
+`__str__` / `__repr__` (printing), `__len__`, `__contains__` (`in`),
+`__getitem__` / `__setitem__` / `__delitem__` (`obj[k]`), `__call__`
+(calling the object), and `__iter__` / `__next__` (for loops; raise
+`StopIteration` to finish).
+
 `super()` inside a method reaches the parent class's methods, bound to the
 same `self`:
 
@@ -448,25 +537,40 @@ print(Dog("rex", "lab").speak())
 ### Errors: `try` / `catch` / `raise`
 
 ```python
-fn divide(a, b):
-    if b == 0:
-        raise "division by zero"
-    return a / b
+class InsufficientFunds(Exception):
+    pass
+
+fn withdraw(balance, amount):
+    if amount > balance:
+        raise InsufficientFunds(f"short by {amount - balance}")
+    return balance - amount
 
 try:
-    print(divide(4, 0))
+    withdraw(10, 50)
+catch InsufficientFunds as e:
+    print("declined:", e.message)
+catch (KeyError, IndexError) as e:
+    print("lookup failed:", e)
 catch e:
-    print("caught:", e)
-
-try:
-    missing = {}["key"]
-catch:
-    print("runtime errors are catchable too")
+    print("anything else:", e)
+final:
+    print("always runs")
 ```
 
-`catch e` binds the error message. Plain `catch:` discards it. `return`,
-`break` and `continue` work normally inside `try` blocks, and runaway
-recursion raises a catchable `RecursionError`.
+Runtime errors are instances of built-in classes: `Exception` and its
+subclasses `ValueError`, `TypeError`, `KeyError`, `IndexError` (both
+`LookupError`), `ZeroDivisionError`, `OverflowError` (both
+`ArithmeticError`), `NameError`, `AttributeError`, `AssertionError`,
+`RuntimeError`, `RecursionError`, `NotImplementedError`, `OSError`
+(`IOError`), `ImportError`, `MemoryError` and `StopIteration`. `str(e)`
+reads like `KeyError: "key"`, and `e.message` holds the message.
+
+Clauses are tried in order; an exception no clause matches keeps
+propagating (after `final:` runs). `catch e:` catches everything, and
+plain `catch:` discards the exception. `raise` accepts an instance, a class
+(`raise ValueError`) or any value, such as a string. `return`, `break` and
+`continue` work normally inside `try` blocks, and runaway recursion raises
+a catchable `RecursionError`.
 
 ### Fibers
 
@@ -485,7 +589,21 @@ print(f.resume(42))
 print(f.alive())
 ```
 
-`run(args...)` passes arguments to the fiber's function. `yield` can also be
+A `for` loop runs a fiber to each `yield` in turn, which makes generators:
+
+```python
+fn countdown():
+    n = 3
+    while n > 0:
+        yield(n)
+        n -= 1
+
+for n in fiber(countdown):
+    print(n)
+```
+
+An error that nothing inside a fiber catches ends the fiber and reaches the
+code that resumed it. `run(args...)` passes arguments to the fiber's function. `yield` can also be
 called from a helper function the fiber calls: it suspends the whole fiber.
 That is how `mono`'s `sleep()` works.
 
@@ -629,24 +747,36 @@ Complete apps: `examples/modules/mono_app.my` (decorators),
 
 | Function                  | Description                                       |
 | ------------------------- | ------------------------------------------------- |
-| `print(a, b, ...)`        | Print values separated by spaces                  |
+| `print(*values, sep=" ", end="\n")` | Print values                          |
 | `input(prompt)`           | Read a line from stdin                            |
-| `type(v)`                 | Type name, e.g. `<object 'int'>`                  |
-| `len(v)`                  | Length of a string, list, tuple or dict           |
-| `str(v)`                  | Convert to string                                 |
-| `int(v)` / `float(v)`     | Convert to int (truncates) / double; `double` = `float` |
+| `len(v)`                  | Length of a string, list, tuple, dict, set, range or object with `__len__` |
+| `str(v)` / `repr(v)`      | Text form / quoted, debugging form                |
+| `int(v[, base])` / `float(v)` / `bool(v)` | Conversions                       |
+| `list(it)` / `tuple(it)` / `dict(...)` / `set(it)` | Build containers from any iterable |
+| `range(stop)` / `range(start, stop[, step])` | Lazy integer sequence      |
+| `min` / `max(... , key=, default=)` | Smallest / largest                      |
+| `sum(it[, start])`, `any(it)`, `all(it)` | Aggregates                         |
+| `sorted(it, key=, reverse=)`, `reversed(it)` | New sorted / reversed list    |
+| `enumerate(it, start=0)`, `zip(*its)` | Lists of tuples                       |
+| `map(f, *its)`, `filter(f, it)` | Lists (`filter(Nil, it)` keeps truthy values) |
+| `abs`, `round(x[, digits])`, `divmod`, `pow(a, b[, mod])` | Numbers      |
+| `hex`, `oct`, `bin`, `ord`, `chr` | Number/character conversions            |
+| `format(v, spec)`         | Apply a format spec                               |
+| `isinstance(v, cls)`, `callable(v)`, `typename(v)` | Type checks                |
+| `type(v)`                 | Type description, e.g. `<object 'int'>`           |
 | `clock()`                 | CPU time in seconds                               |
-| `fiber(fn)`               | Create a fiber (see [Fibers](#fibers))            |
-| `yield(v)`                | Pause the current fiber                           |
+| `fiber(fn)`, `yield(v)`   | Fibers (see [Fibers](#fibers))                    |
 | `globals()`               | The global variable dict                          |
 | `compile(src)` / `exec(code)` | Compile and run MyMo source at runtime       |
+| `exit(code=0)`            | Flush output and exit                             |
 
 Methods on built-in types:
 
-- **string**: `split(sep?)`, `join(list)`, `upper()`, `lower()`, `strip()`, `find(sub)`, `contains(sub)`, `replace(old, new)`, `startswith(p)`, `endswith(p)`, `__len__()`
-- **list**: `append(v)`, `extend(seq)`, `insert(i, v)`, `pop(i?)`, `remove(v)`, `index(v)`, `contains(v)`, `sort()`, `reverse()`, `clear()`, `copy()`, `__len__()`
-- **tuple**: `__len__()`
-- **dict**: `get(k)`, `put(k, v)`, `has(k)`, `delete(k)`, `keys()`, `values()`, `__len__()`
+- **string**: `split(sep?, maxsplit?)`, `splitlines()`, `partition(s)`, `rpartition(s)`, `join(it)`, `format(...)`, `upper()`, `lower()`, `capitalize()`, `title()`, `swapcase()`, `strip(chars?)`, `lstrip`, `rstrip`, `find(sub, start?)`, `rfind`, `index`, `rindex`, `count(sub)`, `contains(sub)`, `replace(old, new)`, `startswith(p)`, `endswith(p)`, `removeprefix`, `removesuffix`, `isdigit`, `isalpha`, `isalnum`, `isspace`, `isupper`, `islower`, `ljust(w, fill?)`, `rjust`, `center`, `zfill(w)`
+- **list**: `append(v)`, `extend(it)`, `insert(i, v)`, `pop(i?)`, `remove(v)`, `index(v, start?, end?)`, `count(v)`, `contains(v)`, `sort(key=, reverse=)`, `reverse()`, `clear()`, `copy()`
+- **tuple**: `index(v)`, `count(v)`
+- **dict**: `get(k, default?)`, `put(k, v)`, `has(k)`, `delete(k)`, `pop(k, default?)`, `popitem()`, `setdefault(k, v?)`, `update(d)`, `keys()`, `values()`, `items()`, `clear()`, `copy()`
+- **set**: `add`, `remove`, `discard`, `pop`, `clear`, `copy`, `union`, `intersection`, `difference`, `symmetric_difference`, `update`, `issubset`, `issuperset`, `isdisjoint`
 - **fiber**: `run(...)`, `resume(v)`, `alive()`, `kill()`
 
 ---
@@ -846,4 +976,10 @@ MyMo is an experimental language. Current gaps:
   objects.
 - `mono` has no built-in TLS (see [HTTPS](#https)), and its non-blocking
   I/O isn't implemented on Windows yet.
-- A fiber can't `yield` across a C→MyMo `mymo_call` boundary.
+- A fiber can't `yield` across a C→MyMo `mymo_call` boundary, and
+  `list()`/`sorted()`/... can't consume a fiber (use `[x for x in f]`).
+- Parameters after `*rest` (keyword-only parameters) aren't supported.
+- `final:` runs when the `try` body or a `catch` clause finishes or raises,
+  but not when a `return`, `break` or `continue` leaves the `try`.
+- `upper()`, `lower()` and the `is*()` methods only know ASCII letters.
+- There are no big integers: past 64 bits, arithmetic switches to doubles.
