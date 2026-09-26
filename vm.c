@@ -501,9 +501,18 @@ static bool callerEx(MVM *vm, MyMoObject *callee, u32 argc, bool calleeSlot)
         vm->fiber->stack.values[vm->fiber->stack.count - argc - 1] = V_OBJ_VAL(bound->self);
         return callerEx(vm, AS_OBJECT(bound->method), argc + 1, false);
     }
+    case OBJ_INSTANCE:
+    {
+        // obj(args) calls obj.__call__(args); the callee slot already
+        // holds obj, which becomes `self`.
+        MyMoObject *method = getMethod(vm, callee, "__call__");
+        if (!IS_EMPTY(method) && method->type == OBJ_FUNCTION)
+            return callerEx(vm, method, argc + 1, false);
+        runtimeError(vm, "TypeError: %s object is not callable (no __call__)", AS_INSTANCE(callee)->klass->name->value);
+        return false;
+    }
     default:
-        printObject(callee);
-        runtimeError(vm, "TypeError: only functions and classes can be called");
+        runtimeError(vm, "TypeError: %s is not callable", getType(callee));
         return false;
     }
 }
@@ -652,6 +661,49 @@ static bool exceptionMatches(MVM *vm, Value exc, Value types, bool *out)
     return true;
 }
 
+// Python-style operator method names and the operator each one defines.
+static const char *DUNDER_OPERATORS[][2] = {
+    {"__add__", "+"}, {"__sub__", "-"}, {"__mul__", "*"}, {"__truediv__", "/"}, {"__div__", "/"},
+    {"__floordiv__", "//"}, {"__mod__", "%"}, {"__pow__", "**"}, {"__eq__", "=="}, {"__ne__", "!="},
+    {"__lt__", "<"}, {"__gt__", ">"}, {"__le__", "<="}, {"__ge__", ">="}, {"__and__", "&"},
+    {"__or__", "|"}, {"__xor__", "^"}, {"__lshift__", "<<"}, {"__rshift__", ">>"}, {"__neg__", "-@"},
+    {"__pos__", "+@"}, {"__iadd__", "+="}, {"__isub__", "-="}, {"__imul__", "*="}, {"__itruediv__", "/="},
+    {"__ifloordiv__", "//="}, {"__imod__", "%="}, {"__ipow__", "**="}, {"__iand__", "&="},
+    {"__ior__", "|="}, {"__ixor__", "^="}, {"__ilshift__", "<<="}, {"__irshift__", ">>="}, {NULL, NULL}};
+
+// Store a method on a class. A Python-style operator name (__add__) also
+// defines the operator it stands for (+), which is what the VM looks up.
+static void installMethod(MVM *vm, MyMoClass *klass, MyMoObject *name, Value method)
+{
+    setEntryV(vm, klass->methods, name, method);
+    MyMoString *n = AS_STRING(name);
+    if (n->length < 5 || n->value[0] != '_' || n->value[1] != '_')
+        return;
+    for (int i = 0; DUNDER_OPERATORS[i][0]; i++)
+        if (strcmp(n->value, DUNDER_OPERATORS[i][0]) == 0)
+        {
+            const char *op = DUNDER_OPERATORS[i][1];
+            setEntryV(vm, klass->methods, AS_OBJECT(newString(vm, op, (int)strlen(op))), method);
+            return;
+        }
+}
+
+// The method for operator `op` on an instance. An in-place operator
+// (+=) without its own method uses the plain one (+).
+static MyMoObject *operatorMethod(MVM *vm, MyMoObject *instance, const char *op)
+{
+    MyMoObject *method = getMethod(vm, instance, op);
+    size_t len = strlen(op);
+    if (IS_EMPTY(method) && len >= 2 && op[len - 1] == '=' && strcmp(op, "==") != 0 && strcmp(op, "!=") != 0 &&
+        strcmp(op, "<=") != 0 && strcmp(op, ">=") != 0)
+    {
+        char plain[8];
+        snprintf(plain, sizeof(plain), "%.*s", (int)len - 1, op);
+        method = getMethod(vm, instance, plain);
+    }
+    return method;
+}
+
 // Integer-only binary operators (& | ^ << >>) on Values.
 #define BitwiseOp(a, b, op)                                                 \
     do                                                                      \
@@ -686,7 +738,7 @@ static bool exceptionMatches(MVM *vm, Value exc, Value types, bool *out)
 #define OperatorOverLoad(a, b, op)                                                          \
     do                                                                                      \
     {                                                                                       \
-        MyMoObject *method = getMethod(vm, V_AS_OBJ(a), op);                                \
+        MyMoObject *method = operatorMethod(vm, V_AS_OBJ(a), op);                           \
         if (IS_EMPTY(method))                                                               \
         {                                                                                   \
             SAVE();                                                                         \
@@ -876,7 +928,7 @@ int runMVM(MVM *vm)
                 klass->init = AS_OBJECT(method);
             method->klass = AS_OBJECT(klass);
         }
-        setEntryV(vm, klass->methods, name, value);
+        installMethod(vm, klass, name, value);
         DISPATCH();
     }
     OP_DEFAULTS:
@@ -1379,6 +1431,12 @@ int runMVM(MVM *vm)
         Value b = popV(vm);
         Value a = popV(vm);
         MyMoObject *method = getMethod(vm, V_AS_OBJ(a), inplace ? "!=" : "==");
+        if (IS_EMPTY(method) && inplace)
+        {
+            // No != method: use == (the OP_NOT that follows negates it).
+            method = getMethod(vm, V_AS_OBJ(a), "==");
+            inplace = 0;
+        }
         if (IS_EMPTY(method))
         {
             pushV(vm, V_BOOL_VAL(valuesEqual(a, b)));
@@ -1386,7 +1444,7 @@ int runMVM(MVM *vm)
         }
         if (inplace)
         {
-            UNUSED(ReadByte());
+            UNUSED(ReadByte()); // != itself: skip the OP_NOT
         }
         pushV(vm, V_OBJ_VAL(method));
         pushV(vm, a);
@@ -2314,7 +2372,7 @@ int runMVM(MVM *vm)
         {
             klass->init = method;
         }
-        setEntry(vm, klass->methods, name, method);
+        installMethod(vm, klass, name, V_OBJ_VAL(method));
         AS_FUNCTION(method)->klass = AS_OBJECT(klass);
         DISPATCH();
     }

@@ -881,6 +881,9 @@ static Value callablefn(MVM *vm, uint argc, Value argv[])
         case OBJ_BUILTIN_CLASS:
             result = true;
             break;
+        case OBJ_INSTANCE:
+            result = !IS_EMPTY(getMethod(vm, V_AS_OBJ(argv[0]), "__call__"));
+            break;
         default:
             break;
         }

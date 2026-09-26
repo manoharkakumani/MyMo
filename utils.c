@@ -1,4 +1,5 @@
 #include "repr.h"
+#include "include/mymo.h"
 #include "builtins.h"
 #include "memory.h"
 #include "compiler.h"
@@ -207,6 +208,25 @@ Value lenfn(MVM *vm, uint argc, Value argv[])
         return valueFromLong(vm, rangeLength(AS_RANGE(obj)));
     case OBJ_SET:
         return V_INT_VAL(AS_SET(obj)->items.count);
+    case OBJ_INSTANCE:
+    {
+        // len(obj) calls obj.__len__().
+        MyMoObject *method = getMethod(vm, obj, "__len__");
+        Value self = V_OBJ_VAL(obj), n;
+        if (IS_EMPTY(method))
+        {
+            runtimeError(vm, "TypeError: %s has no len() (no __len__)", AS_INSTANCE(obj)->klass->name->value);
+            return V_EMPTY_VAL;
+        }
+        if (mymo_call(vm, V_OBJ_VAL(method), 1, &self, &n) != MYMO_OK)
+            return V_EMPTY_VAL;
+        if (!valueLooksLikeInt(n))
+        {
+            runtimeError(vm, "TypeError: __len__() returned %s, not an int", valueTypeName(n));
+            return V_EMPTY_VAL;
+        }
+        return n;
+    }
     default:
         runtimeError(vm, "TypeError: %s has no len()", getType(obj));
         return V_EMPTY_VAL;
