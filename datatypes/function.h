@@ -44,13 +44,17 @@ typedef struct MyMoFunction
   FunctionType type;
   int argc;
   MyMoString *name;
-  MyMoString *argv[256];
+  MyMoString **argv; // 256 parameter-name slots, owned by the prototype
   MyMoDict *assiginedParameters;
   MyMoDict *variables;
   bool isargs;
   Chunk *chunk;
+  // Defining frame, walked for free-variable lookup (see OP_FN).
   struct CallFrame *frame;
   MyMoObject *klass;
+  // Non-NULL for a per-closure copy made by OP_FN; the copy shares the
+  // prototype's chunk/argv, so only the prototype frees them.
+  struct MyMoFunction *proto;
 } MyMoFunction;
 
 // Function arg slots — covers up to 8 parameters with direct array access.
@@ -63,6 +67,10 @@ struct CallFrame {
     MyMoFunction *function;
     MyMoDict locals;
     u8 *ip;
+    // Set when a closure was created in this frame. A captured frame
+    // outlives its call (never recycled into the frame pool) because the
+    // closure still reads its locals/args after it returns.
+    bool captured;
     Value args[CALLFRAME_ARGS_INLINE];
 };
 
@@ -96,6 +104,7 @@ typedef struct MyMoBoundMethod
 MyMoBuiltInFunction *newBuiltInFunction(MVM *vm, MyMoString *name, BuiltInfunction function, MyMoObjectType type);
 
 MyMoFunction *newFunction(MVM *vm);
+MyMoFunction *cloneFunction(MVM *vm, MyMoFunction *proto);
 MyMoClouser *newClouser(MVM *vm, MyMoFunction *function);
 MyMoBoundMethod *newBoundMethod(MVM *vm, MyMoObject *self, MyMoFunction *method);
 

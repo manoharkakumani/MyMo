@@ -30,10 +30,63 @@ void double_(Compiler *compiler, bool canAssign)
     emitConstantV(compiler, V_DOUBLE_VAL(d));
 }
 
+static int hexDigit(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+// Build a string constant from literal source text, decoding escapes:
+// \n \t \r \0 \\ \' \" \` \{ \} and \xHH. Unknown escapes keep the
+// backslash (Python-style), so `"C:\dir"` stays as written.
+static MyMoObject *newUnescapedString(MVM *vm, const char *src, int len)
+{
+    if (!memchr(src, '\\', len))
+        return NEW_STRING(vm, src, len);
+    char *buf = New(char, len);
+    int n = 0;
+    for (int i = 0; i < len; i++)
+    {
+        if (src[i] != '\\' || i + 1 == len)
+        {
+            buf[n++] = src[i];
+            continue;
+        }
+        char c = src[++i];
+        switch (c)
+        {
+        case 'n':  buf[n++] = '\n'; break;
+        case 't':  buf[n++] = '\t'; break;
+        case 'r':  buf[n++] = '\r'; break;
+        case '0':  buf[n++] = '\0'; break;
+        case '\\': case '\'': case '"': case '`': case '{': case '}':
+            buf[n++] = c;
+            break;
+        case 'x':
+            if (i + 2 < len && hexDigit(src[i + 1]) >= 0 && hexDigit(src[i + 2]) >= 0)
+            {
+                buf[n++] = (char)(hexDigit(src[i + 1]) * 16 + hexDigit(src[i + 2]));
+                i += 2;
+                break;
+            }
+            /* fallthrough */
+        default:
+            buf[n++] = '\\';
+            buf[n++] = c;
+            break;
+        }
+    }
+    MyMoObject *str = NEW_STRING(vm, buf, n);
+    free(buf);
+    return str;
+}
+
 void string_(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);
-    emitConstant(compiler, (NEW_STRING(compiler->parser->vm, compiler->parser->previous.token, compiler->parser->previous.length)));
+    emitConstant(compiler, newUnescapedString(compiler->parser->vm, compiler->parser->previous.token, compiler->parser->previous.length));
 }
 
 // f-string interpolation. Walks the FSTRING token's content,
@@ -56,14 +109,18 @@ void fstring_(Compiler *compiler, bool canAssign)
     {
         // Scan to the next `{` (or end).
         int seg_start = i;
-        while (i < total && content[i] != '{') i++;
+        while (i < total && content[i] != '{')
+        {
+            if (content[i] == '\\' && i + 1 < total) i++; // `\{` is a literal brace
+            i++;
+        }
         int seg_len = i - seg_start;
         // Emit the literal piece. Always emit even if empty so the
         // first OP_ADD has a left operand; the compiler optimizer
         // can later drop empty pieces.
         if (seg_len > 0 || piece_count == 0)
         {
-            emitConstant(compiler, NEW_STRING(vm, content + seg_start, seg_len));
+            emitConstant(compiler, newUnescapedString(vm, content + seg_start, seg_len));
             piece_count++;
             if (piece_count > 1) emitBytes(compiler, OP_ADD, 0);
         }

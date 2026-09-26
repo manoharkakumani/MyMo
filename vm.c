@@ -21,6 +21,7 @@ MVM *initVM()
     vm->currentClass = NULL;
     vm->objectClass = NULL;
     vm->classCall = 0;
+    memset(vm->builtInClasses, 0, sizeof(vm->builtInClasses));
     vm->fiber = newFiber(vm, NULL);
     initDict(&vm->globals);
     initDict(&vm->builtins);
@@ -149,6 +150,31 @@ void runtimeError(MVM *vm, const char *format, ...)
     fputs("\n", stderr);
 }
 
+// Resolve a free variable through a closure's chain of defining frames
+// (function->frame, then that frame's function's frame, ...). Each frame
+// is checked in its locals dict and then its inline parameter slots —
+// params live in frame->args[] (OP_GETARG), not in the locals dict.
+static MyMoObject *lookupEnclosing(MVM *vm, CallFrame *parent, MyMoObject *name)
+{
+    MyMoString *key = AS_STRING(name);
+    for (; parent; parent = parent->function->frame)
+    {
+        MyMoObject *value = getEntry(vm, &parent->locals, name);
+        if (value)
+            return value;
+        MyMoFunction *fn = parent->function;
+        if (fn->isargs || fn->argc > CALLFRAME_ARGS_INLINE)
+            continue;
+        for (int i = 0; i < fn->argc; i++)
+        {
+            MyMoString *arg = fn->argv[i];
+            if (arg->length == key->length && memcmp(arg->value, key->value, key->length) == 0)
+                return valueToBoxedObject(vm, parent->args[i]);
+        }
+    }
+    return NULL;
+}
+
 bool callFunction(MVM *vm, MyMoFunction *function, int argc)
 {
     if (function->argc != argc)
@@ -191,6 +217,7 @@ bool callFunction(MVM *vm, MyMoFunction *function, int argc)
             initDict(&frame->locals);
         }
         frame->function = function;
+        frame->captured = false;
         frame->ip = function->chunk->code;
         vm->fiber->callFrames[++vm->fiber->frameCount] = frame;
         if (argc && !function->isargs)
@@ -1566,17 +1593,12 @@ int runMVM(MVM *vm)
                 push(vm, value);
                 DISPATCH();
             }
-            CallFrame *parent = frame->function->frame;
-            while (parent)
+            value = lookupEnclosing(vm, frame->function->frame, variable);
+            if (value)
             {
-                value = getEntry(vm, &parent->locals, variable);
-                if (value)
-                {
-                    push(vm, value);
-                    setEntry(vm, &frame->locals, variable, value);
-                    DISPATCH();
-                }
-                parent = parent->function->frame;
+                push(vm, value);
+                setEntry(vm, &frame->locals, variable, value);
+                DISPATCH();
             }
         }
         value = getEntry(vm, &vm->globals, variable);
@@ -1666,7 +1688,7 @@ int runMVM(MVM *vm)
         MyMoObject *method = ReadObject();
         MyMoObject *name = ReadObject();
         MyMoClass *klass = AS_CLASS(peek(vm, 0));
-        if (memcmp(AS_STRING(name)->value, "__init__", 8) == 0)
+        if (AS_STRING(name)->length == 8 && memcmp(AS_STRING(name)->value, "__init__", 8) == 0)
         {
             klass->init = method;
         }
@@ -1676,9 +1698,21 @@ int runMVM(MVM *vm)
     }
     OP_FN:
     {
-        MyMoObject *function = ReadObject();
-        AS_FUNCTION(function)->frame = frame;
-        push(vm, function);
+        // Functions defined at script/module top level are created once
+        // and their defining frame lives forever, so the compile-time
+        // constant can be used directly. Inside a call, each execution
+        // makes a closure: a copy of the constant (so two calls of the
+        // outer fn don't overwrite each other's `frame`) bound to this
+        // frame, which is marked captured so OP_FRET won't recycle it.
+        MyMoFunction *function = AS_FUNCTION(ReadObject());
+        FunctionType ft = frame->function->type;
+        if (ft != FN_SCRIPT && ft != FN_MODULE && ft != FN_COMPILED)
+        {
+            function = cloneFunction(vm, function);
+            frame->captured = true;
+        }
+        function->frame = frame;
+        push(vm, AS_OBJECT(function));
         DISPATCH();
     }
     OP_CALL:
@@ -1735,6 +1769,7 @@ int runMVM(MVM *vm)
                     initDict(&newFrame->locals);
                 }
                 newFrame->function = function;
+                newFrame->captured = false;
                 newFrame->ip = function->chunk->code;
                 vm->fiber->callFrames[++vm->fiber->frameCount] = newFrame;
                 // Pop args from operand stack (using local sp register)
@@ -1841,8 +1876,9 @@ int runMVM(MVM *vm)
         // function->frame->locals. Recycling the frame would free
         // those locals and clobber frame->function (it's repurposed
         // as the pool's next-link), so later calls to exported
-        // functions would crash. Leak one CallFrame per module.
-        if (frame->function->type != FN_MODULE)
+        // functions would crash. Leak one CallFrame per module. The same
+        // holds for any frame a closure captured (see OP_FN).
+        if (frame->function->type != FN_MODULE && !frame->captured)
         {
             // Recycle into the fiber's frame pool instead of free()ing.
             // Skip freeDict when the locals dict was never grown
@@ -2134,7 +2170,11 @@ int runMVM(MVM *vm)
         {
             MyMoObject *self = pop(vm);
             MyMoObject *variable = ReadObject();
-            MyMoObject *fn = getEntry(vm, vm->builtInClasses[type]->methods, variable);
+            // Types without a registered builtin class (functions,
+            // modules, ...) have no methods; fall through to the error.
+            MyMoObject *fn = vm->builtInClasses[type]
+                ? getEntry(vm, vm->builtInClasses[type]->methods, variable)
+                : NULL;
             if (fn)
             {
                 // Allocate a fresh bound copy (see the OBJ_DICT case
@@ -2515,12 +2555,7 @@ int runMVM(MVM *vm)
                     if (value) { hitTag = IC_TAG_LOCALS; hitDict = &frame->locals; }
                     if (!value)
                     {
-                        CallFrame *parent = frame->function->frame;
-                        while (parent && !value)
-                        {
-                            value = getEntry(vm, &parent->locals, variable);
-                            parent = parent->function->frame;
-                        }
+                        value = lookupEnclosing(vm, frame->function->frame, variable);
                     }
                     if (!value)
                     {
@@ -2610,6 +2645,7 @@ int runMVM(MVM *vm)
                 initDict(&newFrame->locals);
             }
             newFrame->function = function;
+            newFrame->captured = false;
             newFrame->ip = function->chunk->code;
             vm->fiber->callFrames[++vm->fiber->frameCount] = newFrame;
             if (argCount && !function->isargs)
@@ -2832,7 +2868,7 @@ _runtime_error:
         while (vm->fiber->frameCount > h.frameCount)
         {
             CallFrame *dead = vm->fiber->callFrames[vm->fiber->frameCount--];
-            if (dead->function->type != FN_MODULE)
+            if (dead->function->type != FN_MODULE && !dead->captured)
             {
                 if (dead->locals.count > 0 || dead->locals.entries != NULL)
                     freeDict(vm, &dead->locals);

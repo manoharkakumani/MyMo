@@ -24,6 +24,7 @@ MyMoFiber *newFiber(MVM *vm, MyMoFunction *function)
     fiber->stack.values = ResizeArray(vm, Value, fiber->stack.values, 0, 65536);
     CallFrame *frame = New(CallFrame, 1);
     frame->function = function;
+    frame->captured = false;
     initDict(&frame->locals);
     fiber->callFrames[0] = frame;
     if (function)

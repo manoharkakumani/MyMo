@@ -98,7 +98,11 @@ void freeObject(MVM *vm, MyMoObject *object)
     case OBJ_FUNCTION:
     {
         MyMoFunction *function = AS_FUNCTION(object);
-        freeChunk(vm, function->chunk);
+        if (!function->proto) // closure copies share the prototype's chunk/argv
+        {
+            freeChunk(vm, function->chunk);
+            free(function->argv);
+        }
         Free(vm, MyMoFunction, object);
         break;
     }

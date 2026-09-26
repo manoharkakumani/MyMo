@@ -1,0 +1,13 @@
+# String escapes: \n \t \r \0 \\ \' \" \` \{ \} and \xHH. Unknown
+# escapes keep their backslash, so Windows-style paths survive.
+print("line1\nline2")
+print("tab[\t]")
+print("quote[\"] apostrophe[\'] hex[\x41\x42]")
+print("path C:\\dir and unknown \d kept")
+x = 42
+print(f"f-string {x} with literal \{braces\} and \"quotes\"")
+print(`backtick\ttab`)
+
+# Tuples support __len__.
+t = (1, "two", 3.0)
+print(t.__len__(), ().__len__())

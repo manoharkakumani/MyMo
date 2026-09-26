@@ -12,7 +12,7 @@ struct vm
     MyMoFiber *fiber;
     MyMoClass *currentClass;
     MyMoClass *objectClass;
-    MyMoBuiltInClass *builtInClasses[OBJ_FUNCTION];
+    MyMoBuiltInClass *builtInClasses[OBJ_TYPE_COUNT]; // NULL = no methods
     MyMoDict builtins;
     MyMoDict modules;
     MyMoModule *currentModule;

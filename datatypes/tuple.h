@@ -15,5 +15,6 @@ typedef struct MyMoTuple
 
 MyMoTuple *newTuple(MVM *vm);
 void printTuple(MyMoTuple *tuple);
+void defineTupleClass(MVM *vm);
 
 #endif

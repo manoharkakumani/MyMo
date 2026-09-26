@@ -15,12 +15,26 @@ MyMoFunction *newFunction(MVM *vm)
     MyMoFunction *function = AllocateObject(vm, MyMoFunction, OBJ_FUNCTION);
     function->name = NULL;
     function->argc = 0;
+    function->argv = New(MyMoString *, 256);
+    memset(function->argv, 0, sizeof(MyMoString *) * 256);
     function->variables = newDict(vm);
     function->assiginedParameters = newDict(vm);
     function->chunk = newChunk(vm);
     function->frame = NULL;
     function->isargs = false;
     function->klass = AS_OBJECT(vm->builtInClasses[OBJ_OBJECT]);
+    function->proto = NULL;
+    return function;
+}
+
+// Shallow per-closure copy: shares the prototype's chunk and parameter
+// names; only `frame` (set by the caller) differs between copies.
+MyMoFunction *cloneFunction(MVM *vm, MyMoFunction *proto)
+{
+    MyMoFunction *function = AllocateObject(vm, MyMoFunction, OBJ_FUNCTION);
+    memcpy((char *)function + sizeof(MyMoObject), (char *)proto + sizeof(MyMoObject),
+           sizeof(MyMoFunction) - sizeof(MyMoObject));
+    function->proto = proto->proto ? proto->proto : proto;
     return function;
 }
 

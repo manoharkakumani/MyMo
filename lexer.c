@@ -368,6 +368,18 @@ Token getToken(Lexer *lexer)
                 {
                     lexer->col += 3;
                 }
+                // Escape pair outside an interpolation (`\"`, `\{`, ...):
+                // consume both bytes so they neither close the string nor
+                // open a `{...}`; fstring_ decodes them.
+                if (brace_depth == 0 && lexer->currentChar == '\\'
+                    && lexer->src[lexer->srcLen] != '\0')
+                {
+                    lexerAdvance(lexer);
+                    content_len++;
+                    lexerAdvance(lexer);
+                    content_len++;
+                    continue;
+                }
                 if (lexer->currentChar == '{')
                 {
                     brace_depth++;
@@ -423,6 +435,20 @@ Token getToken(Lexer *lexer)
             lexerAdvance(lexer);
             while (lexer->currentChar != s)
             {
+                // Escape pair: keep both bytes in the token (the compiler
+                // decodes them in string_) but never let the escaped char
+                // close the string.
+                if (lexer->currentChar == '\\' && lexer->src[lexer->srcLen] != '\0')
+                {
+                    lexerAdvance(lexer);
+                    if (lexer->currentChar == '\n')
+                    {
+                        lexer->line++;
+                        lexer->col = 0;
+                    }
+                    lexerAdvance(lexer);
+                    continue;
+                }
                 if (lexer->currentChar == '\0' || (lexer->currentChar == '\n' && s != '`'))
                 {
                     return newToken("Unexpected EOL or EOF", ERROR, lexer->len, start, lexer->indent, lexer->line);
