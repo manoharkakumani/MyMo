@@ -99,6 +99,12 @@ void freeObject(MVM *vm, MyMoObject *object)
         Free(vm, MyMoRange, object);
         break;
     }
+    case OBJ_SET:
+    {
+        freeDict(vm, &AS_SET(object)->items);
+        Free(vm, MyMoSet, object);
+        break;
+    }
     case OBJ_CLOUSER:
     {
         Free(vm, MyMoClouser, object);

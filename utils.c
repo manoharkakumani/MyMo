@@ -205,6 +205,8 @@ Value lenfn(MVM *vm, uint argc, Value argv[])
         return objectToValue(NEW_INT(vm, AS_DICT(obj)->count));
     case OBJ_RANGE:
         return valueFromLong(vm, rangeLength(AS_RANGE(obj)));
+    case OBJ_SET:
+        return V_INT_VAL(AS_SET(obj)->items.count);
     default:
         runtimeError(vm, "TypeError: %s has no len()", getType(obj));
         return V_EMPTY_VAL;

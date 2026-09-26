@@ -100,9 +100,10 @@ bool appendIterable(MVM *vm, const char *fn, Value v, ValueArray *out)
             return true;
         }
         case OBJ_DICT:
+        case OBJ_SET:
         {
             Entry *e;
-            DICT_FOREACH(AS_DICT(o), e)
+            DICT_FOREACH(o->type == OBJ_SET ? &AS_SET(o)->items : AS_DICT(o), e)
                 writeValueArray(vm, out, objectToValue(e->key));
             return true;
         }

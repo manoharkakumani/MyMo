@@ -97,9 +97,11 @@ typedef enum
     //   OP_CALLKW argc kwc name*  call with keyword arguments: the last kwc
     //                             of the argc values are keyword values
     //                             named by kwc u16 constant indices
-    OP_CALLKW
+    OP_CALLKW,
+    //   OP_SET n                 [x0 .. xn-1] -> [set] (set literal)
+    OP_SET
 } OpCode;
 
 // Number of opcodes (keep in sync with the last enum entry).
-#define OP_COUNT (OP_CALLKW + 1)
+#define OP_COUNT (OP_SET + 1)
 #endif

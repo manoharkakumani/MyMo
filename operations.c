@@ -108,6 +108,8 @@ Value subValues(MVM *vm, Value a, Value b)
         return valueFromLong(vm, valueToLong(a) - valueToLong(b));
     if (valueLooksLikeNumber(a) && valueLooksLikeNumber(b))
         return V_DOUBLE_VAL(valueAsNumber(a) - valueAsNumber(b));
+    if (isType(a, OBJ_SET) && isType(b, OBJ_SET))
+        return V_OBJ_VAL(AS_OBJECT(setCombine(vm, AS_SET(V_AS_OBJ(a)), AS_SET(V_AS_OBJ(b)), '-')));
     return typeError(vm, "-", a, b);
 }
 
@@ -187,6 +189,8 @@ Value containsValue(MVM *vm, Value container, Value item)
                     return V_TRUE_VAL;
             return V_FALSE_VAL;
         }
+        case OBJ_SET:
+            return V_BOOL_VAL(setHas(vm, AS_SET(c), item));
         case OBJ_RANGE:
             if (!valueLooksLikeInt(item))
                 return V_FALSE_VAL;

@@ -1491,6 +1491,11 @@ int runMVM(MVM *vm)
         u32 inplace = ReadByte();
         Value b = popV(vm);
         Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_SET) && V_IS_OBJ_TYPE(b, OBJ_SET))
+        {
+            pushV(vm, V_OBJ_VAL(AS_OBJECT(setCombine(vm, AS_SET(V_AS_OBJ(a)), AS_SET(V_AS_OBJ(b)), '&'))));
+            DISPATCH();
+        }
         if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             OperatorOverLoad(a, b, inplace ? "&=" : "&");
@@ -1503,6 +1508,11 @@ int runMVM(MVM *vm)
         u32 inplace = ReadByte();
         Value b = popV(vm);
         Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_SET) && V_IS_OBJ_TYPE(b, OBJ_SET))
+        {
+            pushV(vm, V_OBJ_VAL(AS_OBJECT(setCombine(vm, AS_SET(V_AS_OBJ(a)), AS_SET(V_AS_OBJ(b)), '|'))));
+            DISPATCH();
+        }
         if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             OperatorOverLoad(a, b, inplace ? "|=" : "|");
@@ -1515,6 +1525,11 @@ int runMVM(MVM *vm)
         u32 inplace = ReadByte();
         Value b = popV(vm);
         Value a = popV(vm);
+        if (V_IS_OBJ_TYPE(a, OBJ_SET) && V_IS_OBJ_TYPE(b, OBJ_SET))
+        {
+            pushV(vm, V_OBJ_VAL(AS_OBJECT(setCombine(vm, AS_SET(V_AS_OBJ(a)), AS_SET(V_AS_OBJ(b)), '^'))));
+            DISPATCH();
+        }
         if (V_IS_OBJ_TYPE(a, OBJ_INSTANCE))
         {
             OperatorOverLoad(a, b, inplace ? "^=" : "^");
@@ -1940,6 +1955,7 @@ int runMVM(MVM *vm)
         case OBJ_TUPLE:
         case OBJ_DICT:
         case OBJ_RANGE:
+        case OBJ_SET:
             // case OBJ_INSTANCE: TODO
             {
                 push(vm, AS_OBJECT(newIter(vm, iterator)));
@@ -2253,6 +2269,20 @@ int runMVM(MVM *vm)
         if (!caller(vm, V_AS_OBJ(calleeV), argCount))
             goto _runtime_error;
         LOAD();
+        DISPATCH();
+    }
+    OP_SET:
+    {
+        // [x0, ..., xn-1] -> [set]; elements stay rooted on the stack.
+        u32 count = ReadByte();
+        Value *items = sp - count;
+        MyMoSet *set = newSet(vm);
+        SAVE();
+        for (u32 i = 0; i < count; i++)
+            if (!setAdd(vm, set, items[i]))
+                goto _runtime_error;
+        sp = items;
+        lpush(V_OBJ_VAL(AS_OBJECT(set)));
         DISPATCH();
     }
     OP_CALLKW:

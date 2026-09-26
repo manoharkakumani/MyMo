@@ -13,6 +13,7 @@ void defineBuiltInClasses(MVM *vm)
     defineTupleClass(vm);
     defineDictClass(vm);
     defineRangeClass(vm);
+    defineSetClass(vm);
     // defineFunctionClass(vm);
     // defineClassClass(vm);
     // defineModuleClass(vm);

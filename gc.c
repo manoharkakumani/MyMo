@@ -106,6 +106,9 @@ static void blacken(MVM *vm, MyMoObject *object)
     case OBJ_DICT:
         markDictContents(vm, AS_DICT(object));
         break;
+    case OBJ_SET:
+        markDictContents(vm, &AS_SET(object)->items);
+        break;
     case OBJ_FIBER:
     {
         MyMoFiber *fiber = AS_FIBER(object);

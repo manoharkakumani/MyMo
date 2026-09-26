@@ -273,6 +273,28 @@ static bool formatObject(MVM *vm, StrBuf *b, MyMoObject *o, bool repr, int depth
     case OBJ_WILDCARD:
         strbufAppend(b, "_", 1);
         return true;
+    case OBJ_SET:
+    {
+        MyMoDict *items = &AS_SET(o)->items;
+        if (items->count == 0)
+        {
+            strbufAppendC(b, "set()");
+            return true;
+        }
+        strbufAppend(b, "{", 1);
+        bool first = true;
+        Entry *entry;
+        DICT_FOREACH(items, entry)
+        {
+            if (!first)
+                strbufAppend(b, ", ", 2);
+            first = false;
+            if (!formatDepth(vm, b, objectToValue(entry->key), true, depth + 1))
+                return false;
+        }
+        strbufAppend(b, "}", 1);
+        return true;
+    }
     case OBJ_RANGE:
     {
         MyMoRange *r = AS_RANGE(o);

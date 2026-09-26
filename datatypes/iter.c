@@ -6,11 +6,11 @@ MyMoIter *newIter(MVM *vm, MyMoObject *object)
 {
   MyMoIter *iter = AllocateObject(vm, MyMoIter, OBJ_ITER);
   iter->index = 0;
-  if (object->type == OBJ_DICT)
+  if (object->type == OBJ_DICT || object->type == OBJ_SET)
   {
     // Iterate a snapshot of the keys (in insertion order), so the loop
     // body may add or delete keys safely.
-    MyMoDict *dict = AS_DICT(object);
+    MyMoDict *dict = object->type == OBJ_SET ? &AS_SET(object)->items : AS_DICT(object);
     MyMoTuple *keys = newTuple(vm);
     iter->iterator = AS_OBJECT(keys);
     Entry *e;

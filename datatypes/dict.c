@@ -417,10 +417,11 @@ MyMoObject *dictKey(MVM *vm, Value v)
     if (key)
         return key;
     if (V_IS_OBJ_TYPE(v, OBJ_TUPLE))
-        runtimeError(vm, "TypeError: a tuple used as a dict key may only hold strings, numbers, booleans, Nil or tuples");
+        runtimeError(vm, "TypeError: unhashable tuple: a tuple used as a dict key or set element may only hold "
+                         "strings, numbers, booleans, Nil or tuples");
     else
-        runtimeError(vm, "TypeError: dict keys must be strings, numbers, booleans, Nil or tuples of them, not %s",
-                     valueTypeName(v));
+        runtimeError(vm, "TypeError: unhashable value %s: dict keys and set elements must be strings, numbers, "
+                         "booleans, Nil or tuples of them", valueTypeName(v));
     return NULL;
 }
 

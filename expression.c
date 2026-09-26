@@ -1078,6 +1078,7 @@ endSS:
 typedef struct
 {
     bool isDict;
+    bool isSet;
     const char *keyText; // dict only
     int keyLen;
     const char *valueText;
@@ -1208,7 +1209,7 @@ static void comprehensionBody(Compiler *compiler, Comprehension *comp)
         emitByte(compiler, OP_POP);
         return;
     }
-    Token appendTok = {.token = "append", .length = 6};
+    Token appendTok = comp->isSet ? (Token){.token = "add", .length = 3} : (Token){.token = "append", .length = 6};
     emitConstOp(compiler, OP_GETP, identifierConstant(compiler, &appendTok));
     compileSnippet(compiler, comp->valueText, comp->valueLen);
     emitBytes(compiler, OP_CALL, 1);
@@ -1292,7 +1293,7 @@ static void comprehension(Compiler *compiler, Comprehension *comp, TokenType clo
     nameTok.length = snprintf(nameBuf, sizeof(nameBuf), "<comp_%d>", counter++);
     comp->result = identifierConstant(compiler, &nameTok);
 
-    emitBytes(compiler, comp->isDict ? OP_DICT : OP_LIST, 0);
+    emitBytes(compiler, comp->isDict ? OP_DICT : comp->isSet ? OP_SET : OP_LIST, 0);
     emitSetV(compiler, comp->result);
     emitByte(compiler, OP_POP);
     comprehensionClause(compiler, comp);
@@ -1301,6 +1302,36 @@ static void comprehension(Compiler *compiler, Comprehension *comp, TokenType clo
     skipNewLines(compiler);
     consumeToken(compiler, closer, closer == RSQB ? "Expected closing ']' after comprehension"
                                                   : "Expected closing '}' after comprehension");
+}
+
+// {a, b, c} or {EXPR for ...}, after the first element was parsed.
+static void setLiteral(Compiler *compiler, const char *firstStart, const char *firstEnd, int beforeFirst)
+{
+    if (checkToken(compiler, FOR))
+    {
+        compiler->function->chunk->count = beforeFirst;
+        Comprehension comp = {.isSet = true, .valueText = firstStart, .valueLen = (int)(firstEnd - firstStart)};
+        comprehension(compiler, &comp, RBRACE);
+        return;
+    }
+    u32 count = 1;
+    compiler->flags.dict++;
+    while (matchToken(compiler, COMMA))
+    {
+        skipNewLines(compiler);
+        if (checkToken(compiler, RBRACE))
+            break;
+        expression(compiler);
+        skipNewLines(compiler);
+        if (++count > 255)
+        {
+            error(compiler, "Too many elements in one set literal (at most 255); build it in steps.");
+            count = 255;
+        }
+    }
+    compiler->flags.dict--;
+    consumeToken(compiler, RBRACE, "Expected closing '}'");
+    emitBytes(compiler, OP_SET, count);
 }
 
 void dictionary(Compiler *compiler, bool canAssign)
@@ -1319,9 +1350,17 @@ void dictionary(Compiler *compiler, bool canAssign)
             }
             const char *keyStart = compiler->parser->current.token;
             int savedChunkCount = compiler->function->chunk->count;
+            compiler->flags.dict++; // a comma ends the element here
             expression(compiler);
+            compiler->flags.dict--;
             const char *keyEnd = compiler->parser->current.token;
             skipNewLines(compiler);
+            if (count == 0 && !checkToken(compiler, COLON))
+            {
+                setLiteral(compiler, keyStart, keyEnd, savedChunkCount);
+                compiler->flags.dontSetVar--;
+                return;
+            }
             consumeToken(compiler, COLON, "Expected ':'");
             skipNewLines(compiler);
             const char *valueStart = compiler->parser->current.token;

@@ -135,6 +135,9 @@ void printObject(MyMoObject *object)
     case OBJ_RANGE:
         printf("range(%ld, %ld, %ld)", AS_RANGE(object)->start, AS_RANGE(object)->stop, AS_RANGE(object)->step);
         break;
+    case OBJ_SET:
+        printf("<set of %d>", AS_SET(object)->items.count);
+        break;
     case OBJ_SUPER:
         printf("<super of %s>", AS_SUPER(object)->klass->name->value);
         break;
@@ -193,6 +196,8 @@ char *getType(MyMoObject *object)
         return "<object 'super'>";
     case OBJ_RANGE:
         return "<object 'range'>";
+    case OBJ_SET:
+        return "<object 'set'>";
     default:
         return "<object 'unknown'>";
     }
@@ -263,6 +268,8 @@ bool isEqual(MyMoObject *a, MyMoObject *b)
         }
         return true;
     }
+    case OBJ_SET:
+        return AS_SET(a)->items.count == AS_SET(b)->items.count && setIsSubset(AS_SET(a), AS_SET(b));
     case OBJ_RANGE:
     {
         MyMoRange *ra = AS_RANGE(a), *rb = AS_RANGE(b);
