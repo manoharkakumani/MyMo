@@ -32,12 +32,15 @@ Value nextIter(MVM *vm, MyMoIter *object)
   {
   case OBJ_STRING:
   {
+    // index is a byte offset; each step yields one code point.
     MyMoString *string = AS_STRING(iterator);
     if (object->index >= string->length)
     {
       return V_EMPTY_VAL;
     }
-    return V_OBJ_VAL(NEW_STRING(vm, string->value + object->index++, 1));
+    int n = stringCharBytes(string, (int)object->index);
+    object->index += n;
+    return V_OBJ_VAL(NEW_STRING(vm, string->value + object->index - n, n));
   }
   case OBJ_LIST:
   {

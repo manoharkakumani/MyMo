@@ -1264,7 +1264,7 @@ int runMVM(MVM *vm)
         long count;
         switch (object->type)
         {
-        case OBJ_STRING: count = AS_STRING(object)->length; break;
+        case OBJ_STRING: count = AS_STRING(object)->chars; break;
         case OBJ_LIST:   count = AS_LIST(object)->values.count; break;
         case OBJ_TUPLE:  count = AS_TUPLE(object)->values.count; break;
         case OBJ_RANGE:  count = rangeLength(AS_RANGE(object)); break;
@@ -1285,7 +1285,13 @@ int runMVM(MVM *vm)
         Value result;
         switch (object->type)
         {
-        case OBJ_STRING: result = V_OBJ_VAL(AS_OBJECT(newString(vm, AS_STRING(object)->value + i, 1))); break;
+        case OBJ_STRING:
+        {
+            MyMoString *str = AS_STRING(object);
+            int at = stringByteOffset(str, (int)i);
+            result = V_OBJ_VAL(AS_OBJECT(newString(vm, str->value + at, stringCharBytes(str, at))));
+            break;
+        }
         case OBJ_LIST:   result = AS_LIST(object)->values.values[i]; break;
         case OBJ_TUPLE:  result = AS_TUPLE(object)->values.values[i]; break;
         default:         result = valueFromLong(vm, rangeAt(AS_RANGE(object), i)); break;
@@ -1379,7 +1385,7 @@ int runMVM(MVM *vm)
             runtimeError(vm, "TypeError: cannot unpack %s", valueTypeName(seq));
             goto _runtime_error;
         }
-        length = values ? values->count : chars->length;
+        length = values ? values->count : chars->chars;
         if (length != (int)count)
         {
             SAVE();
@@ -1396,8 +1402,12 @@ int runMVM(MVM *vm)
             // Keep the string reachable while the characters are allocated.
             lpush(seq);
             SAVE();
-            for (int i = 0; i < length; i++)
-                lpush(V_OBJ_VAL(NEW_STRING(vm, chars->value + i, 1)));
+            for (int i = 0, at = 0; i < length; i++)
+            {
+                int n = stringCharBytes(chars, at);
+                lpush(V_OBJ_VAL(NEW_STRING(vm, chars->value + at, n)));
+                at += n;
+            }
             for (int i = 0; i < length; i++)
                 sp[-length - 1 + i] = sp[-length + i];
             sp--;
@@ -1433,7 +1443,7 @@ int runMVM(MVM *vm)
         }
         long length;
         if (V_IS_OBJ_TYPE(seqV, OBJ_STRING))
-            length = AS_STRING(V_AS_OBJ(seqV))->length;
+            length = AS_STRING(V_AS_OBJ(seqV))->chars;
         else if (V_IS_OBJ_TYPE(seqV, OBJ_LIST))
             length = AS_LIST(V_AS_OBJ(seqV))->values.count;
         else if (V_IS_OBJ_TYPE(seqV, OBJ_TUPLE))
@@ -1472,11 +1482,39 @@ int runMVM(MVM *vm)
         if (V_IS_OBJ_TYPE(seqV, OBJ_STRING))
         {
             MyMoString *str = AS_STRING(V_AS_OBJ(seqV));
-            char *buf = New(char, count + 1);
-            for (long i = 0; i < count; i++)
-                buf[i] = str->value[start + i * step];
-            result = V_OBJ_VAL(AS_OBJECT(newString(vm, buf, (int)count)));
-            free(buf);
+            if (str->chars == str->length || count == 0)
+            {
+                char *buf = New(char, count + 1);
+                for (long i = 0; i < count; i++)
+                    buf[i] = str->value[start + i * step];
+                result = V_OBJ_VAL(AS_OBJECT(newString(vm, buf, (int)count)));
+                free(buf);
+            }
+            else if (step == 1)
+            {
+                int from = stringByteOffset(str, (int)start), to = stringByteOffset(str, (int)(start + count));
+                result = V_OBJ_VAL(AS_OBJECT(newString(vm, str->value + from, to - from)));
+            }
+            else
+            {
+                // Non-ASCII with a step: copy code point by code point.
+                int *offsets = malloc(sizeof(int) * (size_t)(str->chars + 1));
+                for (int i = 0, c = 0; i <= str->length; i++)
+                    if (i == str->length || ((unsigned char)str->value[i] & 0xC0) != 0x80)
+                        offsets[c++] = i;
+                char *buf = New(char, str->length + 1);
+                int n = 0;
+                for (long i = 0; i < count; i++)
+                {
+                    long c = start + i * step;
+                    int len = offsets[c + 1] - offsets[c];
+                    memcpy(buf + n, str->value + offsets[c], (size_t)len);
+                    n += len;
+                }
+                result = V_OBJ_VAL(AS_OBJECT(newString(vm, buf, n)));
+                free(buf);
+                free(offsets);
+            }
         }
         else
         {

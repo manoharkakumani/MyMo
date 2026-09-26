@@ -111,7 +111,7 @@ static void pad(StrBuf *out, const Spec *spec, const char *head, int headLen, co
                 char defaultAlign)
 {
     char align = spec->align ? spec->align : defaultAlign;
-    int total = headLen + bodyLen;
+    int total = headLen + utf8Count(body, bodyLen); // width counts characters
     int padding = spec->width > total ? spec->width - total : 0;
     int left = align == '>' ? padding : align == '^' ? padding / 2 : 0;
     int right = align == '<' ? padding : align == '^' ? padding - padding / 2 : 0;
@@ -297,8 +297,19 @@ bool formatWithSpec(MVM *vm, StrBuf *out, Value v, const char *specText, int spe
         return false;
     }
     int len = text.length;
-    if (spec.precision >= 0 && spec.precision < len)
-        len = spec.precision;
+    if (spec.precision >= 0 && text.data)
+    {
+        // Precision truncates to that many characters.
+        int chars = 0, i = 0;
+        while (i < len && chars < spec.precision)
+        {
+            i++;
+            while (i < len && ((unsigned char)text.data[i] & 0xC0) == 0x80)
+                i++;
+            chars++;
+        }
+        len = i;
+    }
     if (spec.align == '=')
     {
         strbufFree(&text);

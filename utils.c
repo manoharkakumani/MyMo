@@ -197,7 +197,7 @@ Value lenfn(MVM *vm, uint argc, Value argv[])
     switch (obj->type)
     {
     case OBJ_STRING:
-        return objectToValue(NEW_INT(vm, AS_STRING(obj)->length));
+        return V_INT_VAL(AS_STRING(obj)->chars);
     case OBJ_LIST:
         return objectToValue(NEW_INT(vm, AS_LIST(obj)->values.count));
     case OBJ_TUPLE:

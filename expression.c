@@ -39,8 +39,9 @@ static int hexDigit(char c)
 }
 
 // Build a string constant from literal source text, decoding escapes:
-// \n \t \r \0 \\ \' \" \` \{ \} and \xHH. Unknown escapes keep the
-// backslash (Python-style), so `"C:\dir"` stays as written.
+// \n \t \r \0 \\ \' \" \` \{ \} \xHH, and \uXXXX / \UXXXXXXXX (code
+// points, stored as UTF-8). Unknown escapes keep the backslash
+// (Python-style), so `"C:\dir"` stays as written.
 static MyMoObject *newUnescapedString(MVM *vm, const char *src, int len)
 {
     if (!memchr(src, '\\', len))
@@ -73,9 +74,49 @@ static MyMoObject *newUnescapedString(MVM *vm, const char *src, int len)
             }
             /* fallthrough */
         default:
+        unknown:
             buf[n++] = '\\';
             buf[n++] = c;
             break;
+        case 'u':
+        case 'U':
+        {
+            int digits = c == 'u' ? 4 : 8;
+            long cp = 0;
+            if (i + digits >= len)
+                goto unknown;
+            for (int k = 1; k <= digits; k++)
+            {
+                int d = hexDigit(src[i + k]);
+                if (d < 0)
+                    goto unknown;
+                cp = cp * 16 + d;
+            }
+            if (cp > 0x10FFFF)
+                goto unknown;
+            i += digits;
+            if (cp < 0x80)
+                buf[n++] = (char)cp;
+            else if (cp < 0x800)
+            {
+                buf[n++] = (char)(0xC0 | (cp >> 6));
+                buf[n++] = (char)(0x80 | (cp & 0x3F));
+            }
+            else if (cp < 0x10000)
+            {
+                buf[n++] = (char)(0xE0 | (cp >> 12));
+                buf[n++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                buf[n++] = (char)(0x80 | (cp & 0x3F));
+            }
+            else
+            {
+                buf[n++] = (char)(0xF0 | (cp >> 18));
+                buf[n++] = (char)(0x80 | ((cp >> 12) & 0x3F));
+                buf[n++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                buf[n++] = (char)(0x80 | (cp & 0x3F));
+            }
+            break;
+        }
         }
     }
     MyMoObject *str = NEW_STRING(vm, buf, n);

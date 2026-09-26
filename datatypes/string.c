@@ -27,10 +27,46 @@ MyMoString *newString(MVM *vm, const char *chars, int length)
     MyMoString *string = AllocateObject(vm, MyMoString, OBJ_STRING);
     string->object.hash = hash;
     string->length = length;
+    string->chars = utf8Count(heapChars, length);
     string->value = heapChars;
     setPrimitive(vm, &vm->strings, (MyMoObject *)string);
     return string;
 }
+int utf8Count(const char *bytes, int length)
+{
+    int n = 0;
+    for (int i = 0; i < length; i++)
+        if (((unsigned char)bytes[i] & 0xC0) != 0x80)
+            n++;
+    return n;
+}
+
+int stringByteOffset(MyMoString *s, int index)
+{
+    if (s->chars == s->length || index <= 0)
+        return index <= 0 ? 0 : index;
+    int seen = 0;
+    for (int i = 0; i < s->length; i++)
+        if (((unsigned char)s->value[i] & 0xC0) != 0x80 && seen++ == index)
+            return i;
+    return s->length;
+}
+
+int stringCharIndex(MyMoString *s, int offset)
+{
+    if (s->chars == s->length || offset < 0)
+        return offset;
+    return utf8Count(s->value, offset);
+}
+
+int stringCharBytes(MyMoString *s, int offset)
+{
+    int n = 1;
+    while (offset + n < s->length && ((unsigned char)s->value[offset + n] & 0xC0) == 0x80)
+        n++;
+    return n;
+}
+
 void printString(MyMoString *string)
 {
     printf("%s", string->value);
@@ -65,7 +101,7 @@ Value stringLengthMethod(MVM *vm, uint argc, Value args[])
         return V_EMPTY_VAL;
     }
         
-    return objectToValue(NEW_INT(vm, AS_STRING(function->self)->length));
+    return V_INT_VAL(AS_STRING(function->self)->chars);
 }
 static bool needString(MVM *vm, const char *fn, Value arg)
 {
@@ -184,9 +220,10 @@ Value findStringMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "find", argc, 1, 2);
     if (!self || !needString(vm, "find", args[0])) return V_EMPTY_VAL;
+    MyMoString *s = AS_STRING(self);
     int from = 0;
-    if (argc == 2 && !startIndex(vm, "find", args[1], AS_STRING(self)->length, &from)) return V_EMPTY_VAL;
-    return V_INT_VAL(findSub(AS_STRING(self), AS_STRING(V_AS_OBJ(args[0])), from));
+    if (argc == 2 && !startIndex(vm, "find", args[1], s->chars, &from)) return V_EMPTY_VAL;
+    return V_INT_VAL(stringCharIndex(s, findSub(s, AS_STRING(V_AS_OBJ(args[0])), stringByteOffset(s, from))));
 }
 
 Value containsStringMethod(MVM *vm, uint argc, Value args[])
@@ -340,7 +377,7 @@ Value rfindStringMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "rfind", argc, 1, 1);
     if (!self || !needString(vm, "rfind", args[0])) return V_EMPTY_VAL;
-    return V_INT_VAL(rfindSub(AS_STRING(self), AS_STRING(V_AS_OBJ(args[0]))));
+    return V_INT_VAL(stringCharIndex(AS_STRING(self), rfindSub(AS_STRING(self), AS_STRING(V_AS_OBJ(args[0])))));
 }
 
 // Like find/rfind, but a missing substring raises ValueError.
@@ -348,9 +385,10 @@ Value indexStringMethod(MVM *vm, uint argc, Value args[])
 {
     MyMoObject *self = methodEnter(vm, "index", argc, 1, 2);
     if (!self || !needString(vm, "index", args[0])) return V_EMPTY_VAL;
+    MyMoString *s = AS_STRING(self);
     int from = 0;
-    if (argc == 2 && !startIndex(vm, "index", args[1], AS_STRING(self)->length, &from)) return V_EMPTY_VAL;
-    int i = findSub(AS_STRING(self), AS_STRING(V_AS_OBJ(args[0])), from);
+    if (argc == 2 && !startIndex(vm, "index", args[1], s->chars, &from)) return V_EMPTY_VAL;
+    int i = stringCharIndex(s, findSub(s, AS_STRING(V_AS_OBJ(args[0])), stringByteOffset(s, from)));
     if (i < 0)
     {
         runtimeError(vm, "ValueError: substring not found");
@@ -369,7 +407,7 @@ Value rindexStringMethod(MVM *vm, uint argc, Value args[])
         runtimeError(vm, "ValueError: substring not found");
         return V_EMPTY_VAL;
     }
-    return V_INT_VAL(i);
+    return V_INT_VAL(stringCharIndex(AS_STRING(self), i));
 }
 
 // Non-overlapping occurrences of sub ("" counts length + 1 positions).
@@ -379,7 +417,7 @@ Value countStringMethod(MVM *vm, uint argc, Value args[])
     if (!self || !needString(vm, "count", args[0])) return V_EMPTY_VAL;
     MyMoString *s = AS_STRING(self), *sub = AS_STRING(V_AS_OBJ(args[0]));
     if (sub->length == 0)
-        return V_INT_VAL(s->length + 1);
+        return V_INT_VAL(s->chars + 1);
     int n = 0;
     for (int i = findSub(s, sub, 0); i >= 0; i = findSub(s, sub, i + sub->length))
         n++;
@@ -545,14 +583,15 @@ static Value pad(MVM *vm, const char *fn, uint argc, Value args[], int align)
     }
     MyMoString *s = AS_STRING(self);
     long width = valueToLong(args[0]);
-    if (width <= s->length)
+    if (width <= s->chars)
         return V_OBJ_VAL(self);
-    int total = (int)width - s->length;
+    int total = (int)width - s->chars; // padding characters
     int left = align < 0 ? 0 : align > 0 ? total : total / 2 + (total & width & 1);
-    char *buf = New(char, width + 1);
-    memset(buf, fill, (size_t)width);
+    int bytes = total + s->length;
+    char *buf = New(char, bytes + 1);
+    memset(buf, fill, (size_t)bytes);
     memcpy(buf + left, s->value, (size_t)s->length);
-    Value out = makeString(vm, buf, (int)width);
+    Value out = makeString(vm, buf, bytes);
     free(buf);
     return out;
 }
@@ -573,16 +612,17 @@ Value zfillStringMethod(MVM *vm, uint argc, Value args[])
     }
     MyMoString *s = AS_STRING(self);
     long width = valueToLong(args[0]);
-    if (width <= s->length)
+    if (width <= s->chars)
         return V_OBJ_VAL(self);
-    char *buf = New(char, width + 1);
+    int zeros = (int)width - s->chars;
+    int bytes = zeros + s->length;
+    char *buf = New(char, bytes + 1);
     int sign = s->length > 0 && (s->value[0] == '-' || s->value[0] == '+');
-    int zeros = (int)width - s->length;
     if (sign)
         buf[0] = s->value[0];
     memset(buf + sign, '0', (size_t)zeros);
     memcpy(buf + sign + zeros, s->value + sign, (size_t)(s->length - sign));
-    Value out = makeString(vm, buf, (int)width);
+    Value out = makeString(vm, buf, bytes);
     free(buf);
     return out;
 }

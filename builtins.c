@@ -153,8 +153,12 @@ bool appendIterable(MVM *vm, const char *fn, Value v, ValueArray *out)
         case OBJ_STRING:
         {
             MyMoString *s = AS_STRING(o);
-            for (int i = 0; i < s->length; i++)
-                writeValueArray(vm, out, V_OBJ_VAL(AS_OBJECT(newString(vm, s->value + i, 1))));
+            for (int i = 0; i < s->length;)
+            {
+                int n = stringCharBytes(s, i);
+                writeValueArray(vm, out, V_OBJ_VAL(AS_OBJECT(newString(vm, s->value + i, n))));
+                i += n;
+            }
             return true;
         }
         case OBJ_DICT:
