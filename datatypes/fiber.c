@@ -17,12 +17,14 @@ MyMoFiber *newFiber(MVM *vm, MyMoFunction *function)
     fiber->handlerCount = 0;
     fiber->exception = NULL;
     initValueArray(vm, &fiber->stack);
-    // Pre-allocate operand stack. The dispatch-loop register `sp` always
-    // points into this buffer and never grows during execution — overflow
-    // beyond `stackCapacity` is undefined. 64K slots = 512 KiB per fiber.
-    // Real growth-on-overflow lands as part of the GC/runtime polish pass.
-    fiber->stack.capacity = 65536;
-    fiber->stack.values = ResizeArray(vm, Value, fiber->stack.values, 0, 65536);
+    // Pre-allocate the operand stack. The dispatch-loop register `sp`
+    // points into this buffer and it never grows, so calls check
+    // STACK_EXHAUSTED and raise RecursionError instead of overrunning it.
+    // The root fiber gets 64K slots (512 KiB); child fibers 8K (64 KiB)
+    // so a server can run one fiber per request cheaply.
+    int slots = function ? FIBER_CHILD_STACK : FIBER_ROOT_STACK;
+    fiber->stack.capacity = slots;
+    fiber->stack.values = ResizeArray(vm, Value, fiber->stack.values, 0, slots);
     CallFrame *frame = New(CallFrame, 1);
     frame->function = function;
     frame->captured = false;
@@ -120,9 +122,14 @@ Value runFiberMethod(MVM *vm, uint argc, MyMoObject *args[])
     }
     if (argc && !fiberFunction->isargs)
     {
+        // Same convention as callFunction: small arities live in the
+        // args[] slots the compiled body reads via OP_GETARG.
         for (int i = argc - 1; i >= 0; i--)
         {
-            setEntry(vm, &frame->locals, AS_OBJECT(fiberFunction->argv[i]), pop(vm));
+            if (argc <= CALLFRAME_ARGS_INLINE)
+                frame->args[i] = popV(vm);
+            else
+                setEntry(vm, &frame->locals, AS_OBJECT(fiberFunction->argv[i]), pop(vm));
         }
     }
     fiber->state = FIBER_RUNNING;

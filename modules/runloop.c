@@ -16,6 +16,7 @@
 //   runloop.readable(fd, timeout_ms)  -> bool  (True if readable, False on timeout)
 //   runloop.writable(fd, timeout_ms)  -> bool  (True if writable, False on timeout)
 //   runloop.select(fds, timeout_ms)   -> int   (index of ready fd, or -1 on timeout)
+//   runloop.ready(fds, timeout_ms)    -> list  (all readable fds; [] on timeout)
 //
 // `timeout_ms` is in milliseconds. -1 means "wait forever" (blocking
 // but only on this fd); 0 means "poll, return immediately".
@@ -29,6 +30,9 @@
 #include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
+#ifndef _WIN32
+#include <poll.h>
+#endif
 
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
   #define USE_KQUEUE 1
@@ -237,6 +241,56 @@ static Value rl_select(MVM *vm, uint argc, MyMoObject *argv[])
     return objectToValue(mymo_int(vm, -1));
 }
 
+// runloop.ready([fd1, fd2, ...], timeout_ms) -> [ready fds]
+// Every fd in the list that is readable (or closed/errored, which a read
+// then reports), waiting up to timeout_ms (-1 = forever). Unlike select
+// it reports all ready fds at once and has no FD_SETSIZE limit.
+static Value rl_ready(MVM *vm, uint argc, MyMoObject *argv[])
+{
+    MyMoList *fds;
+    long timeout_ms;
+    if (!mymo_parse(vm, "runloop.ready", argc, argv, "Li", &fds, &timeout_ms))
+        return MYMO_ERROR;
+    int n = fds->values.count;
+    MyMoList *out = newList(vm);
+    if (n == 0)
+        return objectToValue(AS_OBJECT(out));
+#ifdef _WIN32
+    runtimeError(vm, "runloop.ready(): not supported on Windows yet");
+    return MYMO_ERROR;
+#else
+    struct pollfd *pfds = malloc(sizeof(struct pollfd) * (size_t)n);
+    for (int i = 0; i < n; i++)
+    {
+        MyMoObject *o = fds->values.objects[i];
+        if (o->type != OBJ_INT)
+        {
+            free(pfds);
+            runtimeError(vm, "runloop.ready(): fds[%d] must be int", i);
+            return MYMO_ERROR;
+        }
+        pfds[i].fd = (int)((MyMoInt *)o)->value;
+        pfds[i].events = POLLIN;
+        pfds[i].revents = 0;
+    }
+    int r;
+    do
+        r = poll(pfds, (nfds_t)n, (int)timeout_ms);
+    while (r < 0 && errno == EINTR);
+    if (r < 0)
+    {
+        free(pfds);
+        runtimeError(vm, "runloop.ready(): poll(): %s", strerror(errno));
+        return MYMO_ERROR;
+    }
+    for (int i = 0; i < n && r > 0; i++)
+        if (pfds[i].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))
+            writeMyMoObjectArray(vm, &out->values, fds->values.objects[i]);
+    free(pfds);
+    return objectToValue(AS_OBJECT(out));
+#endif
+}
+
 MyMoObject *runloopModule(MVM *vm)
 {
     static MyMoModuleFunction fns[] = {
@@ -244,6 +298,7 @@ MyMoObject *runloopModule(MVM *vm)
         {"readable", rl_readable},
         {"writable", rl_writable},
         {"select",   rl_select},
+        {"ready",    rl_ready},
     };
     static MyMoModuleVariable vars[] = { {0, 0} };
     static MyMoModuleDef def = {

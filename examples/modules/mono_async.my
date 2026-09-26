@@ -1,0 +1,38 @@
+# mono_async: handlers that wait without blocking the server.
+#
+# mono runs every request in its own fiber. `sleep(ms)` (and
+# `wait_readable(fd)`) suspend just that request; the event loop keeps
+# accepting and serving others meanwhile.
+#
+# Try it:
+#   ./mymo examples/modules/mono_async.my
+#   # five 1-second requests finish together in ~1s, not 5s:
+#   for i in 1 2 3 4 5; do curl -s localhost:8080/slow/$i & done; wait
+#   # and /fast answers instantly even while they are sleeping:
+#   curl -s localhost:8080/fast
+from "mono" use get, start, sleep
+
+visits = {"n": 0}
+
+@get("/slow/:id")
+fn slow(req):
+    sleep(1000)               # other requests run during this second
+    return {"id": req["params"]["id"], "waited_ms": 1000}
+
+@get("/fast")
+fn fast(req):
+    visits["n"] = visits["n"] + 1
+    return {"fast": True, "visits": visits["n"]}
+
+# A handler can also do its work in steps, yielding between them.
+@get("/countdown/:n")
+fn countdown(req):
+    steps = []
+    i = int(req["params"]["n"])
+    while i > 0:
+        steps.append(i)
+        sleep(100)
+        i = i - 1
+    return {"countdown": steps}
+
+start("127.0.0.1", 8080)

@@ -223,6 +223,11 @@ bool callFunction(MVM *vm, MyMoFunction *function, int argc)
         // frameCount (slot 0 is the script/initial frame, slot frameCount
         // is the most recently pushed). We're about to write slot
         // frameCount+1, so we need capacity >= frameCount+2.
+        if (STACK_EXHAUSTED(vm->fiber->stack.count))
+        {
+            runtimeError(vm, "RecursionError: maximum recursion depth exceeded.");
+            return false;
+        }
         if (vm->fiber->frameCapacity < (uint)(vm->fiber->frameCount + 2))
         {
             u32 capacity = vm->fiber->frameCapacity;
@@ -319,11 +324,8 @@ bool caller(MVM *vm, MyMoObject *callee, u32 argc)
             runtimeError(vm, "TypeError : <Script '%s'> is not callable.", function->name->value);
             return false;
         }
-        else if (function->type == FN_GENERATOR || function->type == FN_GEN_METHOD)
-        {
-            runtimeError(vm, "TypeError : <generator '%s'> is not callable.", function->name->value);
-            return false;
-        }
+        // Functions containing `yield` may be called directly: yielding
+        // then suspends the enclosing fiber (and errors outside one).
         else if (function->type == FN_MODULE)
         {
             runtimeError(vm, "TypeError : <module '%s'> is not callable.", function->name->value);
@@ -1826,14 +1828,18 @@ int runMVM(MVM *vm)
                                  function->name->value, function->argc, argCount);
                     goto _runtime_error;
                 }
-                if (function->type == FN_SCRIPT || function->type == FN_GENERATOR
-                    || function->type == FN_GEN_METHOD || function->type == FN_MODULE)
+                if (function->type == FN_SCRIPT || function->type == FN_MODULE)
                 {
                     SAVE();
                     runtimeError(vm, "TypeError : <%s '%s'> is not callable.",
-                                 function->type == FN_SCRIPT ? "Script" :
-                                 function->type == FN_MODULE ? "module" : "generator",
+                                 function->type == FN_SCRIPT ? "Script" : "module",
                                  function->name->value);
+                    goto _runtime_error;
+                }
+                if (STACK_EXHAUSTED(sp - vm->fiber->stack.values))
+                {
+                    SAVE();
+                    runtimeError(vm, "RecursionError: maximum recursion depth exceeded.");
                     goto _runtime_error;
                 }
                 // Frame capacity check (off-by-one fix from Phase 5e).
@@ -2747,14 +2753,18 @@ int runMVM(MVM *vm)
                              function->name->value, function->argc, argCount);
                 goto _runtime_error;
             }
-            if (function->type == FN_SCRIPT || function->type == FN_GENERATOR
-                || function->type == FN_GEN_METHOD || function->type == FN_MODULE)
+            if (function->type == FN_SCRIPT || function->type == FN_MODULE)
             {
                 SAVE();
                 runtimeError(vm, "TypeError : <%s '%s'> is not callable.",
-                             function->type == FN_SCRIPT ? "Script" :
-                             function->type == FN_MODULE ? "module" : "generator",
+                             function->type == FN_SCRIPT ? "Script" : "module",
                              function->name->value);
+                goto _runtime_error;
+            }
+            if (STACK_EXHAUSTED(sp - vm->fiber->stack.values))
+            {
+                SAVE();
+                runtimeError(vm, "RecursionError: maximum recursion depth exceeded.");
                 goto _runtime_error;
             }
             if (vm->fiber->frameCapacity < (uint)(vm->fiber->frameCount + 2))

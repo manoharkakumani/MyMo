@@ -183,6 +183,11 @@ Value yieldfn(MVM *vm, uint argc, MyMoObject *argv[])
         runtimeError(vm, "TypeError: yeild() takes 0 or 1 argument (%d given).", argc);
         return V_EMPTY_VAL;
     }
+    if (vm->fiber->parent == NULL)
+    {
+        runtimeError(vm, "RuntimeError: yield() outside a fiber.");
+        return V_EMPTY_VAL;
+    }
     MyMoObject *obj = NEW_NIL;
     if (argc)
     {

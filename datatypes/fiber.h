@@ -40,6 +40,14 @@ typedef struct {
     int  stackCount;     // value to restore vm->fiber->stack.count to
 } TryHandler;
 
+// Operand-stack slots per fiber. The stack never grows, so calls check
+// for exhaustion (STACK_EXHAUSTED) and raise RecursionError. Child fibers
+// (one per mono request, generators, ...) get a smaller stack.
+#define FIBER_ROOT_STACK  65536
+#define FIBER_CHILD_STACK 8192
+// Headroom for one frame's temporaries and up to 255 arguments.
+#define STACK_EXHAUSTED(used) ((used) + 512 >= vm->fiber->stack.capacity)
+
 typedef struct fiber
 {
     MyMoObject object;

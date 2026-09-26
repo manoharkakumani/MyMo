@@ -440,6 +440,9 @@ extern void nodes_set_argv0(const char *path);
 
 int main(int argc, const char *argv[])
 {
+    // Line-buffer stdout even when it isn't a terminal, so a long-running
+    // script's print() output (e.g. a server's log) shows up promptly.
+    setvbuf(stdout, NULL, _IOLBF, 0);
     char selfpath[10000];
     #ifdef _WIN32
         if (_fullpath(selfpath, argv[0], MAX_PATH))

@@ -39,7 +39,9 @@
 # - Multi-statement handlers should be written with `fn name(req):`
 #   blocks and registered by name — multi-line arrow-functions
 #   don't parse inside a function-call argument in MyMo today.
-from "server" use listen, accept, respond, respond_json
+from "server" use listen, accept_nb, read_request, respond, respond_json
+from "runloop" use nonblock, ready
+from "time" use monotonic
 from "json" use encode, decode
 
 # Mutable state goes in a dict so handlers (closures) can mutate it
@@ -215,10 +217,112 @@ fn __handle(req):
         respond_json(req["client_fd"], 404, body)
     return Nil
 
+# --- event loop ---------------------------------------------------------
+# start() serves many connections at once on a single thread:
+#   - the listen socket and slow clients are polled with runloop.ready,
+#     and requests are read incrementally (server.read_request), so a
+#     client that trickles its request in doesn't block anyone;
+#   - every request runs its handler in its own fiber, so a handler can
+#     call sleep(ms) or wait_readable(fd) and other requests keep being
+#     served while it waits.
+
+__loop = {"sleepers": [], "waiting": {}}
+
+# Pause the current handler for `ms` milliseconds without blocking the
+# server. Only meaningful inside a request handler.
+fn sleep(ms):
+    yield({"sleep": ms})
+
+# Suspend the current handler until `fd` is readable (for handlers that
+# talk to their own sockets), letting other requests run meanwhile.
+fn wait_readable(fd):
+    yield({"fd": fd})
+
+fn __task(req):
+    try:
+        __handle(req)
+    catch e:
+        print("mono: request failed:", e)
+    return Nil
+
+# Run a request's fiber until it yields or finishes, then park it
+# according to what it asked for.
+fn __step(task, value):
+    fb = task["fiber"]
+    if task["started"]:
+        signal = fb.resume(value)
+    else:
+        task["started"] = True
+        signal = fb.run(task["req"])
+    if fb.alive() == False:
+        return Nil
+    if type(signal) == type({}):
+        if signal.has("sleep"):
+            __loop["sleepers"].append({"at": monotonic() + signal["sleep"] / 1000, "task": task})
+            return Nil
+        if signal.has("fd"):
+            __loop["waiting"][signal["fd"]] = task
+            return Nil
+    # Any other yield: just run it again on the next turn.
+    __loop["sleepers"].append({"at": 0, "task": task})
+    return Nil
+
+fn __spawn(req):
+    __step({"fiber": fiber(__task), "req": req, "started": False}, Nil)
+
+# Resume sleepers whose time has come; return the poll timeout in ms
+# until the next one (-1 = none, wait for I/O only).
+fn __wake_sleepers():
+    if __loop["sleepers"].__len__() == 0:
+        return -1
+    now = monotonic()
+    due = []
+    later = []
+    for s in __loop["sleepers"]:
+        if s["at"] <= now:
+            due.append(s)
+        else:
+            later.append(s)
+    __loop["sleepers"] = later
+    for s in due:
+        __step(s["task"], Nil)
+    if __loop["sleepers"].__len__() == 0:
+        return -1
+    next_at = __loop["sleepers"][0]["at"]
+    for s in __loop["sleepers"]:
+        if s["at"] < next_at:
+            next_at = s["at"]
+    wait = int((next_at - monotonic()) * 1000) + 1
+    return wait if wait > 0 else 0
+
+# Read what a client has sent; spawn its handler once the request is
+# complete. Returns True while the request is still arriving.
+fn __read(fd):
+    req = read_request(fd)
+    if req == False:
+        return True
+    if req != Nil:
+        __spawn(req)
+    return False
+
 fn start(host, port):
-    srv = listen(host, port, 16)
+    srv = listen(host, port, 128)
+    nonblock(srv)
     print("mono listening on http://" + host + ":" + str(port))
+    pending = []   # clients whose request is still arriving
     while True:
-        req = accept(srv)
-        if req != Nil:
-            __handle(req)
+        timeout = __wake_sleepers()
+        fds = [srv] + pending + __loop["waiting"].keys()
+        for fd in ready(fds, timeout):
+            if fd == srv:
+                client = accept_nb(srv)
+                while client != Nil:
+                    if __read(client):
+                        pending.append(client)
+                    client = accept_nb(srv)
+            elif __loop["waiting"].has(fd):
+                task = __loop["waiting"][fd]
+                __loop["waiting"].delete(fd)
+                __step(task, Nil)
+            elif __read(fd) == False:
+                pending.remove(fd)

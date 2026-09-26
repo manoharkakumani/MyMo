@@ -81,4 +81,6 @@ void defineDoubleClass(MVM *vm)
     vm->builtInClasses[OBJ_DOUBLE] = doubleClass;
     defineDoubleMethods(vm);
     setEntry(vm, &vm->builtins, AS_OBJECT(name), AS_OBJECT(doubleClass));
+    // `float` is the familiar name for the same type.
+    setEntry(vm, &vm->builtins, AS_OBJECT(newString(vm, "float", 5)), AS_OBJECT(doubleClass));
 }
