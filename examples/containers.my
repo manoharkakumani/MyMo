@@ -22,3 +22,8 @@ case (1, True, Nil):
         print("pattern with inline bool/nil matched")
     _:
         print("no match")
+print(bool([]), bool([0]), bool({}), bool(()), bool(set()), bool(range(0)), bool(""), bool(0.0))
+if not []:
+    print("empty list is falsy")
+x = [] or "default"
+print(x)

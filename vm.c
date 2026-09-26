@@ -869,11 +869,7 @@ static MyMoObject *operatorMethod(MVM *vm, MyMoObject *instance, const char *op)
 
 bool isFalsey(MyMoObject *obj)
 {
-    return IS_NIL(obj) ||
-           (IS_BOOL(obj) && !BOOL_VAL(obj)) ||
-           (IS_INT(obj) && INT_VAL(obj) == 0) ||
-           (IS_DOUBLE(obj) && DOUBLE_VAL(obj) == 0) ||
-           (IS_STRING(obj) && STRING_VAL(obj)[0] == '\0');
+    return valueIsFalsey(objectToValue(obj));
 }
 
 // Value-native truthiness. Handles inline ints, doubles, nil/true/

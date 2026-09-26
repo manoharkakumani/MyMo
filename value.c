@@ -1,4 +1,5 @@
 #include "value.h"
+#include "datatypes/datatypes.h"
 #include "memory.h"
 #include "datatypes/object.h"
 #include "datatypes/int.h"
@@ -83,13 +84,23 @@ bool valueIsNil(Value v)  { return valueIsNilAny(v); }
 bool valueIsBool(Value v) { return valueIsBoolAny(v); }
 bool valueAsBool(Value v) { return valueAsBoolBit(v); }
 
+// Falsy: Nil, False, 0, 0.0, and empty strings, lists, tuples, dicts,
+// sets and ranges. Everything else (instances included) is truthy.
 bool valueIsFalsey(Value v) {
     if (valueIsNil(v)) return true;
     if (valueIsBool(v)) return !valueAsBool(v);
     if (valueLooksLikeNumber(v)) return valueAsNumber(v) == 0;
-    if (V_IS_OBJ(v) && V_AS_OBJ(v)->type == OBJ_STRING)
-        return ((MyMoString *)V_AS_OBJ(v))->length == 0;
-    return false;
+    if (!V_IS_OBJ(v)) return false;
+    MyMoObject *o = V_AS_OBJ(v);
+    switch (o->type) {
+    case OBJ_STRING: return ((MyMoString *)o)->length == 0;
+    case OBJ_LIST:   return ((MyMoList *)o)->values.count == 0;
+    case OBJ_TUPLE:  return ((MyMoTuple *)o)->values.count == 0;
+    case OBJ_DICT:   return ((MyMoDict *)o)->count == 0;
+    case OBJ_SET:    return ((MyMoSet *)o)->items.count == 0;
+    case OBJ_RANGE:  return rangeLength((MyMoRange *)o) == 0;
+    default:         return false;
+    }
 }
 
 Value valueFromLong(MVM *vm, long n) {
