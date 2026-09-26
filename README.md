@@ -602,6 +602,23 @@ Five concurrent `/slow` requests finish together in about one second, and
 `/fast` answers immediately while they wait. `wait_readable(fd)` does the
 same for handlers that talk to their own sockets.
 
+Connections use HTTP keep-alive (and pipelining), so clients reuse one
+connection for many requests. Connections close when the client asks, after
+100 requests, or after 5 seconds of silence.
+
+### HTTPS
+
+`mono` speaks plain HTTP. For TLS, put a reverse proxy in front of it. With
+[Caddy](https://caddyserver.com/), which gets certificates automatically:
+
+```
+example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+nginx works the same way with `proxy_pass http://127.0.0.1:8080;`.
+
 Complete apps: `examples/modules/mono_app.my` (decorators),
 `examples/modules/mono_async.my` (concurrency) and
 `examples/modules/mono_demo.my` (explicit registration).
@@ -826,7 +843,6 @@ MyMo is an experimental language. Current gaps:
   compile error.
 - Ints are 32-bit when stored inline. Wider values fall back to slower heap
   objects.
-- `mono` speaks HTTP/1.1 with `Connection: close`: no keep-alive and no
-  HTTPS (put a reverse proxy in front for TLS). Non-blocking I/O isn't
-  implemented on Windows yet.
+- `mono` has no built-in TLS (see [HTTPS](#https)), and its non-blocking
+  I/O isn't implemented on Windows yet.
 - A fiber can't `yield` across a C→MyMo `mymo_call` boundary.

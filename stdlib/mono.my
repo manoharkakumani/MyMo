@@ -39,7 +39,7 @@
 # - Multi-statement handlers should be written with `fn name(req):`
 #   blocks and registered by name — multi-line arrow-functions
 #   don't parse inside a function-call argument in MyMo today.
-from "server" use listen, accept_nb, read_request, respond, respond_json
+from "server" use listen, accept_nb, read_request, respond, respond_json, close
 from "runloop" use nonblock, ready
 from "time" use monotonic
 from "json" use encode, decode
@@ -142,13 +142,17 @@ fn not_found(handler):
 # --- response helpers (call from inside a handler) -------------------
 # Both mark the request as answered so the return-value auto-response
 # in __dispatch_handler doesn't send a second reply.
+# respond() returns True when the connection stays open (keep-alive); the
+# event loop then watches it for the client's next request.
 fn text(req, status, body):
     req["__sent"] = True
-    return respond(req["client_fd"], status, body)
+    req["__keep"] = respond(req["client_fd"], status, body)
+    return req["__keep"]
 
 fn json(req, status, value):
     req["__sent"] = True
-    return respond_json(req["client_fd"], status, encode(value))
+    req["__keep"] = respond_json(req["client_fd"], status, encode(value))
+    return req["__keep"]
 
 # Turn a handler's return value into a response (see header).
 fn __auto_respond(req, result):
@@ -190,7 +194,8 @@ fn __dispatch_handler(handler, req):
     catch e:
         try:
             body = encode({"error": "internal server error", "detail": e})
-            respond_json(req["client_fd"], 500, body)
+            req["__sent"] = True
+            req["__keep"] = respond_json(req["client_fd"], 500, body)
         catch:
             print("mono: could not deliver 500:", e)
 
@@ -226,7 +231,16 @@ fn __handle(req):
 #     call sleep(ms) or wait_readable(fd) and other requests keep being
 #     served while it waits.
 
-__loop = {"sleepers": [], "waiting": {}}
+__loop = {
+    "sleepers": [],   # {"at": time, "task": task} for sleep(ms)
+    "waiting": {},    # fd -> task, for wait_readable(fd)
+    "pending": {},    # client fd -> last activity time (request not complete yet)
+    "reuse": [],      # kept-alive fds whose response just went out
+}
+
+# Close a connection that sends nothing for this long (keep-alive idle
+# time, and a guard against clients that never finish a request).
+__idle_timeout = 5
 
 # Pause the current handler for `ms` milliseconds without blocking the
 # server. Only meaningful inside a request handler.
@@ -243,6 +257,10 @@ fn __task(req):
         __handle(req)
     catch e:
         print("mono: request failed:", e)
+    if req.get("__keep") == True:
+        __loop["reuse"].append(req["client_fd"])
+    elif req.get("__sent") != True:
+        close(req["client_fd"])   # never answered: don't leak the socket
     return Nil
 
 # Run a request's fiber until it yields or finishes, then park it
@@ -270,11 +288,10 @@ fn __step(task, value):
 fn __spawn(req):
     __step({"fiber": fiber(__task), "req": req, "started": False}, Nil)
 
-# Resume sleepers whose time has come; return the poll timeout in ms
-# until the next one (-1 = none, wait for I/O only).
+# Resume sleepers whose time has come.
 fn __wake_sleepers():
     if __loop["sleepers"].__len__() == 0:
-        return -1
+        return Nil
     now = monotonic()
     due = []
     later = []
@@ -286,6 +303,10 @@ fn __wake_sleepers():
     __loop["sleepers"] = later
     for s in due:
         __step(s["task"], Nil)
+    return Nil
+
+# ms until the next sleeper is due (-1 = none, wait for I/O only).
+fn __next_sleeper_ms():
     if __loop["sleepers"].__len__() == 0:
         return -1
     next_at = __loop["sleepers"][0]["at"]
@@ -305,24 +326,63 @@ fn __read(fd):
         __spawn(req)
     return False
 
+# Start (or resume, after a keep-alive response) watching `fd` for its
+# next request. Handles requests already buffered (pipelining) at once.
+fn __watch(fd):
+    if __read(fd):
+        __loop["pending"][fd] = monotonic()
+
+# Close connections idle for __idle_timeout seconds; return the ms until
+# the next one would expire (-1 = none).
+fn __expire_idle():
+    now = monotonic()
+    next_ms = -1
+    for fd in __loop["pending"].keys():
+        age = now - __loop["pending"][fd]
+        if age >= __idle_timeout:
+            __loop["pending"].delete(fd)
+            close(fd)
+        else:
+            left = int((__idle_timeout - age) * 1000) + 1
+            if next_ms == -1 or left < next_ms:
+                next_ms = left
+    return next_ms
+
+fn __min_timeout(a, b):
+    if a == -1:
+        return b
+    if b == -1:
+        return a
+    return a if a < b else b
+
 fn start(host, port):
     srv = listen(host, port, 128)
     nonblock(srv)
     print("mono listening on http://" + host + ":" + str(port))
-    pending = []   # clients whose request is still arriving
+    pending = __loop["pending"]
     while True:
-        timeout = __wake_sleepers()
-        fds = [srv] + pending + __loop["waiting"].keys()
+        # Run everything that is ready without I/O first; any of it can add
+        # sleepers or kept-alive connections (with pipelined requests
+        # already buffered), so compute the poll timeout only afterwards.
+        __wake_sleepers()
+        while __loop["reuse"].__len__() > 0:
+            __watch(__loop["reuse"].pop(0))
+        if __loop["reuse"].__len__() > 0 or __next_sleeper_ms() == 0:
+            continue
+        timeout = __min_timeout(__next_sleeper_ms(), __expire_idle())
+        fds = [srv] + pending.keys() + __loop["waiting"].keys()
         for fd in ready(fds, timeout):
             if fd == srv:
                 client = accept_nb(srv)
                 while client != Nil:
-                    if __read(client):
-                        pending.append(client)
+                    __watch(client)
                     client = accept_nb(srv)
             elif __loop["waiting"].has(fd):
                 task = __loop["waiting"][fd]
                 __loop["waiting"].delete(fd)
                 __step(task, Nil)
-            elif __read(fd) == False:
-                pending.remove(fd)
+            elif pending.has(fd):
+                if __read(fd):
+                    pending[fd] = monotonic()
+                else:
+                    pending.delete(fd)

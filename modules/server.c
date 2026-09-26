@@ -11,6 +11,9 @@
 //   server.read_request(client_fd)      -> request dict when complete, False
 //                                          if more data is needed, Nil if the
 //                                          client closed/misbehaved (fd closed)
+//   respond / respond_json return True when the connection was kept open
+//   (HTTP keep-alive, accept_nb connections only), False when it was closed.
+//   Request dicts carry "keep_alive".
 //   server.respond(client_fd, status, body)        -> nil
 //   server.respond_json(client_fd, status, json)   -> nil
 //   server.close(fd)                    -> nil
@@ -130,9 +133,35 @@ static void lower_inplace(char *s, size_t n)
 // Build the request dict from a complete request in `buf` (modified in
 // place): headers are buf[0..hdr_len), the body follows. NULL if the
 // request line or headers are malformed.
+// Whether the client wants the connection kept open after this request:
+// HTTP/1.1 unless it sends `Connection: close`; HTTP/1.0 only with
+// `Connection: keep-alive`. Must run before build_request edits `buf`.
+static bool wants_keep_alive(const char *buf, long hdr_len)
+{
+    const char *eol = memchr(buf, '\r', (size_t)hdr_len);
+    bool http11 = eol && eol - buf >= 8 && memcmp(eol - 8, "HTTP/1.1", 8) == 0;
+    const char *p = buf;
+    const char *end = buf + hdr_len;
+    while (p < end)
+    {
+        const char *line_end = memchr(p, '\n', (size_t)(end - p));
+        if (!line_end) break;
+        if ((size_t)(line_end - p) > 11 && strncasecmp(p, "connection:", 11) == 0)
+        {
+            const char *v = p + 11;
+            while (v < line_end && (*v == ' ' || *v == '\t')) v++;
+            if (strncasecmp(v, "close", 5) == 0) return false;
+            if (strncasecmp(v, "keep-alive", 10) == 0) return true;
+        }
+        p = line_end + 1;
+    }
+    return http11;
+}
+
 static MyMoObject *build_request(MVM *vm, int cfd, char *buf, long hdr_len,
                                  const char *body, long body_len)
 {
+    bool keep_alive = wants_keep_alive(buf, hdr_len);
     buf[hdr_len - 1] = '\0';
     // Request line: METHOD SP PATH SP HTTP/1.x CRLF
     char *space1 = strchr(buf, ' ');
@@ -171,6 +200,7 @@ static MyMoObject *build_request(MVM *vm, int cfd, char *buf, long hdr_len,
     setEntry(vm, req, AS_OBJECT(newString(vm, "path", 4)), mymo_str(vm, path));
     setEntry(vm, req, AS_OBJECT(newString(vm, "headers", 7)), AS_OBJECT(headers));
     setEntry(vm, req, AS_OBJECT(newString(vm, "body", 4)), mymo_strn(vm, body ? body : "", (int)body_len));
+    setEntryV(vm, req, AS_OBJECT(newString(vm, "keep_alive", 10)), V_BOOL_VAL(keep_alive));
     return AS_OBJECT(req);
 }
 
@@ -256,10 +286,17 @@ static Value srv_accept(MVM *vm, uint argc, MyMoObject *argv[])
 // partial requests per fd until one is complete. mono's event loop uses
 // these to serve many slow clients at once.
 
+// Keep-alive: only connections accepted with accept_nb are kept open (the
+// event loop re-polls them); blocking accept() loops always close.
+#define MAX_REQUESTS_PER_CONN 100
+
 typedef struct
 {
     char *buf;
     size_t len, cap;
+    bool nonblocking; // accepted via accept_nb
+    bool keep_alive;  // the current request asked to keep the connection
+    int served;       // requests answered on this connection
 } ConnBuf;
 
 static ConnBuf *g_conns = NULL;
@@ -307,6 +344,7 @@ static Value srv_accept_nb(MVM *vm, uint argc, MyMoObject *argv[])
     int flags = fcntl(cfd, F_GETFL, 0);
     fcntl(cfd, F_SETFL, (flags < 0 ? 0 : flags) | O_NONBLOCK);
     conn_drop(cfd); // a recycled fd number must start with an empty buffer
+    conn_get(cfd)->nonblocking = true;
     return objectToValue(mymo_int(vm, cfd));
 #endif
 }
@@ -338,12 +376,19 @@ static Value srv_read_request(MVM *vm, uint argc, MyMoObject *argv[])
     if (clen < 0 || clen > MAX_BODY_BYTES) { hdr = -1; eof = true; }
     if (hdr >= 0 && c->len >= (size_t)(hdr + clen))
     {
+        c->keep_alive = wants_keep_alive(c->buf, hdr) && c->served + 1 < MAX_REQUESTS_PER_CONN;
         MyMoObject *req = build_request(vm, (int)fd, c->buf, hdr, c->buf + hdr, clen);
-        conn_drop((int)fd);
-        if (req)
-            return objectToValue(req);
-        close_fd((int)fd);
-        return MYMO_NIL;
+        if (!req)
+        {
+            conn_drop((int)fd);
+            close_fd((int)fd);
+            return MYMO_NIL;
+        }
+        // Keep any bytes after this request (a pipelined next request).
+        size_t used = (size_t)(hdr + clen);
+        memmove(c->buf, c->buf + used, c->len - used);
+        c->len -= used;
+        return objectToValue(req);
     }
     if (eof)
     {
@@ -403,25 +448,37 @@ static Value do_respond(MVM *vm, const char *fn,
                         const char *body, int blen,
                         const char *content_type)
 {
+    ConnBuf *c = (cfd >= 0 && cfd < g_conns_cap) ? &g_conns[cfd] : NULL;
+    bool keep = c && c->nonblocking && c->keep_alive;
     char head[512];
     int n = snprintf(head, sizeof(head),
                      "HTTP/1.1 %ld %s\r\n"
                      "Content-Type: %s\r\n"
                      "Content-Length: %d\r\n"
-                     "Connection: close\r\n"
+                     "Connection: %s\r\n"
                      "\r\n",
-                     status, reason_phrase(status), content_type, blen);
+                     status, reason_phrase(status), content_type, blen,
+                     keep ? "keep-alive" : "close");
     int failed = send_all((int)cfd, head, (size_t)n) < 0 ||
                  send_all((int)cfd, body, (size_t)blen) < 0;
     int err = errno;
-    conn_drop((int)cfd);
-    close_fd((int)cfd);
+    if (failed || !keep)
+    {
+        conn_drop((int)cfd);
+        close_fd((int)cfd);
+    }
+    else
+    {
+        c->served++;
+        c->keep_alive = false; // decided afresh for the next request
+    }
     if (failed)
     {
         runtimeError(vm, "%s(): write failed: %s", fn, strerror(err));
         return MYMO_ERROR;
     }
-    return MYMO_NIL;
+    // True: the connection stays open for another request (keep-alive).
+    return MYMO_BOOL(keep);
 }
 
 static Value srv_respond(MVM *vm, uint argc, MyMoObject *argv[])
