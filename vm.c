@@ -46,6 +46,7 @@ MVM *initVM()
     initDict(&vm->tupleKeys);
     vm->kwargs = NULL;
     vm->quietErrors = 0;
+    vm->argsPacked = false;
     initDict(&vm->modules);
     initDict(&vm->builtInModules);
     defineBuiltInClasses(vm);
@@ -271,7 +272,7 @@ static bool lookupEnclosing(MVM *vm, CallFrame *parent, MyMoObject *name, Value 
         if (getEntryV(&parent->locals, name, out))
             return true;
         MyMoFunction *fn = parent->function;
-        if (fn->isargs || fn->argc > CALLFRAME_ARGS_INLINE)
+        if (fn->argc > CALLFRAME_ARGS_INLINE)
             continue;
         for (int i = 0; i < fn->argc; i++)
         {
@@ -295,8 +296,69 @@ static Value intResult(MVM *vm, long n)
     return V_OBJ_VAL(NEW_INT(vm, n));
 }
 
+// Arrange the arguments of a call to a function with *rest / **kw
+// parameters: the stack ends with its argc positional arguments (self
+// included for methods); `extra` holds keyword arguments no named
+// parameter took (or NULL). Fills defaults, packs surplus positionals
+// into a tuple for *rest and extra keywords into a dict for **kw, leaving
+// exactly fn->argc arguments.
+static bool packVarargs(MVM *vm, MyMoFunction *fn, int argc, MyMoDict *extra)
+{
+    int fixed = FIXED_PARAMS(fn);
+    const char *name = fn->name ? fn->name->value : "function";
+    MyMoTuple *rest = NULL;
+    if (argc > fixed)
+    {
+        if (!(fn->isargs & VARARGS_REST))
+        {
+            runtimeError(vm, "TypeError: %s() takes %d positional argument%s but %d were given", name, fixed,
+                         fixed == 1 ? "" : "s", argc);
+            return false;
+        }
+        Value *base = vm->fiber->stack.values + vm->fiber->stack.count - (argc - fixed);
+        rest = newTuple(vm);
+        for (int i = 0; i < argc - fixed; i++)
+            writeValueArray(vm, &rest->values, base[i]);
+        vm->fiber->stack.count -= argc - fixed;
+    }
+    else if (argc < fixed)
+    {
+        int firstDefault = fixed - fn->defaultCount;
+        if (argc < firstDefault)
+        {
+            runtimeError(vm, "TypeError: %s() missing required argument '%s'", name, fn->argv[argc]->value);
+            return false;
+        }
+        for (int i = argc; i < fixed; i++)
+            pushV(vm, fn->defaults[i - firstDefault]);
+    }
+    if (fn->isargs & VARARGS_REST)
+        pushV(vm, V_OBJ_VAL(AS_OBJECT(rest ? rest : newTuple(vm))));
+    if (fn->isargs & VARARGS_KW)
+    {
+        MyMoDict *kw = newDict(vm);
+        if (extra)
+            copyDict(vm, extra, kw);
+        pushV(vm, V_OBJ_VAL(AS_OBJECT(kw)));
+    }
+    else if (extra && extra->count > 0)
+    {
+        runtimeError(vm, "TypeError: %s() got an unexpected keyword argument '%s'", name,
+                     AS_STRING(extra->entries[extra->head].key)->value);
+        return false;
+    }
+    return true;
+}
+
 bool callFunction(MVM *vm, MyMoFunction *function, int argc, bool calleeSlot)
 {
+    if (function->isargs)
+    {
+        if (!vm->argsPacked && !packVarargs(vm, function, argc, NULL))
+            return false;
+        vm->argsPacked = false;
+        argc = function->argc;
+    }
     int fill = missingDefaults(function, argc);
     if (fill < 0)
     {
@@ -351,7 +413,7 @@ bool callFunction(MVM *vm, MyMoFunction *function, int argc, bool calleeSlot)
         frame->calleeSlot = calleeSlot;
         frame->ip = function->chunk->code;
         vm->fiber->callFrames[++vm->fiber->frameCount] = frame;
-        if (argc && !function->isargs)
+        if (argc)
         {
             // Fast path: small-arg-count functions (≤ CALLFRAME_ARGS_INLINE)
             // store args directly into frame->args[] for slot-indexed access
@@ -571,12 +633,17 @@ static bool bindKeywords(MVM *vm, Value calleeV, u32 *argc, int kwc, MyMoString 
         return false;
     }
     const char *fname = fn->name ? fn->name->value : "function";
-    if (fn->isargs)
+    int nparams = FIXED_PARAMS(fn) - offset; // named parameters we fill here
+    MyMoTuple *rest = NULL;
+    MyMoDict *extra = NULL;
+    if (positional > nparams && (fn->isargs & VARARGS_REST))
     {
-        runtimeError(vm, "TypeError: %s() doesn't take keyword arguments", fname);
-        return false;
+        rest = newTuple(vm);
+        for (int i = nparams; i < positional; i++)
+            writeValueArray(vm, &rest->values, base[i]);
+        pushV(vm, V_OBJ_VAL(AS_OBJECT(rest))); // rooted while we allocate
+        positional = nparams;
     }
-    int nparams = fn->argc - offset;
     if (positional > nparams)
     {
         runtimeError(vm, "TypeError: %s() takes %d positional argument%s but %d were given", fname, nparams,
@@ -589,10 +656,20 @@ static bool bindKeywords(MVM *vm, Value calleeV, u32 *argc, int kwc, MyMoString 
     for (int k = 0; k < kwc; k++)
     {
         int p = -1;
-        for (int i = offset; i < fn->argc && p < 0; i++)
+        for (int i = offset; i < nparams + offset && p < 0; i++)
             if (fn->argv[i] && fn->argv[i]->length == names[k]->length &&
                 memcmp(fn->argv[i]->value, names[k]->value, (size_t)names[k]->length) == 0)
                 p = i - offset;
+        if (p < 0 && (fn->isargs & VARARGS_KW))
+        {
+            if (!extra)
+            {
+                extra = newDict(vm);
+                pushV(vm, V_OBJ_VAL(AS_OBJECT(extra))); // rooted while we allocate
+            }
+            setEntryV(vm, extra, AS_OBJECT(names[k]), base[positional + (int)(rest ? rest->values.count : 0) + k]);
+            continue;
+        }
         if (p < 0)
         {
             runtimeError(vm, "TypeError: %s() got an unexpected keyword argument '%s'", fname, names[k]->value);
@@ -603,9 +680,9 @@ static bool bindKeywords(MVM *vm, Value calleeV, u32 *argc, int kwc, MyMoString 
             runtimeError(vm, "TypeError: %s() got multiple values for argument '%s'", fname, names[k]->value);
             return false;
         }
-        slots[p] = base[positional + k];
+        slots[p] = base[positional + (int)(rest ? rest->values.count : 0) + k];
     }
-    int firstDefault = fn->argc - fn->defaultCount;
+    int firstDefault = FIXED_PARAMS(fn) - fn->defaultCount;
     for (int i = 0; i < nparams; i++)
     {
         if (!V_IS_EMPTY(slots[i]))
@@ -619,8 +696,14 @@ static bool bindKeywords(MVM *vm, Value calleeV, u32 *argc, int kwc, MyMoString 
         slots[i] = fn->defaults[param - firstDefault];
     }
     memcpy(base, slots, sizeof(Value) * (size_t)nparams);
-    vm->fiber->stack.count = (int)(base - vm->fiber->stack.values) + nparams;
-    *argc = (u32)nparams;
+    int count = nparams;
+    if (fn->isargs & VARARGS_REST)
+        base[count++] = V_OBJ_VAL(AS_OBJECT(rest ? rest : newTuple(vm)));
+    if (fn->isargs & VARARGS_KW)
+        base[count++] = V_OBJ_VAL(AS_OBJECT(extra ? extra : newDict(vm)));
+    vm->fiber->stack.count = (int)(base - vm->fiber->stack.values) + count;
+    *argc = (u32)count;
+    vm->argsPacked = fn->isargs != 0;
     return true;
 }
 
@@ -659,6 +742,32 @@ static bool exceptionMatches(MVM *vm, Value exc, Value types, bool *out)
     }
     *out = isInstanceOf(vm, exc, types);
     return true;
+}
+
+static bool bindKeywords(MVM *vm, Value calleeV, u32 *argc, int kwc, MyMoString **names, MyMoDict **kwargs);
+
+// Call with keyword arguments; the stack is [callee, args...] with the
+// last kwc arguments named by `names`. The dispatch loop SAVEs before
+// and LOADs after, like caller().
+static bool callWithKeywords(MVM *vm, Value calleeV, u32 argc, int kwc, MyMoString **names)
+{
+    MyMoDict *kwargs;
+    if (!bindKeywords(vm, calleeV, &argc, kwc, names, &kwargs))
+        return false;
+    MyMoDict *outer = vm->kwargs;
+    vm->kwargs = kwargs;
+    bool ok = caller(vm, V_AS_OBJ(calleeV), argc);
+    if (ok && kwargs && kwargs->count > 0)
+    {
+        MyMoObject *c = V_AS_OBJ(calleeV);
+        const char *fname = c->type == OBJ_BUILTIN_CLASS ? AS_BUILTIN_CLASS(c)->name->value
+                                                         : AS_BUILTIN_FUNCTION(c)->name->value;
+        runtimeError(vm, "TypeError: %s() got an unexpected keyword argument '%s'", fname,
+                     AS_STRING(kwargs->entries[kwargs->head].key)->value);
+        ok = false;
+    }
+    vm->kwargs = outer;
+    return ok;
 }
 
 // Python-style operator method names and the operator each one defines.
@@ -2421,7 +2530,7 @@ int runMVM(MVM *vm)
         if (V_IS_OBJ(calleeV))
         {
             MyMoObject *cobj = V_AS_OBJ(calleeV);
-            if (cobj->type == OBJ_FUNCTION)
+            if (cobj->type == OBJ_FUNCTION && !AS_FUNCTION(cobj)->isargs)
             {
                 MyMoFunction *function = AS_FUNCTION(cobj);
                 {
@@ -2481,7 +2590,7 @@ int runMVM(MVM *vm)
                 vm->fiber->callFrames[++vm->fiber->frameCount] = newFrame;
                 // Pop args from operand stack (using local sp register)
                 // directly into the new frame's slot array. No dict.
-                if (argCount && !function->isargs)
+                if (argCount)
                 {
                     if ((int)argCount <= CALLFRAME_ARGS_INLINE)
                     {
@@ -2579,22 +2688,97 @@ int runMVM(MVM *vm)
             names[i] = AS_STRING(V_AS_OBJ(frame->function->chunk->constants.values[ReadShort()]));
         Value calleeV = lpeek((int)argc);
         SAVE();
-        MyMoDict *kwargs;
-        if (!bindKeywords(vm, calleeV, &argc, kwc, names, &kwargs))
+        if (!callWithKeywords(vm, calleeV, argc, kwc, names))
             goto _runtime_error;
-        MyMoDict *outer = vm->kwargs;
-        vm->kwargs = kwargs;
-        bool ok = caller(vm, V_AS_OBJ(calleeV), argc);
-        if (ok && kwargs && kwargs->count > 0)
+        LOAD();
+        DISPATCH();
+    }
+    OP_LEXTEND:
+    {
+        // [list, iterable] -> [list]   (f(*xs) arguments)
+        Value items = lpeek(0);
+        MyMoList *list = AS_LIST(V_AS_OBJ(lpeek(1)));
+        SAVE();
+        if (!appendIterable(vm, "*", items, &list->values))
+            goto _runtime_error;
+        sp--;
+        DISPATCH();
+    }
+    OP_DADD:
+    {
+        // [dict, key, value] -> [dict]   (f(name=v) with a splat call)
+        Value value = lpeek(0);
+        MyMoObject *key = V_AS_OBJ(lpeek(1));
+        MyMoDict *dict = AS_DICT(V_AS_OBJ(lpeek(2)));
+        Value unused;
+        if (getEntryV(dict, key, &unused))
         {
-            MyMoObject *c = V_AS_OBJ(calleeV);
-            const char *fname = c->type == OBJ_BUILTIN_CLASS ? AS_BUILTIN_CLASS(c)->name->value
-                                                             : AS_BUILTIN_FUNCTION(c)->name->value;
-            runtimeError(vm, "TypeError: %s() got an unexpected keyword argument '%s'", fname,
-                         AS_STRING(kwargs->entries[kwargs->head].key)->value);
-            ok = false;
+            SAVE();
+            runtimeError(vm, "TypeError: got multiple values for keyword argument '%s'", AS_STRING(key)->value);
+            goto _runtime_error;
         }
-        vm->kwargs = outer;
+        setEntryV(vm, dict, key, value);
+        sp -= 2;
+        DISPATCH();
+    }
+    OP_DMERGE:
+    {
+        // [dict, mapping] -> [dict]   (f(**d) arguments; keys must be strings)
+        Value mapping = lpeek(0);
+        MyMoDict *dict = AS_DICT(V_AS_OBJ(lpeek(1)));
+        SAVE();
+        if (!V_IS_OBJ_TYPE(mapping, OBJ_DICT))
+        {
+            runtimeError(vm, "TypeError: argument after ** must be a dict, not %s", valueTypeName(mapping));
+            goto _runtime_error;
+        }
+        Entry *e;
+        DICT_FOREACH(AS_DICT(V_AS_OBJ(mapping)), e)
+        {
+            Value unused;
+            if (e->key->type != OBJ_STRING)
+            {
+                runtimeError(vm, "TypeError: keywords must be strings, not %s", getType(e->key));
+                goto _runtime_error;
+            }
+            if (getEntryV(dict, e->key, &unused))
+            {
+                runtimeError(vm, "TypeError: got multiple values for keyword argument '%s'", AS_STRING(e->key)->value);
+                goto _runtime_error;
+            }
+            setEntryV(vm, dict, e->key, e->value);
+        }
+        sp--;
+        DISPATCH();
+    }
+    OP_CALLEX:
+    {
+        // [callee, positional list, keyword dict] -> [result]
+        GC_SAFEPOINT();
+        MyMoDict *keywords = AS_DICT(V_AS_OBJ(lpeek(0)));
+        MyMoList *positional = AS_LIST(V_AS_OBJ(lpeek(1)));
+        int n = positional->values.count, kwc = keywords->count;
+        if (n + kwc > 255)
+        {
+            SAVE();
+            runtimeError(vm, "TypeError: too many arguments (%d; at most 255)", n + kwc);
+            goto _runtime_error;
+        }
+        sp -= 2; // the list and dict stay alive: no collection until the call
+        Value calleeV = lpeek(0);
+        for (int i = 0; i < n; i++)
+            lpush(positional->values.values[i]);
+        MyMoString *names[255];
+        int k = 0;
+        Entry *e;
+        DICT_FOREACH(keywords, e)
+        {
+            names[k++] = AS_STRING(e->key);
+            lpush(e->value);
+        }
+        SAVE();
+        bool ok = kwc ? callWithKeywords(vm, calleeV, (u32)(n + kwc), kwc, names)
+                      : caller(vm, V_AS_OBJ(calleeV), (u32)n);
         if (!ok)
             goto _runtime_error;
         LOAD();
@@ -3354,7 +3538,7 @@ int runMVM(MVM *vm)
         // Pop args directly into newFrame->args[], then push calleeV so
         // OP_FRET's "pop callee" balances. Same end state as the
         // OP_GETV+OP_CALL path but skips the memmove + caller() chain.
-        if (cobj->type == OBJ_FUNCTION)
+        if (cobj->type == OBJ_FUNCTION && !AS_FUNCTION(cobj)->isargs)
         {
             MyMoFunction *function = AS_FUNCTION(cobj);
             {
@@ -3410,7 +3594,7 @@ int runMVM(MVM *vm)
             newFrame->calleeSlot = true;
             newFrame->ip = function->chunk->code;
             vm->fiber->callFrames[++vm->fiber->frameCount] = newFrame;
-            if (argCount && !function->isargs)
+            if (argCount)
             {
                 if ((int)argCount <= CALLFRAME_ARGS_INLINE)
                 {

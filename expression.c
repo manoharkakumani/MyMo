@@ -857,6 +857,103 @@ static bool atKeywordArgument(Compiler *compiler)
     return getToken(&probe).type == EQUAL;
 }
 
+// Does the argument list starting at `current` contain `*expr` or
+// `**expr` at its top level? Scans a copy of the lexer.
+static bool hasSplatArguments(Compiler *compiler)
+{
+    Lexer probe = *compiler->parser->lexer;
+    Token token = compiler->parser->current;
+    int depth = 0;
+    bool argStart = true;
+    for (;; token = getToken(&probe))
+    {
+        switch (token.type)
+        {
+        case END:
+            return false;
+        case LPAR:
+        case LSQB:
+        case LBRACE:
+            depth++;
+            argStart = false;
+            continue;
+        case RPAR:
+        case RSQB:
+        case RBRACE:
+            if (depth-- == 0)
+                return false;
+            argStart = false;
+            continue;
+        case COMMA:
+            argStart = depth == 0;
+            continue;
+        case NEWLINE:
+            continue;
+        case STAR:
+        case DSTAR:
+            if (depth == 0 && argStart)
+                return true;
+            break;
+        default:
+            break;
+        }
+        argStart = false;
+    }
+}
+
+// f(a, *xs, k=v, **d): builds the positional list and keyword dict that
+// OP_CALLEX spreads into the call. Positional arguments come first.
+static void splatArgumentList(Compiler *compiler)
+{
+    emitBytes(compiler, OP_LIST, 0);
+    bool keywords = false;
+    if (!checkToken(compiler, RPAR))
+    {
+        do
+        {
+            skipNewLines(compiler);
+            if (checkToken(compiler, RPAR))
+                break;
+            bool isKeyword = atKeywordArgument(compiler) || checkToken(compiler, DSTAR);
+            if (isKeyword && !keywords)
+            {
+                emitBytes(compiler, OP_DICT, 0);
+                keywords = true;
+            }
+            else if (!isKeyword && keywords)
+                errorAtCurrent(compiler, "Positional argument after keyword argument.");
+            if (matchToken(compiler, STAR))
+            {
+                expression(compiler);
+                emitByte(compiler, OP_LEXTEND);
+            }
+            else if (matchToken(compiler, DSTAR))
+            {
+                expression(compiler);
+                emitByte(compiler, OP_DMERGE);
+            }
+            else if (isKeyword)
+            {
+                advanceToken(compiler);
+                Token name = compiler->parser->previous;
+                advanceToken(compiler); // `=`
+                emitConstant(compiler, AS_OBJECT(newString(compiler->parser->vm, name.token, name.length)));
+                expression(compiler);
+                emitByte(compiler, OP_DADD);
+            }
+            else
+            {
+                expression(compiler);
+                emitByte(compiler, OP_LAPPEND);
+            }
+            skipNewLines(compiler);
+        } while (matchToken(compiler, COMMA));
+    }
+    if (!keywords)
+        emitBytes(compiler, OP_DICT, 0);
+    consumeToken(compiler, RPAR, "Expect ')' after arguments.");
+}
+
 // Does the argument list starting at `current` contain a keyword
 // argument at its top level? Scans a copy of the lexer; consumes nothing.
 static bool hasKeywordArguments(Compiler *compiler)
@@ -955,6 +1052,16 @@ void call(Compiler *compiler, bool canAssign)
     // OP_INVOKE_GLOBAL after the args. Saves a dispatch (1 op vs 2) and
     // ~3 bytes of bytecode for every `print(x)` / `len(s)` style call.
     int markBeforeArgs = ch->count;
+    if (hasSplatArguments(compiler))
+    {
+        if (compiler->flags.pithru)
+            error(compiler, "Argument unpacking (*xs, **d) can't be used with |>.");
+        compiler->flags.argv++;
+        splatArgumentList(compiler);
+        compiler->flags.argv--;
+        emitByte(compiler, OP_CALLEX);
+        return;
+    }
     bool keywords = hasKeywordArguments(compiler);
     // Not when the OP_GETV carries an OP_WIDE prefix: the fused
     // instruction lands after the arguments, away from its prefix.

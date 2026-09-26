@@ -66,6 +66,14 @@ int disassembleInstruction(Chunk *chunk, int offset)
         return simpleInstruction("OP_SUBSCRK", offset);
     case OP_DELSUBSCR:
         return simpleInstruction("OP_DELSUBSCR", offset);
+    case OP_LEXTEND:
+        return simpleInstruction("OP_LEXTEND", offset);
+    case OP_DADD:
+        return simpleInstruction("OP_DADD", offset);
+    case OP_DMERGE:
+        return simpleInstruction("OP_DMERGE", offset);
+    case OP_CALLEX:
+        return simpleInstruction("OP_CALLEX", offset);
     case OP_EXCMATCH:
         return simpleInstruction("OP_EXCMATCH", offset);
     case OP_RERAISE:

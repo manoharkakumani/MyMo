@@ -87,8 +87,8 @@ static void markFrame(MVM *vm, CallFrame *frame)
     MyMoFunction *function = frame->function;
     markObject(vm, AS_OBJECT(function));
     markDictContents(vm, &frame->locals);
-    // Parameters live in args[] for small, non-variadic functions.
-    if (function && !function->isargs && function->argc <= CALLFRAME_ARGS_INLINE)
+    // Parameters live in args[] for functions with few of them.
+    if (function && function->argc <= CALLFRAME_ARGS_INLINE)
         for (int i = 0; i < function->argc; i++)
             markValue(vm, frame->args[i]);
 }

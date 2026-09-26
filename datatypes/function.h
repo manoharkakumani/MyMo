@@ -38,6 +38,11 @@ typedef enum
   FN_SCRIPT
 } FunctionType;
 
+#define VARARGS_REST 1
+#define VARARGS_KW 2
+// Parameters before *rest / **kw.
+#define FIXED_PARAMS(fn) ((fn)->argc - (((fn)->isargs & VARARGS_REST) != 0) - (((fn)->isargs & VARARGS_KW) != 0))
+
 typedef struct MyMoFunction
 {
   MyMoObject object;
@@ -47,7 +52,10 @@ typedef struct MyMoFunction
   MyMoString **argv; // 256 parameter-name slots, owned by the prototype
   MyMoDict *assiginedParameters;
   MyMoDict *variables;
-  bool isargs;
+  // VARARGS_* flags: the function ends with a `*rest` parameter (a tuple
+  // of the extra positional arguments) and/or a `**kw` parameter (a dict
+  // of the extra keyword arguments), in that order.
+  u8 isargs;
   Chunk *chunk;
   // Defining frame, walked for free-variable lookup (see OP_FN).
   struct CallFrame *frame;

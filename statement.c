@@ -1151,6 +1151,26 @@ static void functionStatementDecorated(Compiler *compiler, const u8 *decoratorAr
                     {
                         errorAtCurrent(fncompiler, "cannot have more than 255 parameters.");
                     }
+                    if (fncompiler->function->isargs & VARARGS_KW)
+                        errorAtCurrent(fncompiler, "no parameter can follow a **keywords parameter.");
+                    // *rest collects extra positional arguments into a
+                    // tuple, **kw extra keyword arguments into a dict.
+                    if (matchToken(fncompiler, STAR))
+                    {
+                        if (fncompiler->function->isargs)
+                            errorAtCurrent(fncompiler, "only one *rest parameter, before any **keywords one.");
+                        fnParameters(fncompiler);
+                        fncompiler->function->isargs |= VARARGS_REST;
+                        continue;
+                    }
+                    if (matchToken(fncompiler, DSTAR))
+                    {
+                        fnParameters(fncompiler);
+                        fncompiler->function->isargs |= VARARGS_KW;
+                        continue;
+                    }
+                    if (fncompiler->function->isargs)
+                        errorAtCurrent(fncompiler, "a named parameter can't follow *rest (use it before).");
                     fnParameters(fncompiler);
                     // `name = expr`: the default is compiled into the
                     // ENCLOSING function, so it is evaluated when this `fn`

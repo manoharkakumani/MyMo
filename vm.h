@@ -29,6 +29,9 @@ struct vm
     // > 0 while the VM calls code whose errors it inspects itself (an
     // iterator's __next__): runtimeError records them without printing.
     int quietErrors;
+    // Set by bindKeywords when it already arranged a *rest/**kw function's
+    // arguments, so callFunction doesn't pack them again.
+    bool argsPacked;
     MyMoDict builtInModules;
     MyMoObject *objects;
     u32 classCall;

@@ -182,7 +182,10 @@ bool appendIterable(MVM *vm, const char *fn, Value v, ValueArray *out)
             break;
         }
     }
-    runtimeError(vm, "TypeError: %s() expects an iterable, got %s", fn, valueTypeName(v));
+    if (fn[0] == '*')
+        runtimeError(vm, "TypeError: argument after * must be an iterable, not %s", valueTypeName(v));
+    else
+        runtimeError(vm, "TypeError: %s() expects an iterable, got %s", fn, valueTypeName(v));
     return false;
 }
 

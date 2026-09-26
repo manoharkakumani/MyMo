@@ -105,9 +105,14 @@ typedef enum
     //   OP_EXCMATCH              [exc, types] -> [bool] (catch Types)
     OP_EXCMATCH,
     //   OP_RERAISE               [pending] -> [] (end of final:; raises unless Nil)
-    OP_RERAISE
+    OP_RERAISE,
+    //   f(*xs, **d) calls: build [callee, list, dict], then OP_CALLEX
+    OP_LEXTEND, //                [list, iterable] -> [list]
+    OP_DADD,    //                [dict, name, value] -> [dict]
+    OP_DMERGE,  //                [dict, mapping] -> [dict]
+    OP_CALLEX   //                [callee, list, dict] -> [result]
 } OpCode;
 
 // Number of opcodes (keep in sync with the last enum entry).
-#define OP_COUNT (OP_RERAISE + 1)
+#define OP_COUNT (OP_CALLEX + 1)
 #endif

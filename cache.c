@@ -75,7 +75,7 @@ static bool ensureCacheDir(const char *cachePath)
     return ok;
 }
 
-#define MYMO_CACHE_VERSION 5 // 3: OP_WIDE; 4: OP_DEFAULTS; 5: OP_METV
+#define MYMO_CACHE_VERSION 6 // 3: OP_WIDE; 4: OP_DEFAULTS; 5: OP_METV; 6: varargs flags
 
 // Stamped by the Makefile, which rebuilds cache.o whenever any other object
 // changes; so any compiler/VM change invalidates existing caches.

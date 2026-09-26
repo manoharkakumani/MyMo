@@ -126,7 +126,7 @@ Value runFiberMethod(MVM *vm, uint argc, Value args[])
     {
         frame->ip = fiberFunction->chunk->code;
     }
-    if (argc && !fiberFunction->isargs)
+    if (argc)
     {
         // Same convention as callFunction: small arities live in the
         // args[] slots the compiled body reads via OP_GETARG.
