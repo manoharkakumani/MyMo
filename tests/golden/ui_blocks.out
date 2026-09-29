@@ -1,0 +1,27 @@
+╭─ Shop ─────────────────────────────────────────╮
+│ Hello Ada, count is 0                          │
+│                                                │
+│ [ - ]  [ + ]                                   │
+│                                                │
+│ Name                                           │
+│   Ada                                          │
+│ ────────────────────────────────────────────── │
+│ ☐ I agree                                      │
+│                                                │
+│ apples                              [ remove ] │
+│                                                │
+│ pears                               [ remove ] │
+│                                                │
+│ plums                               [ remove ] │
+│                                                │
+│ • one                                          │
+│ • two                                          │
+│ nested calls still work:                       │
+│                                                │
+│ ‹new›  ‹sale›                                  │
+╰────────────────────────────────────────────────╯
+handlers: 6
+count: 1
+items: ["apples", "plums"]
+["submitted Grace"] Grace True
+│ Hello Grace, count is 1                        │

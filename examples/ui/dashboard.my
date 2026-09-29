@@ -1,0 +1,133 @@
+# A multi-page dashboard: sidebar navigation, stats, a table, tasks,
+# settings and a dialog.
+#
+#   mymo examples/ui/dashboard.my            (browser)
+#   mymo examples/ui/dashboard.my --desktop  (own window)
+#   mymo examples/ui/dashboard.my --phone    (on your phone)
+#   mymo examples/ui/dashboard.my --term     (in the terminal)
+
+from "ui" use *
+
+tasks = [
+    {"title": "Ship the v1 release", "done": True, "tag": "Launch"},
+    {"title": "Write the onboarding guide", "done": False, "tag": "Docs"},
+    {"title": "Review pricing page", "done": False, "tag": "Growth"},
+]
+customers = [
+    {"name": "Ada Lovelace", "plan": "Enterprise", "mrr": "$4,200", "status": "Active"},
+    {"name": "Alan Turing", "plan": "Pro", "mrr": "$890", "status": "Active"},
+    {"name": "Grace Hopper", "plan": "Pro", "mrr": "$640", "status": "Trial"},
+    {"name": "Linus Torvalds", "plan": "Starter", "mrr": "$120", "status": "Churned"},
+]
+period = state("Week")
+query = state("")
+new_task = state("")
+notify = state(True)
+digest = state(False)
+seats = state(12)
+region = state("Europe")
+inviting = state(False)
+email = state("")
+
+fn menu():
+    sidebar "Northwind":
+        nav "Overview", "/", icon="home"
+        nav "Customers", "/customers", icon="users"
+        nav "Tasks", "/tasks", icon="check-circle"
+        nav "Settings", "/settings", icon="settings"
+
+fn send_invite():
+    if "@" not in email.value:
+        toast "Enter a valid email address" error
+        return
+    toast "Invite sent to {email}" success
+    email.clear()
+    inviting.set(False)
+
+fn add_task():
+    if new_task.value.strip() != "":
+        tasks.append({"title": new_task.value.strip(), "done": False, "tag": "Inbox"})
+        new_task.clear()
+        toast "Task added" success
+
+page "/":
+    shell:
+        menu()
+        row:
+            col gap=1:
+                h1 "Overview"
+                text "Here's what's happening this {period.value.lower()}." muted
+            spacer()
+            tabs ["Day", "Week", "Month"], period
+        grid min=200:
+            stat "Revenue", "$48,290", delta="+12.5%", icon="dollar", hint="vs last {period.value.lower()}"
+            stat "Active users", "2,847", delta="+4.1%", icon="users"
+            stat "Conversion", "3.24%", delta="-0.4%", icon="trend-up"
+            stat "Open tasks", len([t for t in tasks if not t["done"]]), icon="check-circle"
+        grid min=320:
+            card "Goals", subtitle="Progress toward this quarter's targets":
+                progress 72, label="Quarterly goal"
+                progress 48, label="Storage", color="amber"
+                progress 91, label="Uptime SLA", color="green"
+            card "Team", subtitle="12 members across 3 regions":
+                alert "Your trial workspace converts to Pro in 3 days.", title="Heads up"
+                row:
+                    button "Invite teammate" primary icon="plus": inviting.set(True)
+                    button "Export" icon="download": toast "Export started" success
+        modal inviting, "Invite a teammate":
+            text "They'll get an email with a link to join Northwind." muted
+            input email, label="Email", placeholder="name@company.com", icon="mail": send_invite()
+            row:
+                spacer()
+                button "Cancel" ghost: inviting.set(False)
+                button "Send invite" primary: send_invite()
+
+page "/customers":
+    shell:
+        menu()
+        h1 "Customers"
+        input query, placeholder="Search customers", icon="search", live=True
+        rows = [c for c in customers if query.value.lower() in c["name"].lower()]
+        if len(rows) == 0:
+            empty "No customers found", "Try a different search.", icon="search"
+        else:
+            table each(rows, c => {
+                "name": row(avatar(c["name"], size=32), text(c["name"], bold=True), gap=3),
+                "plan": c["plan"], "mrr": c["mrr"],
+                "status": badge(c["status"], color="green" if c["status"] == "Active" else "amber" if c["status"] == "Trial" else "gray"),
+            })
+
+page "/tasks":
+    shell:
+        menu()
+        h1 "Tasks"
+        card:
+            row:
+                input new_task, placeholder="Add a task and press Enter": add_task()
+                button "Add" primary icon="plus": add_task()
+            divider()
+            for t in tasks:
+                row:
+                    checkbox t["title"], t["done"]: t["done"] = not t["done"]
+                    spacer()
+                    badge t["tag"], color="violet"
+                    button icon="trash" ghost small: tasks.remove(t)
+            if len(tasks) == 0:
+                empty "All clear", "Add a task to get started."
+
+page "/settings":
+    shell:
+        menu()
+        h1 "Settings"
+        card "Notifications":
+            switch "Email notifications", notify
+            switch "Weekly digest", digest
+        card "Workspace":
+            select ["Europe", "North America", "Asia Pacific"], region, label="Data region"
+            slider seats, min=1, max=50, label="Seats"
+            kv {"plan": "Pro", "seats": seats.value, "region": region.value, "notifications": "On" if notify.value else "Off"}
+            row:
+                spacer()
+                button "Save changes" primary: toast "Settings saved" success
+
+run "Northwind", accent="#6d5dfc"

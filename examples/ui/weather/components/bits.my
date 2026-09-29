@@ -1,0 +1,21 @@
+# Small pieces the pages share.
+
+from "ui" use *
+from "api/weather" use describe
+use "store"
+
+# 21.4 -> "21°"
+fn deg(v):
+    return str(round(v)) + "°"
+
+fn weather_icon(code, is_day=1, size=24):
+    label, name = describe(code, is_day)
+    icon name, size=size, color="accent"
+
+# One column of the "next hours" strip.
+fn hour_tile(h):
+    col gap=1 align="center" cls="hour":
+        small h["time"]
+        weather_icon h["code"], h["is_day"], size=22
+        text deg(h["temp"]), bold=True
+        small "{h['rain']}%" if h["rain"] > 0 else " "

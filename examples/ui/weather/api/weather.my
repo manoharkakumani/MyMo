@@ -1,0 +1,101 @@
+# Open-Meteo (https://open-meteo.com): free weather data, no API key.
+# Everything here returns plain data, or (Nil, error message).
+
+from "http" use get
+
+GEO = "https://geocoding-api.open-meteo.com/v1/search"
+FORECAST = "https://api.open-meteo.com/v1/forecast"
+DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+# WMO weather code -> (description, icon name)
+fn describe(code, is_day=1):
+    if code == 0:
+        return ("Clear", "sun" if is_day else "moon")
+    if code == 1:
+        return ("Mostly clear", "cloud-sun" if is_day else "moon")
+    if code == 2:
+        return ("Partly cloudy", "cloud-sun" if is_day else "cloud")
+    if code == 3:
+        return ("Overcast", "cloud")
+    if code == 45 or code == 48:
+        return ("Fog", "fog")
+    if code >= 51 and code <= 57:
+        return ("Drizzle", "cloud-rain")
+    if code >= 61 and code <= 67:
+        return ("Rain", "cloud-rain")
+    if code >= 71 and code <= 77:
+        return ("Snow", "cloud-snow")
+    if code >= 80 and code <= 82:
+        return ("Showers", "cloud-rain")
+    if code == 85 or code == 86:
+        return ("Snow showers", "cloud-snow")
+    if code >= 95:
+        return ("Thunderstorm", "cloud-lightning")
+    return ("Unknown", "cloud")
+
+# "2026-09-29" -> "Tue" (Sakamoto's day-of-week method).
+fn weekday(iso):
+    y = int(iso[0:4])
+    m = int(iso[5:7])
+    d = int(iso[8:10])
+    t = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]
+    if m < 3:
+        y -= 1
+    w = (y + y // 4 - y // 100 + y // 400 + t[m - 1] + d) % 7   # 0 = Sunday
+    return DAYS[(w + 6) % 7]
+
+fn __problem(r):
+    if r.error != Nil:
+        return "Can't reach the weather service (" + r.error + ")"
+    return "The weather service answered " + str(r.status)
+
+# A city name -> ({name, country, region, lat, lon}, error)
+fn find_city(name):
+    r = get(GEO, params={"name": name, "count": 1, "language": "en", "format": "json"}, timeout=10)
+    if not r.ok:
+        return (Nil, __problem(r))
+    results = r.json.get("results") if r.json != Nil else Nil
+    if results == Nil or len(results) == 0:
+        return (Nil, "No place called \"" + name + "\"")
+    c = results[0]
+    return ({"name": c["name"], "country": c.get("country", ""), "region": c.get("admin1", ""),
+             "lat": c["latitude"], "lon": c["longitude"]}, Nil)
+
+# The forecast for a place -> ({now, hours, days}, error)
+#   units: "°C" or "°F";  wind: "km/h" or "mph"
+fn forecast(place, units, wind):
+    r = get(FORECAST, timeout=10, params={
+        "latitude": place["lat"], "longitude": place["lon"], "timezone": "auto", "forecast_days": 7,
+        "current": "temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code,is_day",
+        "hourly": "temperature_2m,weather_code,precipitation_probability,is_day",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset,wind_speed_10m_max",
+        "temperature_unit": "fahrenheit" if units == "°F" else "celsius",
+        "wind_speed_unit": "mph" if wind == "mph" else "kmh",
+    })
+    if not r.ok:
+        return (Nil, __problem(r))
+    j = r.json
+    c = j["current"]
+    now = {"temp": c["temperature_2m"], "feels": c["apparent_temperature"], "humidity": c["relative_humidity_2m"],
+           "wind": c["wind_speed_10m"], "code": c["weather_code"], "is_day": c["is_day"], "time": c["time"]}
+
+    # The next 12 hours, starting with the current one.
+    h = j["hourly"]
+    start = 0
+    for i in range(len(h["time"])):
+        if h["time"][i][:13] == c["time"][:13]:
+            start = i
+    hours = []
+    for i in range(start, start + 12):
+        if i < len(h["time"]):
+            hours.append({"time": h["time"][i][11:16], "temp": h["temperature_2m"][i], "code": h["weather_code"][i],
+                          "rain": h["precipitation_probability"][i], "is_day": h["is_day"][i]})
+
+    d = j["daily"]
+    days = []
+    for i in range(len(d["time"])):
+        days.append({"date": d["time"][i], "day": "Today" if i == 0 else weekday(d["time"][i]),
+                     "code": d["weather_code"][i], "high": d["temperature_2m_max"][i], "low": d["temperature_2m_min"][i],
+                     "rain": d["precipitation_probability_max"][i], "wind": d["wind_speed_10m_max"][i],
+                     "sunrise": d["sunrise"][i][11:16], "sunset": d["sunset"][i][11:16]})
+    return ({"now": now, "hours": hours, "days": days}, Nil)

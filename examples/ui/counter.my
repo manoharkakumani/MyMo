@@ -1,0 +1,14 @@
+# The smallest ui app. Try: mymo examples/ui/counter.my [--desktop | --phone | --term]
+from "ui" use *
+
+count = 0
+
+page "/":
+    center:
+        text count, size="display"
+        text "Tap the buttons" muted
+        row:
+            button "−" large: count -= 1
+            button "+" large primary: count += 1
+
+run "Counter"

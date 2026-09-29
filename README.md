@@ -9,8 +9,9 @@ The syntax is indentation-based and Python-like, with a few ideas borrowed
 from elsewhere: arrow functions, a `|>` pipe operator, LISP-style `cond`,
 pattern-matching `case`, fibers for cooperative concurrency, and decorators
 for building web backends Hono/Express-style. It has a garbage collector, a
-bytecode cache, a C API for extensions and for embedding, and a concurrent
-web framework (`mono`) in its standard library.
+bytecode cache, a C API for extensions and for embedding, a concurrent
+web framework (`mono`) and an app UI library (`ui`) that runs the same
+code in a browser, a desktop window, on a phone or in the terminal.
 
 ```python
 from "mono" use get, post, start
@@ -39,11 +40,13 @@ Source files use `.my`.
   - [Functions, arrows and closures](#functions-arrows-and-closures)
   - [Pipes and ternaries](#pipes-and-ternaries)
   - [Decorators](#decorators)
+  - [Command calls and blocks](#command-calls-and-blocks)
   - [Classes](#classes)
   - [Errors: `try` / `catch` / `raise`](#errors-try--catch--raise)
   - [Fibers](#fibers)
   - [Modules](#modules)
 - [Building web backends with `mono`](#building-web-backends-with-mono)
+- [Building apps with `ui`](#building-apps-with-ui)
 - [Built-in functions](#built-in-functions)
 - [Standard modules](#standard-modules)
 - [Writing C extensions](#writing-c-extensions)
@@ -219,7 +222,7 @@ Unknown escapes keep their backslash, so `"C:\dir"` stays as written.
 nums = [3, 1, 2]
 nums.append(4)
 nums.sort()
-print(nums, nums[0], len(nums), nums + [5, 6])
+print(nums, nums[0], len(nums), nums + [5, 6], [0] * 3)
 print(nums.pop(), nums.index(2), nums.contains(3))
 nums.insert(0, 9)
 nums.remove(9)
@@ -359,7 +362,9 @@ print(greet("ana"), greet("bo", "hi"))
 ```
 
 Parameters with defaults must come after those without. As in Python, a
-mutable default such as a list is shared between calls.
+mutable default such as a list is shared between calls. Long parameter
+lists, like long argument lists, can span several lines (a trailing comma
+is fine).
 
 Arguments can be passed by name, extra ones collected, and sequences or
 dicts unpacked into a call:
@@ -373,6 +378,21 @@ fn log(level, *messages, **context):     # tuple and dict of the extras
 log("info", "started", "ok", user="ana")
 args = ["warn", "disk"]
 log(*args, **{"free": "2%"})
+```
+
+Parameters after `*rest`, or after a bare `*`, are keyword-only: they can
+only be passed by name, and may be required even when they come after one
+with a default:
+
+```python
+fn show(*items, sep=" ", end=""):
+    return sep.join([str(x) for x in items]) + end
+
+fn connect(host, *, port=80, secure):
+    ...
+
+print(show(1, 2, 3, sep=", "))
+connect("example.com", secure=True)
 ```
 
 A decorator can forward everything with `fn wrapper(*args, **kwargs):
@@ -483,6 +503,35 @@ class Service:
 print(Service().handle("req"))
 ```
 
+### Command calls and blocks
+
+A statement can call a function without parentheses, and a trailing
+`:` passes a block of code to it:
+
+```python
+print "hello", name              # print("hello", name)
+show "Hi {name}"                 # strings with {...} interpolate here
+save "notes.txt" force           # a bare word is a flag: force=True
+save "notes.txt" mode="a"        # keyword arguments: key=value
+
+fn repeat(n, body):              # the block arrives as `body`
+    for i in range(n):
+        body()
+
+repeat 3:
+    count += 1                   # assigns the outer `count`
+
+card(title="x"):                 # a parenthesized call can take a block too
+    ...
+```
+
+A block is a function passed as the keyword argument `body`. It reads and
+assigns the variables around it (no `global` or `nonlocal` needed). The
+loop variables of the `for` loops around it are fixed when the block is
+created, so blocks made in a loop each keep their own item. A name alone
+on a line calls it if it's a function (`divider`); in the REPL it prints
+the value as before.
+
 ### Classes
 
 ```python
@@ -568,9 +617,10 @@ reads like `KeyError: "key"`, and `e.message` holds the message.
 Clauses are tried in order; an exception no clause matches keeps
 propagating (after `final:` runs). `catch e:` catches everything, and
 plain `catch:` discards the exception. `raise` accepts an instance, a class
-(`raise ValueError`) or any value, such as a string. `return`, `break` and
-`continue` work normally inside `try` blocks, and runaway recursion raises
-a catchable `RecursionError`.
+(`raise ValueError`) or any value, such as a string. `final:` runs however
+the `try` is left, including by `return`, `break` or `continue`; a `return`
+or `break` inside `final:` itself wins over the pending exit or exception.
+Runaway recursion raises a catchable `RecursionError`.
 
 ### Fibers
 
@@ -606,6 +656,10 @@ An error that nothing inside a fiber catches ends the fiber and reaches the
 code that resumed it. `run(args...)` passes arguments to the fiber's function. `yield` can also be
 called from a helper function the fiber calls: it suspends the whole fiber.
 That is how `mono`'s `sleep()` works.
+
+Anything that takes an iterable also takes a fiber and runs it to the
+end: `list(fiber(countdown))`, `sorted(...)`, `sum(...)`, `", ".join(...)`,
+`zip(...)`, `f(*fiber(gen))`.
 
 ### Modules
 
@@ -743,6 +797,119 @@ Complete apps: `examples/modules/mono_app.my` (decorators),
 
 ---
 
+## Building apps with `ui`
+
+> The full guide, with every component, styling, APIs, projects and dev
+> mode, is in [docs/ui.md](docs/ui.md). Start a project with
+> `mymo new my-app`.
+
+`ui` builds an app out of indented blocks and runs it wherever you want:
+
+```python
+from "ui" use *
+
+count = 0
+
+page "/":
+    center:
+        text count, size="display"
+        row:
+            button "−": count -= 1
+            button "+" primary: count += 1
+
+run "Counter"
+```
+
+```bash
+mymo counter.my              # a browser tab
+mymo counter.my --desktop    # its own window (Chrome, Edge or Brave in app mode)
+mymo counter.my --phone      # served on your Wi-Fi: open the printed link on
+                             # your phone, then Add to Home Screen
+mymo counter.my --term       # full-screen in the terminal
+```
+
+A page's block describes the screen. Each component written inside a
+block becomes a child of the block's component, and ordinary `for` and
+`if` work there too. A block after a button, checkbox, input and so on is
+its handler. After a handler runs, the page is drawn again and only the
+parts that changed are updated in the browser, so the screen always
+matches your data. The browser, desktop and phone targets get a
+responsive design system with light and dark themes. The terminal target
+draws the same components with box-drawing characters and keyboard
+focus: arrows or Tab to move, Enter to press, ←→ to change, Esc to quit.
+
+A to-do list:
+
+```python
+from "ui" use *
+
+todos = []
+draft = state("")
+
+fn add():
+    todos.append({"text": draft.value, "done": False})
+    draft.clear()
+
+page "/":
+    card "To-do":
+        row:
+            input draft, placeholder="What needs doing?": add()
+            button "Add" primary: add()
+        for t in todos:
+            row:
+                checkbox t["text"], t["done"]: t["done"] = not t["done"]
+                spacer()
+                button icon="x" ghost small: todos.remove(t)
+
+run "To-do"
+```
+
+**Data.** Plain variables hold your data, and handlers change them
+directly (`count += 1` updates the outer `count`). An input needs
+something it can write back to: create it with `state(value)`, pass it
+(`input draft`, `checkbox "Agree", agreed`), and read it with
+`draft.value` or `"{draft}"`. A state also has `set`, `inc`, `dec`,
+`toggle`, `push`, `remove` and `clear`.
+
+**Arguments.** Strings with `{...}` interpolate. Bare words after an
+argument are flags (`button "Save" primary small` means `primary=True,
+small=True`). Keyword arguments are `key=value`. A handler made in a
+loop keeps its own item, so each row's delete button deletes that row.
+Handlers can show `toast "Saved" success` (or `error`, `warning`) or switch pages with `go "/path"`, and
+`every 5: ...` runs a block on a timer while the app is open.
+
+**Components.**
+
+| Kind       | Components |
+| ---------- | ---------- |
+| Layout     | `col`, `row`, `grid cols= min=`, `center`, `card "Title"`, `section "Title"`, `spacer()`, `divider()` |
+| Text       | `h1`, `h2`, `h3`, `text` (`muted`, `bold`, `size=`, `color=`), `small`, `code`, `link "Label", "/to"`, `bullets [...]`, `kv {...}` |
+| Display    | `badge`, `avatar "Name"`, `image`, `icon "name"`, `stat "Label", value, delta=, icon=`, `progress value, label=`, `table rows`, `alert "msg"` (`success`, `warning`, `error`), `empty "Title", "text"`, `spinner` |
+| Input      | `button "Label"` (`primary`, `danger`, `ghost`, `small`, `large`, `icon=`), `input state` (`label=`, `placeholder=`, `password`, `live`), `textarea`, `checkbox "Label", value`, `switch`, `select options, state`, `slider state, min=, max=`, `tabs options, state` |
+| App chrome | `shell:` with a `sidebar "Brand":` or `navbar "Brand":` first, `nav "Label", "/to", icon=`, `modal state, "Title":` |
+| Escape hatches | `html(raw)`, `el(tag, ...)` |
+
+Layout components take `gap=` and `pad=` (a 0-10 spacing scale, or any
+CSS length), `align=`, `justify=`, `width=`, `max=`, `grow=True` and
+`style=`. Colors are `accent`, `blue`, `green`, `red`, `amber`, `violet`,
+`pink`, `teal`, `gray` and `orange`, or any CSS color. Everything also works
+as ordinary calls (`card(h1("Hi"), title="x")`, `button("+", on=f)`,
+`@page("/")` above a function that returns components).
+
+`run "Title", accent=, theme=` starts the app. `theme` is `"auto"`,
+`"light"` or `"dark"`. Several `page "/path":` blocks make a multi-page app,
+and `link`/`nav` switch between them without a reload. `render(path)` and
+`render_text(path)` return the HTML or terminal text without starting
+anything, which is handy in tests. See `examples/ui/` for a counter, a
+to-do list, a multi-page dashboard, and `examples/ui/weather/`: a
+multi-file weather app with live data from a public API.
+
+Every window and device that opens the app shares its data, the same way
+a desktop app has one set of data. In `--phone` mode the link carries a
+random access key; requests without it are refused.
+
+---
+
 ## Built-in functions
 
 | Function                  | Description                                       |
@@ -792,16 +959,18 @@ demo in `examples/modules/`.
 | `time`    | `now`, `monotonic`, `clock`, `sleep`, `format`                          |
 | `date`    | `year`, `month`, `day`, `hour`, `minute`, `second`, `weekday`, `yearday`, `iso`, `parse`, `make` |
 | `random`  | `seed`, `int`, `float`, `choice`                                        |
-| `os`      | `getenv`, `setenv`, `unsetenv`, `getcwd`, `exit`                        |
-| `io`      | `read`, `write`, `append`, `exists`, `remove`                           |
+| `os`      | `getenv`, `setenv`, `unsetenv`, `getcwd`, `exit`, `system`, `popen`, `exec`, `args`, `executable`, `platform` |
+| `io`      | `read`, `write`, `append`, `exists`, `remove`, `mtime`, `isdir`, `listdir`, `mkdir` |
 | `json`    | `encode`, `decode`                                                      |
 | `sqlite`  | `open`, `run`, `query`, `close`                                         |
-| `http`    | `get`, `post`, `request` (client, via libcurl)                          |
+| `http`    | `get`, `post`, `put`, `patch`, `delete`, `head`, `request` with `headers=`, `json=`, `form=`, `params=`, `timeout=`; responses have `status`, `ok`, `json`, `body`, `headers`, `error` (libcurl on worker threads; doesn't block `ui`/`mono` handlers) |
 | `socket`  | `connect`, `listen`, `accept`, `send`, `recv`, `close`, `gethostname`, `resolve` |
 | `server`  | `listen`, `accept`, `accept_nb`, `read_request`, `respond`, `respond_json`, `close` (HTTP/1.1) |
 | `runloop` | `nonblock`, `readable`, `writable`, `select`, `ready` (non-blocking I/O) |
+| `term`    | `isatty`, `size`, `raw`, `key`, `write` (full-screen terminal apps)    |
 | `nodes`   | `spawn`, `send`, `recv`, `kill`, `self_id`, `is_coordinator`, `children` (multi-process messaging) |
 | `mono`    | web framework with routing, `sleep`, `wait_readable`; see above (written in MyMo) |
+| `ui`      | app UI library; see [Building apps with `ui`](#building-apps-with-ui) (written in MyMo) |
 | `strutil` | string helpers such as `starts_with` (written in MyMo)                  |
 
 ---
@@ -976,10 +1145,11 @@ MyMo is an experimental language. Current gaps:
   objects.
 - `mono` has no built-in TLS (see [HTTPS](#https)), and its non-blocking
   I/O isn't implemented on Windows yet.
-- A fiber can't `yield` across a C→MyMo `mymo_call` boundary, and
-  `list()`/`sorted()`/... can't consume a fiber (use `[x for x in f]`).
-- Parameters after `*rest` (keyword-only parameters) aren't supported.
-- `final:` runs when the `try` body or a `catch` clause finishes or raises,
-  but not when a `return`, `break` or `continue` leaves the `try`.
-- `upper()`, `lower()` and the `is*()` methods only know ASCII letters.
+- A fiber can't `yield` across a C→MyMo `mymo_call` boundary.
+- `ui` serves one shared app state (no per-user sessions), and its browser,
+  desktop and phone targets need non-blocking sockets, which aren't
+  implemented on Windows yet. `--term` works there.
+- Case mapping covers Latin, Greek, Cyrillic, Armenian and Georgian;
+  other scripts' letters are uncased (`isalpha()` still knows CJK, Arabic,
+  Hebrew, Indic and more).
 - There are no big integers: past 64 bits, arithmetic switches to doubles.
