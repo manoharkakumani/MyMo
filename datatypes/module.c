@@ -16,6 +16,7 @@ MyMoModule *newModule(MVM *vm, MyMoString *name, MyMoString *path)
     module->path = path;
     module->variables = newDict(vm);
     module->parent = NULL;
+    module->frame = NULL;
     setEntry(vm, &vm->modules, AS_OBJECT(path), AS_OBJECT(module));
     return module;
 }

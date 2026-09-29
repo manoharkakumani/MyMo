@@ -437,6 +437,8 @@ int repl(MVM *vm)
 }
 
 extern void nodes_set_argv0(const char *path);
+extern void os_set_args(int argc, const char **argv);
+extern void os_set_executable(const char *path);
 
 int main(int argc, const char *argv[])
 {
@@ -452,7 +454,10 @@ int main(int argc, const char *argv[])
             nodes_set_argv0(selfpath);
         else
             nodes_set_argv0(argv[0]);
+        os_set_executable(realpath(argv[0], selfpath) ? selfpath : argv[0]);
     #endif
+    if (argc >= 2)
+        os_set_args(argc - 1, argv + 1); // os.args: [script, args...]
     MVM *vm = initVM();
     if (argc == 1)
     {
@@ -465,8 +470,9 @@ int main(int argc, const char *argv[])
     }
     else if (argc == 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0))
     {
-        printf("usage: mymo [file.my | file.myc]\n"
+        printf("usage: mymo [file.my | file.myc] [args...]\n"
                "       mymo              start the REPL\n"
+               "       mymo new <name>   create a ui app project\n"
                "       mymo --version    print the version\n"
                "\n"
                "environment:\n"
@@ -475,7 +481,17 @@ int main(int argc, const char *argv[])
                "  MYMO_GC_STRESS=1 collect garbage at every safe point (debugging)\n");
         return 0;
     }
-    else if (argc == 2)
+    else if (strcmp(argv[1], "new") == 0)
+    {
+        // Project scaffold: stdlib/newapp.my (os.args is ["new", name]).
+        char stdlibPath[] = "@stdlib:newapp";
+        MyMoFunction *function = runFile(vm, stdlibPath);
+        vm->currentModule = newModule(vm, newString(vm, "__main__", 8), newString(vm, stdlibPath, 14));
+        I_Result result = function ? interpreter(vm, function) : COMPILE_ERROR;
+        freeVM(vm);
+        return result == OK ? 0 : 70;
+    }
+    else
     {
         char actualpath[10000];
         char *path;
@@ -498,6 +514,7 @@ int main(int argc, const char *argv[])
         else if (strcmp(extension, ".my") == 0 || strcmp(extension, ".myc") == 0)
         {
             // A .myc is precompiled bytecode (see cache.c): load it as-is.
+            setProjectRoot(actualpath);
             char *path = strcmp(extension, ".myc") == 0 ? strdup(actualpath)
                                                         : pathResolver(vm, (char *)argv[1]);
             MyMoFunction *function = runFile(vm, path);
@@ -531,12 +548,6 @@ int main(int argc, const char *argv[])
             free(vm);
             exit(74);
         }
-    }
-    else
-    {
-        fprintf(stderr, "Usage: MyMo [path]\n");
-        freeVM(vm);
-        exit(64);
     }
     freeVM(vm);
     return 0;

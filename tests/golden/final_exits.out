@@ -1,0 +1,36 @@
+final after return
+from try
+final after bare return
+Nil
+final after return in catch
+caught ValueError: boom
+final after raising return
+return value raised, caught
+body 0
+final 0
+final 1
+body 2
+final 2
+final 3
+after loop
+odd 1
+cleanup 1
+cleanup 2
+odd 3
+cleanup 3
+cleanup 4
+inner final
+outer final
+inner
+final after return from nested loops
+20
+final x = 1
+final x = 2
+2
+try 1
+try 2
+broke out of final
+2
+exception discarded by break in final
+249500
+done

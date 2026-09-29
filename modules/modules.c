@@ -22,4 +22,5 @@ void defineBuiltInModules(MVM *vm)
     serverModule(vm);
     nodesModule(vm);
     runloopModule(vm);
+    termModule(vm);
 }

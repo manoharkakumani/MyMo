@@ -168,27 +168,124 @@ void expressionStatement(Compiler *compiler)
     emitByte(compiler, OP_POP);
 }
 
+#define EXIT_BREAK 1
+#define EXIT_CONTINUE 2
+#define EXIT_RETURN 3
+
+// How a return's value is produced at the exit site.
+#define RET_NIL 0   // bare `return`
+#define RET_PARSE 1 // `return <expr>`
+#define RET_STASH 2 // re-issued after a final block: read <ret>
+
+// Hidden local holding a return value while final blocks run.
+static uint returnStash(Compiler *compiler)
+{
+    Token tok = {.token = "<ret>", .length = 5};
+    return identifierConstant(compiler, &tok);
+}
+
+static void emitReturnValue(Compiler *compiler, int retMode)
+{
+    if (retMode == RET_PARSE)
+        expression(compiler);
+    else if (retMode == RET_STASH)
+        emitGetV(compiler, returnStash(compiler));
+    else
+        emitByte(compiler, OP_NIL);
+}
+
+// Emit a return/break/continue from the current position. Walks the open
+// loops and try blocks innermost-first, popping the operand-stack slots
+// they own (a for's iterator, a final body's [pending, code]); the first
+// try in the way gets the exit routed through its final block.
+static void emitExit(Compiler *compiler, int kind, int retMode)
+{
+    Loop *target = kind == EXIT_RETURN ? NULL : compiler->loop;
+    Loop *loop = compiler->loop;
+    TryCtx *t = compiler->tryCtx;
+    for (;;)
+    {
+        bool takeLoop = loop && (!t || loop->seq > t->seq);
+        if (takeLoop)
+        {
+            if (loop == target)
+                break;
+            if (loop->isFor)
+                emitByte(compiler, OP_POP); // the iterator
+            loop = loop->enclosing;
+        }
+        else if (t)
+        {
+            if (t->inFinal)
+            {
+                emitByte(compiler, OP_POP); // exit code
+                emitByte(compiler, OP_POP); // pending exception
+                t = t->enclosing;
+                continue;
+            }
+            if (t->exitCount >= TRY_MAX_EXITS)
+            {
+                error(compiler, "too many return/break/continue statements in one try.");
+                return;
+            }
+            if (kind == EXIT_RETURN)
+            {
+                // Evaluate the value while the try's handlers are still
+                // active, then park it for the re-issued return.
+                emitReturnValue(compiler, retMode);
+                emitSetV(compiler, returnStash(compiler));
+                emitByte(compiler, OP_POP);
+            }
+            for (int i = compiler->tryDepth; i > t->outerDepth; i--)
+                emitByte(compiler, OP_ENDTRY);
+            emitByte(compiler, OP_NIL);
+            emitConstantV(compiler, V_INT_VAL(t->exitCount + 1));
+            t->exitKinds[t->exitCount] = (u8)kind;
+            t->exitJumps[t->exitCount] = emitJump(compiler, OP_JMP);
+            t->exitCount++;
+            return;
+        }
+        else
+            break;
+    }
+
+    if (kind == EXIT_RETURN)
+    {
+        if (retMode == RET_NIL)
+            emitReturn(compiler);
+        else
+        {
+            emitReturnValue(compiler, retMode);
+            emitByte(compiler, OP_FRET);
+        }
+        return;
+    }
+    for (int i = compiler->tryDepth; i > target->tryDepth; i--)
+        emitByte(compiler, OP_ENDTRY);
+    if (kind == EXIT_CONTINUE)
+    {
+        emitLoop(compiler, target->loopStart);
+        return;
+    }
+    if (target->isFor)
+        emitByte(compiler, OP_POP); // the iterator
+    if (target->breaksCapacity < target->breaksCount + 1)
+    {
+        int oldCapacity = target->breaksCapacity;
+        target->breaksCapacity = ResizeCapacity(oldCapacity);
+        target->breakJumps = ResizeArray(compiler->parser->vm, int, target->breakJumps, oldCapacity, target->breaksCapacity);
+    }
+    target->breakJumps[target->breaksCount++] = emitJump(compiler, OP_JMP);
+}
+
 void breakStatement(Compiler *compiler)
 {
-    Loop *loop = compiler->loop;
-    if (loop == NULL)
+    if (compiler->loop == NULL)
     {
         error(compiler, "cannot use 'break' outside of a loop.");
         return;
     }
-    if (loop->breaksCapacity < loop->breaksCount + 1)
-    {
-        int oldCapacity = loop->breaksCapacity;
-        loop->breaksCapacity = ResizeCapacity(oldCapacity);
-        loop->breakJumps = ResizeArray(compiler->parser->vm, int, loop->breakJumps, oldCapacity, loop->breaksCapacity);
-    }
-    for (int i = compiler->tryDepth; i > loop->tryDepth; i--)
-        emitByte(compiler, OP_ENDTRY);
-    if (loop->isFor)
-        emitByte(compiler, OP_POP); // the iterator
-    compiler->loop->breakJumps[compiler->loop->breaksCount] = emitJump(compiler, OP_JMP);
-    compiler->loop->breaksCount++;
-    return;
+    emitExit(compiler, EXIT_BREAK, RET_NIL);
 }
 
 void continueStatement(Compiler *compiler)
@@ -198,10 +295,7 @@ void continueStatement(Compiler *compiler)
         error(compiler, "cannot use 'continue' outside of a loop.");
         return;
     }
-    for (int i = compiler->tryDepth; i > compiler->loop->tryDepth; i--)
-        emitByte(compiler, OP_ENDTRY);
-    emitLoop(compiler, compiler->loop->loopStart);
-    return;
+    emitExit(compiler, EXIT_CONTINUE, RET_NIL);
 }
 
 void returnStatement(Compiler *compiler)
@@ -215,21 +309,7 @@ void returnStatement(Compiler *compiler)
     {
         error(compiler, "cannot return from an initializer.");
     }
-    // Drop the iterators of every enclosing `for` in this function so
-    // OP_FRET finds the callee slot where it expects it. The loop
-    // variable was already stored, so the return expression can use it.
-    for (Loop *loop = compiler->loop; loop; loop = loop->enclosing)
-        if (loop->isFor)
-            emitByte(compiler, OP_POP);
-    if (checkToken(compiler, NEWLINE))
-    {
-        emitReturn(compiler);
-    }
-    else
-    {
-        expression(compiler);
-        emitByte(compiler, OP_FRET);
-    }
+    emitExit(compiler, EXIT_RETURN, checkToken(compiler, NEWLINE) ? RET_NIL : RET_PARSE);
 }
 
 // del name | del target.attr | del target[key]   (target may chain:
@@ -453,15 +533,21 @@ void tryStatement(Compiler *compiler)
     size_t indent = getIndent(compiler);
     advanceToken(compiler); // consume `try`
     consumeToken(compiler, COLON, "expected ':' after try");
+    TryCtx ctx = {.outerDepth = compiler->tryDepth, .seq = ++compiler->scopeSeq,
+                  .inFinal = false, .exitCount = 0, .enclosing = compiler->tryCtx};
+    compiler->tryCtx = &ctx;
     int tryJump = emitJump(compiler, OP_TRY);
     compiler->tryDepth++;
     blockOrSimple(compiler, indent);
     compiler->tryDepth--;
     emitByte(compiler, OP_ENDTRY);
 
+    // Every path into F pushes [pending, code]: code 0 means "fall out
+    // (re-raising pending unless Nil)", k > 0 is ctx.exitKinds[k-1].
     int jumpsToFinal[64];
     int finalJumps = 0;
     emitByte(compiler, OP_NIL);
+    emitConstantV(compiler, V_INT_VAL(0));
     jumpsToFinal[finalJumps++] = emitJump(compiler, OP_JMP);
     patchJump(compiler, tryJump);
 
@@ -524,6 +610,7 @@ void tryStatement(Compiler *compiler)
         compiler->tryDepth--;
         emitByte(compiler, OP_ENDTRY);
         emitByte(compiler, OP_NIL);
+        emitConstantV(compiler, V_INT_VAL(0));
         if (finalJumps < 64)
             jumpsToFinal[finalJumps++] = emitJump(compiler, OP_JMP);
         else
@@ -540,19 +627,43 @@ void tryStatement(Compiler *compiler)
         // re-raises it after running.
         emitByte(compiler, OP_ENDTRY);
         emitGetV(compiler, excName);
+        emitConstantV(compiler, V_INT_VAL(0));
         jumpsToFinal[finalJumps++] = emitJump(compiler, OP_JMP);
     }
     // A clause raised: its exception is pending for the final block.
     patchJump(compiler, innerTry);
+    emitConstantV(compiler, V_INT_VAL(0));
 
     for (int i = 0; i < finalJumps; i++)
         patchJump(compiler, jumpsToFinal[i]);
+    for (int i = 0; i < ctx.exitCount; i++)
+        patchJump(compiler, ctx.exitJumps[i]);
+    ctx.inFinal = true;
     if (checkToken(compiler, FINALLY) && getIndent(compiler) == indent)
     {
         advanceToken(compiler);
         consumeToken(compiler, COLON, "expected ':' after final");
         blockOrSimple(compiler, indent);
     }
+    compiler->tryCtx = ctx.enclosing;
+
+    // [pending, code]: re-issue the exit that code names, from outside
+    // the try (so an enclosing try's final block runs next).
+    for (int i = 0; i < ctx.exitCount; i++)
+    {
+        emitByte(compiler, OP_DUP);
+        emitConstantV(compiler, V_INT_VAL(i + 1));
+        emitBytes(compiler, OP_EQUAL, 0);
+        int next = emitJump(compiler, OP_JIF);
+        emitByte(compiler, OP_POP); // true
+        emitByte(compiler, OP_POP); // code
+        emitByte(compiler, OP_POP); // pending (Nil)
+        u8 kind = ctx.exitKinds[i];
+        emitExit(compiler, kind, kind == EXIT_RETURN ? RET_STASH : RET_NIL);
+        patchJump(compiler, next);
+        emitByte(compiler, OP_POP); // false
+    }
+    emitByte(compiler, OP_POP); // code
     emitByte(compiler, OP_RERAISE);
 }
 
@@ -586,6 +697,8 @@ void startLoop(Compiler *compiler, Loop *loop)
     loop->breaksCapacity = 0;
     loop->tryDepth = compiler->tryDepth;
     loop->isFor = false;
+    loop->nameCount = 0;
+    loop->seq = ++compiler->scopeSeq;
     compiler->loop = loop;
 }
 
@@ -603,6 +716,8 @@ void loopStatement(Compiler *compiler)
         emitByte(compiler, OP_GETI);
         startLoop(compiler, &loop);
         loop.isFor = true;
+        for (int i = 0; i < n && i < 8; i++)
+            loop.names[loop.nameCount++] = names[i];
         compiler->loop->loopJump = emitJump(compiler, OP_ITER);
         if (n == 1)
             emitStoreName(compiler, &names[0]);
@@ -1178,33 +1293,56 @@ static void functionStatementDecorated(Compiler *compiler, const u8 *decoratorAr
             else
             {
 
+                MyMoFunction *fnObj = fncompiler->function;
+                // Parameters after `*rest` or a bare `*` are keyword-only.
+                // The rest parameter is held back and stored after them,
+                // so the frame is [positional..., kwonly..., rest, kw].
+                bool seenStar = false;
+                MyMoString *restName = NULL;
                 do
                 {
-                    if (fncompiler->function->argc > 255)
+                    skipNewLines(fncompiler); // parameters may span lines
+                    if (checkToken(fncompiler, RPAR))
+                        break; // trailing comma
+                    if (fnObj->argc > 255)
                     {
                         errorAtCurrent(fncompiler, "cannot have more than 255 parameters.");
                     }
-                    if (fncompiler->function->isargs & VARARGS_KW)
+                    if (fnObj->isargs & VARARGS_KW)
                         errorAtCurrent(fncompiler, "no parameter can follow a **keywords parameter.");
                     // *rest collects extra positional arguments into a
                     // tuple, **kw extra keyword arguments into a dict.
                     if (matchToken(fncompiler, STAR))
                     {
-                        if (fncompiler->function->isargs)
-                            errorAtCurrent(fncompiler, "only one *rest parameter, before any **keywords one.");
-                        fnParameters(fncompiler);
-                        fncompiler->function->isargs |= VARARGS_REST;
+                        if (seenStar)
+                            errorAtCurrent(fncompiler, "only one *rest (or bare *) parameter.");
+                        seenStar = true;
+                        if (checkToken(fncompiler, NAME))
+                        {
+                            fnParameters(fncompiler);
+                            restName = fnObj->argv[--fnObj->argc];
+                            fnObj->argv[fnObj->argc] = NULL;
+                            fnObj->isargs |= VARARGS_REST;
+                        }
                         continue;
                     }
                     if (matchToken(fncompiler, DSTAR))
                     {
+                        if (restName)
+                        {
+                            fnObj->argv[fnObj->argc++] = restName;
+                            restName = NULL;
+                        }
                         fnParameters(fncompiler);
-                        fncompiler->function->isargs |= VARARGS_KW;
+                        fnObj->isargs |= VARARGS_KW;
                         continue;
                     }
-                    if (fncompiler->function->isargs)
-                        errorAtCurrent(fncompiler, "a named parameter can't follow *rest (use it before).");
                     fnParameters(fncompiler);
+                    if (restName && restName->length == compiler->parser->previous.length &&
+                        memcmp(restName->value, compiler->parser->previous.token, (size_t)restName->length) == 0)
+                        errorAt(fncompiler, fncompiler->parser->previous, "duplicated parameters.");
+                    if (seenStar)
+                        fnObj->kwonly++;
                     // `name = expr`: the default is compiled into the
                     // ENCLOSING function, so it is evaluated when this `fn`
                     // statement runs (like Python) and can see outer names.
@@ -1217,12 +1355,28 @@ static void functionStatementDecorated(Compiler *compiler, const u8 *decoratorAr
                             errorAtCurrent(compiler, "too many default values.");
                         defaults++;
                     }
+                    else if (defaults > 0 && seenStar)
+                    {
+                        // Required keyword-only after a defaulted
+                        // parameter: `_` holds its place in the defaults.
+                        if (defaults == 255)
+                            errorAtCurrent(compiler, "too many default values.");
+                        emitByte(compiler, OP_WILDCARD);
+                        defaults++;
+                    }
                     else if (defaults > 0)
                     {
                         errorAt(fncompiler, fncompiler->parser->previous,
                                 "a parameter without a default can't follow one with a default.");
                     }
                 } while (matchToken(fncompiler, COMMA));
+                skipNewLines(fncompiler);
+                if (restName)
+                    fnObj->argv[fnObj->argc++] = restName;
+                if (seenStar && !(fnObj->isargs & VARARGS_REST) && fnObj->kwonly == 0)
+                    errorAt(fncompiler, fncompiler->parser->previous, "a bare * must be followed by keyword-only parameters.");
+                if (fnObj->kwonly)
+                    fnObj->isargs |= VARARGS_KWONLY;
             }
         }
         consumeToken(fncompiler, RPAR, "expected ')' after parameters.");
@@ -1476,6 +1630,226 @@ void moduleStatement(Compiler *compiler)
         break;
     }
 }
+// ------------------------------------------------ command calls, blocks
+//
+//   h1 "Hello"                   ->  h1("Hello")
+//   input name, placeholder="x"  ->  input(name, placeholder="x")
+//   button "Save" primary        ->  button("Save", primary=True)   (flags)
+//   button "Go" icon="x"         ->  button("Go", icon="x")  (comma optional)
+//   card "Title":                ->  card("Title", body=<block>)
+//       text "{n} items"                 (strings with {..} interpolate)
+//   button "+": count += 1       ->  button("+", body=<block>)
+//   card(title="x"):             ->  card(title="x", body=<block>)
+//   divider                      ->  divider() when it's callable
+//
+// A block is a closure (MyMoFunction.block) passed as the keyword
+// argument `body`. It reads and assigns the enclosing scope's variables
+// live (OP_SETB), except the loop variables of `for` loops around it,
+// which it pins when it is created (MyMoFunction.bound).
+
+static bool nameThenEqual(Compiler *compiler)
+{
+    if (!checkToken(compiler, NAME))
+        return false;
+    Lexer probe = *compiler->parser->lexer;
+    return getToken(&probe).type == EQUAL;
+}
+
+// Does the statement at `current` (a NAME) start a command call? Scans a
+// copy of the lexer. *bare: a lone `name` / `a.b` on its own line.
+static bool isCommandCall(Compiler *compiler, bool *bare)
+{
+    *bare = false;
+    if (!checkToken(compiler, NAME))
+        return false;
+    Lexer probe = *compiler->parser->lexer;
+    Token prev = compiler->parser->current;
+    Token t = getToken(&probe);
+    while (t.type == DOT)
+    {
+        prev = getToken(&probe);
+        if (prev.type != NAME)
+            return false;
+        t = getToken(&probe);
+    }
+    switch (t.type)
+    {
+    case STRING:
+    case FSTRING:
+    case INT:
+    case DOUBLE:
+    case NAME:
+    case TRUE:
+    case FALSE:
+    case NIL:
+    case COLON:
+        return true;
+    case LSQB:
+    case LBRACE:
+        // `bullets [1, 2]`, but `xs[1]` stays a subscript.
+        return t.token > prev.token + prev.length;
+    case LPAR:
+    {
+        // `card(title="x"):` is a call with a block.
+        int depth = 1;
+        for (;;)
+        {
+            Token u = getToken(&probe);
+            if (u.type == END || u.type == ERROR)
+                return false;
+            if (u.type == LPAR || u.type == LSQB || u.type == LBRACE)
+                depth++;
+            else if ((u.type == RPAR || u.type == RSQB || u.type == RBRACE) && --depth == 0)
+                break;
+        }
+        return getToken(&probe).type == COLON;
+    }
+    case NEWLINE:
+    case END:
+        *bare = !compiler->parser->repl; // the REPL prints a bare name instead
+        return *bare;
+    default:
+        return false;
+    }
+}
+
+// One argument of a command call. A plain string with {...} in it is
+// an f-string here, so `text "Hi {name}"` needs no `f`.
+static void commandArgument(Compiler *compiler)
+{
+    Token *cur = &compiler->parser->current;
+    if (cur->type == STRING && memchr(cur->token, '{', (size_t)cur->length))
+        cur->type = FSTRING;
+    expression(compiler);
+}
+
+// The block after a command's `:`, compiled as a closure and left on the
+// stack: an indented block on the following lines, or one statement on
+// the same line.
+static void compileBlock(Compiler *compiler, size_t indent)
+{
+    MVM *vm = compiler->parser->vm;
+    Compiler *bc = initCompiler(vm, compiler->parser, FN_FUNCTION);
+    bc->function->block = true;
+    bc->function->name = newString(vm, "<block>", 7);
+    if (matchToken(bc, NEWLINE))
+        block(bc, indent);
+    else
+        statement(bc);
+    MyMoFunction *fn = endFunction(bc);
+    emitConstOp(compiler, OP_FN, makeConstant(compiler, AS_OBJECT(fn)));
+    // Pin the loop variables of every enclosing `for`, so a block made in
+    // a loop sees its own iteration's values when it runs later.
+    for (Loop *l = compiler->loop; l; l = l->enclosing)
+        for (int i = 0; i < l->nameCount; i++)
+        {
+            Token name = l->names[i];
+            uint idx = identifierConstant(compiler, &name);
+            compiler->parser->previous = name;
+            variable(compiler, false); // loads it (arg slot, local or global)
+            emitConstOp(compiler, OP_BLOCKVAR, idx);
+        }
+}
+
+static void commandCall(Compiler *compiler, bool bare)
+{
+    size_t indent = getIndent(compiler);
+    advanceToken(compiler); // the name
+    variable(compiler, false);
+    while (matchToken(compiler, DOT))
+    {
+        consumeToken(compiler, NAME, "expected a name after '.'.");
+        emitConstOp(compiler, OP_GETP, identifierConstant(compiler, &compiler->parser->previous));
+    }
+    if (bare)
+    {
+        emitByte(compiler, OP_CALLIF);
+        emitByte(compiler, OP_POP);
+        if (!checkToken(compiler, END))
+            consumeToken(compiler, NEWLINE, "expect 'newline' after expression.");
+        return;
+    }
+    u16 kwNames[255];
+    u8 kwc = 0;  // keyword arguments (their values follow the positional ones)
+    int argc = 0; // all arguments, keywords included (OP_CALLKW's count)
+    compiler->flags.argv++; // a comma ends each argument
+    if (matchToken(compiler, LPAR))
+        argc = argumentList(compiler, kwNames, &kwc); // consumes the ')'
+
+    else
+    {
+        while (!checkToken(compiler, COLON) && !checkToken(compiler, NEWLINE) && !checkToken(compiler, END))
+        {
+            if (nameThenEqual(compiler))
+            {
+                advanceToken(compiler);
+                Token name = compiler->parser->previous;
+                advanceToken(compiler); // =
+                commandArgument(compiler);
+                argc++;
+                if (kwc == 254)
+                    error(compiler, "too many keyword arguments.");
+                else
+                    kwNames[kwc++] = (u16)identifierConstant(compiler, &name);
+            }
+            else
+            {
+                if (kwc > 0)
+                    errorAtCurrent(compiler, "a positional argument can't follow keyword arguments.");
+                commandArgument(compiler);
+                argc++;
+            }
+            // After an argument, without a comma: `flag` means flag=True,
+            // `key=value` is a keyword argument.
+            while (checkToken(compiler, NAME) && kwc < 254)
+            {
+                bool keyword = nameThenEqual(compiler);
+                advanceToken(compiler);
+                Token name = compiler->parser->previous;
+                if (keyword)
+                {
+                    advanceToken(compiler); // =
+                    commandArgument(compiler);
+                }
+                else
+                    emitByte(compiler, OP_TRUE);
+                kwNames[kwc++] = (u16)identifierConstant(compiler, &name);
+                argc++;
+            }
+            if (!matchToken(compiler, COMMA))
+                break;
+        }
+    }
+    compiler->flags.argv--;
+    bool hasBlock = matchToken(compiler, COLON);
+    if (hasBlock)
+    {
+        compileBlock(compiler, indent);
+        Token body = {.token = "body", .length = 4};
+        kwNames[kwc++] = (u16)identifierConstant(compiler, &body);
+        argc++;
+    }
+    if (argc > 255)
+        error(compiler, "too many arguments.");
+    if (kwc > 0)
+    {
+        emitByte(compiler, OP_CALLKW);
+        emitByte(compiler, (u8)argc);
+        emitByte(compiler, kwc);
+        for (int i = 0; i < kwc; i++)
+        {
+            emitByte(compiler, (u8)(kwNames[i] >> 8));
+            emitByte(compiler, (u8)(kwNames[i] & 0xff));
+        }
+    }
+    else
+        emitBytes(compiler, OP_CALL, (u8)argc);
+    emitByte(compiler, OP_POP);
+    // The block consumed its own line(s).
+    if (!hasBlock && !checkToken(compiler, END))
+        consumeToken(compiler, NEWLINE, "expect 'newline' after the command's arguments.");
+}
+
 void statement(Compiler *compiler)
 {
     if (checkToken(compiler, IF) || checkToken(compiler, ELIF) || checkToken(compiler, ELSE) || checkToken(compiler, CASE) || checkToken(compiler, COND) || checkToken(compiler, WHILE) || checkToken(compiler, FOR))
@@ -1492,7 +1866,11 @@ void statement(Compiler *compiler)
     }
     else
     {
-        simpleStatement(compiler);
+        bool bare;
+        if (isCommandCall(compiler, &bare))
+            commandCall(compiler, bare);
+        else
+            simpleStatement(compiler);
     }
 }
 

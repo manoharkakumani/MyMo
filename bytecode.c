@@ -104,15 +104,18 @@ void emitSetV(Compiler *compiler, uint nameIdx)
         emitConstOp(compiler, OP_SETG, nameIdx);
     else if (scope == SCOPE_NONLOCAL)
         emitConstOp(compiler, OP_SETNL, nameIdx);
+    else if (compiler->function->block)
+        emitConstOp(compiler, OP_SETB, nameIdx); // assigns in the enclosing scope
     else
         emitNameOpWithIC(compiler, OP_SETV, nameIdx);
 }
 
 void emitIncrVar(Compiler *compiler, uint nameIdx, int32_t delta)
 {
-    if (nameScope(compiler, nameIdx))
+    if (nameScope(compiler, nameIdx) || compiler->function->block)
     {
-        // No super-instruction for global/nonlocal names: name = name + delta.
+        // No super-instruction for global/nonlocal names or inside blocks
+        // (OP_SETB): name = name + delta.
         emitGetV(compiler, nameIdx);
         emitConstantV(compiler, V_INT_VAL(delta));
         emitBytes(compiler, OP_ADD, 1);

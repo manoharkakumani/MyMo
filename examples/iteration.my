@@ -108,7 +108,4 @@ try:
     list(Bad())
 catch KeyError as e:
     print("caught:", e)
-try:
-    list(fiber(() => 1))
-catch TypeError as e:
-    print(e)
+print(list(fiber(() => 1)))

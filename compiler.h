@@ -29,8 +29,31 @@ typedef struct Loop
     // (popped at normal exit). break/return jump past that pop, so they
     // must pop it themselves.
     bool isFor;
+    int seq; // Compiler.scopeSeq at entry: orders loops against TryCtxs
+    // A `for`'s target names: a block created inside the loop pins their
+    // current values (OP_BLOCKVAR).
+    Token names[8];
+    int nameCount;
     struct Loop *enclosing;
 } Loop;
+
+// An open `try` (or the `final:` body of one) in the current function.
+// return/break/continue that leave a try don't jump out directly: they
+// push [Nil, k] and jump to its final block, whose tail dispatches on k
+// and re-issues the exit from outside the try. While the final body
+// itself compiles (inFinal), [pending, code] sit on the stack, so an exit
+// from there pops them.
+#define TRY_MAX_EXITS 32
+typedef struct TryCtx
+{
+    int outerDepth; // compiler->tryDepth outside the try
+    int seq;
+    bool inFinal;
+    int exitCount;
+    u8 exitKinds[TRY_MAX_EXITS];
+    int exitJumps[TRY_MAX_EXITS];
+    struct TryCtx *enclosing;
+} TryCtx;
 
 typedef enum
 {
@@ -78,6 +101,8 @@ typedef struct Compiler
     // one OP_ENDTRY per try they jump out of, or the VM's handler stack
     // would keep a stale entry (and overflow after 32).
     int tryDepth;
+    TryCtx *tryCtx;
+    int scopeSeq;
     // Chunk offset of the instruction the most recent OP_WIDE prefixes
     // (-1 if none). Peepholes that rewind an instruction must not split
     // it from its prefix.

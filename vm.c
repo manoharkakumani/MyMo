@@ -1,5 +1,11 @@
 #include "common.h"
 #include "vm.h"
+
+// Top-level code of the main program (not inside a call, a module body or
+// a running fiber): its variables are the globals. Every opcode that
+// reads, writes or imports names must agree on this, or `from x use *`
+// followed by an assignment reads a stale copy.
+#define AT_TOP_LEVEL(vm) (!(vm)->fiber->parent && (vm)->fiber->frameCount == 0)
 #include "repr.h"
 #include "prelude.h"
 #include "builtins.h"
@@ -272,6 +278,8 @@ static bool lookupEnclosing(MVM *vm, CallFrame *parent, MyMoObject *name, Value 
         if (getEntryV(&parent->locals, name, out))
             return true;
         MyMoFunction *fn = parent->function;
+        if (fn->bound && getEntryV(fn->bound, name, out))
+            return true;
         if (fn->argc > CALLFRAME_ARGS_INLINE)
             continue;
         for (int i = 0; i < fn->argc; i++)
@@ -285,6 +293,64 @@ static bool lookupEnclosing(MVM *vm, CallFrame *parent, MyMoObject *name, Value 
         }
     }
     return false;
+}
+
+// The variables `global name` refers to from code running in `frame`: the
+// top level of the module that defined it (a module's variables live in
+// its body frame), or the main program's globals.
+static MyMoDict *globalScope(MVM *vm, CallFrame *frame)
+{
+    for (CallFrame *f = frame; f; f = f->function->frame)
+        if (f->function->type == FN_MODULE)
+            return &f->locals;
+    return &vm->globals;
+}
+
+// Store for OP_SETB: see opcodes.h.
+static void setBlockVariable(MVM *vm, CallFrame *frame, MyMoObject *name, Value value)
+{
+    Value unused;
+    if (getEntryV(&frame->locals, name, &unused))
+    {
+        setEntryV(vm, &frame->locals, name, value);
+        return;
+    }
+    MyMoDict *bound = frame->function->bound;
+    if (bound && getEntryV(bound, name, &unused))
+    {
+        setEntryV(vm, bound, name, value);
+        return;
+    }
+    MyMoString *key = AS_STRING(name);
+    for (CallFrame *f = frame->function->frame; f; f = f->function->frame)
+    {
+        if (getEntryV(&f->locals, name, &unused))
+        {
+            setEntryV(vm, &f->locals, name, value);
+            return;
+        }
+        if (f->function->bound && getEntryV(f->function->bound, name, &unused))
+        {
+            setEntryV(vm, f->function->bound, name, value);
+            return;
+        }
+        MyMoFunction *fn = f->function;
+        if (fn->argc > CALLFRAME_ARGS_INLINE)
+            continue;
+        for (int i = 0; i < fn->argc; i++)
+            if (fn->argv[i] && fn->argv[i]->length == key->length &&
+                memcmp(fn->argv[i]->value, key->value, (size_t)key->length) == 0)
+            {
+                f->args[i] = value;
+                return;
+            }
+    }
+    if (getEntryV(&vm->globals, name, &unused))
+    {
+        setEntryV(vm, &vm->globals, name, value);
+        return;
+    }
+    setEntryV(vm, &frame->locals, name, value);
 }
 
 // An integer result: inline when it fits in 32 bits, else a heap int.
@@ -305,32 +371,38 @@ static Value intResult(MVM *vm, long n)
 static bool packVarargs(MVM *vm, MyMoFunction *fn, int argc, MyMoDict *extra)
 {
     int fixed = FIXED_PARAMS(fn);
+    int positional = fixed - fn->kwonly; // parameters a positional argument can fill
     const char *name = fn->name ? fn->name->value : "function";
     MyMoTuple *rest = NULL;
-    if (argc > fixed)
+    if (argc > positional)
     {
         if (!(fn->isargs & VARARGS_REST))
         {
-            runtimeError(vm, "TypeError: %s() takes %d positional argument%s but %d were given", name, fixed,
-                         fixed == 1 ? "" : "s", argc);
+            runtimeError(vm, "TypeError: %s() takes %d positional argument%s but %d were given", name, positional,
+                         positional == 1 ? "" : "s", argc);
             return false;
         }
-        Value *base = vm->fiber->stack.values + vm->fiber->stack.count - (argc - fixed);
+        Value *base = vm->fiber->stack.values + vm->fiber->stack.count - (argc - positional);
         rest = newTuple(vm);
-        for (int i = 0; i < argc - fixed; i++)
+        for (int i = 0; i < argc - positional; i++)
             writeValueArray(vm, &rest->values, base[i]);
-        vm->fiber->stack.count -= argc - fixed;
+        vm->fiber->stack.count -= argc - positional;
+        argc = positional;
     }
-    else if (argc < fixed)
+    if (argc < fixed)
     {
         int firstDefault = fixed - fn->defaultCount;
-        if (argc < firstDefault)
-        {
-            runtimeError(vm, "TypeError: %s() missing required argument '%s'", name, fn->argv[argc]->value);
-            return false;
-        }
         for (int i = argc; i < fixed; i++)
-            pushV(vm, fn->defaults[i - firstDefault]);
+        {
+            Value d = i < firstDefault ? V_EMPTY_VAL : fn->defaults[i - firstDefault];
+            if (V_IS_EMPTY(d))
+            {
+                runtimeError(vm, "TypeError: %s() missing required %sargument '%s'", name,
+                             i >= positional ? "keyword-only " : "", fn->argv[i]->value);
+                return false;
+            }
+            pushV(vm, d);
+        }
     }
     if (fn->isargs & VARARGS_REST)
         pushV(vm, V_OBJ_VAL(AS_OBJECT(rest ? rest : newTuple(vm))));
@@ -634,20 +706,21 @@ static bool bindKeywords(MVM *vm, Value calleeV, u32 *argc, int kwc, MyMoString 
     }
     const char *fname = fn->name ? fn->name->value : "function";
     int nparams = FIXED_PARAMS(fn) - offset; // named parameters we fill here
+    int npositional = nparams - fn->kwonly;  // ... that take positional arguments
     MyMoTuple *rest = NULL;
     MyMoDict *extra = NULL;
-    if (positional > nparams && (fn->isargs & VARARGS_REST))
+    if (positional > npositional && (fn->isargs & VARARGS_REST))
     {
         rest = newTuple(vm);
-        for (int i = nparams; i < positional; i++)
+        for (int i = npositional; i < positional; i++)
             writeValueArray(vm, &rest->values, base[i]);
         pushV(vm, V_OBJ_VAL(AS_OBJECT(rest))); // rooted while we allocate
-        positional = nparams;
+        positional = npositional;
     }
-    if (positional > nparams)
+    if (positional > npositional)
     {
-        runtimeError(vm, "TypeError: %s() takes %d positional argument%s but %d were given", fname, nparams,
-                     nparams == 1 ? "" : "s", positional);
+        runtimeError(vm, "TypeError: %s() takes %d positional argument%s but %d were given", fname, npositional,
+                     npositional == 1 ? "" : "s", positional);
         return false;
     }
     Value slots[256];
@@ -688,9 +761,10 @@ static bool bindKeywords(MVM *vm, Value calleeV, u32 *argc, int kwc, MyMoString 
         if (!V_IS_EMPTY(slots[i]))
             continue;
         int param = i + offset;
-        if (param < firstDefault)
+        if (param < firstDefault || V_IS_EMPTY(fn->defaults[param - firstDefault]))
         {
-            runtimeError(vm, "TypeError: %s() missing required argument '%s'", fname, fn->argv[param]->value);
+            runtimeError(vm, "TypeError: %s() missing required %sargument '%s'", fname,
+                         i >= npositional ? "keyword-only " : "", fn->argv[param]->value);
             return false;
         }
         slots[i] = fn->defaults[param - firstDefault];
@@ -1026,6 +1100,12 @@ int runMVM(MVM *vm)
         Value value = lpop();
         MyMoClass *klass = AS_CLASS(V_AS_OBJ(lpeek(0)));
         original->klass = AS_OBJECT(klass);
+        if (original->frame == NULL)
+        {
+            original->frame = frame; // see OP_MET
+            if (frame->function->type != FN_SCRIPT && frame->function->type != FN_MODULE)
+                frame->captured = true;
+        }
         if (V_IS_OBJ(value) && IS_FUNCTION(V_AS_OBJ(value)))
         {
             MyMoFunction *method = AS_FUNCTION(V_AS_OBJ(value));
@@ -1044,6 +1124,9 @@ int runMVM(MVM *vm)
         free(function->defaults);
         function->defaults = malloc(sizeof(Value) * n);
         memcpy(function->defaults, sp - 1 - n, sizeof(Value) * n);
+        for (int i = 0; i < n; i++) // `_` marks a required keyword-only parameter
+            if (V_IS_OBJ(function->defaults[i]) && V_AS_OBJ(function->defaults[i]) == vm->wildcard)
+                function->defaults[i] = V_EMPTY_VAL;
         function->defaultCount = n;
         sp[-1 - n] = sp[-1];
         sp -= n;
@@ -2414,7 +2497,7 @@ int runMVM(MVM *vm)
                     icp[7] = (u8)(((d)->modifyCount >> 24) & 0xff);                       \
                 }                                                                          \
             } while (0)
-        if ((IS_FIBER_ROOT(vm->fiber)) && vm->fiber->frameCount == 0)
+        if (AT_TOP_LEVEL(vm))
         {
             if (getEntryV(&vm->globals, variable, &val))
             {
@@ -2429,6 +2512,13 @@ int runMVM(MVM *vm)
             if (getEntryV(&frame->locals, variable, &val))
             {
                 FILL_IC(IC_TAG_LOCALS, &frame->locals, variable);
+                pushV(vm, val);
+                DISPATCH();
+            }
+            // A block's pinned loop variables (never cached: each block
+            // closure made at this site has its own).
+            if (frame->function->bound && getEntryV(frame->function->bound, variable, &val))
+            {
                 pushV(vm, val);
                 DISPATCH();
             }
@@ -2470,7 +2560,7 @@ int runMVM(MVM *vm)
         {
             MyMoDict *target = NULL;
             u8 hit_tag = IC_TAG_COLD;
-            if (!vm->fiber->parent && vm->fiber->frameCount == 0)
+            if (AT_TOP_LEVEL(vm))
             {
                 target = &vm->globals; hit_tag = IC_TAG_GLOBALS;
             }
@@ -2526,6 +2616,17 @@ int runMVM(MVM *vm)
         MyMoObject *method = ReadObject();
         MyMoObject *name = ReadObject();
         MyMoClass *klass = AS_CLASS(peek(vm, 0));
+        // Like OP_FN: the method resolves free names through the frame
+        // that defined the class (a module's globals when the class is
+        // used from another file; the enclosing call's locals when the
+        // class statement runs inside a function).
+        FunctionType mft = frame->function->type;
+        if (mft != FN_SCRIPT && mft != FN_MODULE && mft != FN_COMPILED)
+        {
+            method = AS_OBJECT(cloneFunction(vm, AS_FUNCTION(method)));
+            frame->captured = true;
+        }
+        AS_FUNCTION(method)->frame = frame;
         if (AS_STRING(name)->length == 8 && memcmp(AS_STRING(name)->value, "__init__", 8) == 0)
         {
             klass->init = method;
@@ -2544,7 +2645,7 @@ int runMVM(MVM *vm)
         // frame, which is marked captured so OP_FRET won't recycle it.
         MyMoFunction *function = AS_FUNCTION(ReadObject());
         FunctionType ft = frame->function->type;
-        if (ft != FN_SCRIPT && ft != FN_MODULE && ft != FN_COMPILED)
+        if (function->block || (ft != FN_SCRIPT && ft != FN_MODULE && ft != FN_COMPILED))
         {
             function = cloneFunction(vm, function);
             frame->captured = true;
@@ -2635,7 +2736,7 @@ int runMVM(MVM *vm)
                     else
                     {
                         for (int i = (int)argCount - 1; i >= 0; i--)
-                            setEntry(vm, &newFrame->locals, AS_OBJECT(function->argv[i]), V_AS_OBJ(*--sp));
+                            setEntryV(vm, &newFrame->locals, AS_OBJECT(function->argv[i]), *--sp);
                     }
                 }
                 // Save caller frame ip and switch.
@@ -2742,11 +2843,45 @@ int runMVM(MVM *vm)
         sp--;
         DISPATCH();
     }
+    OP_SETB:
+    {
+        MyMoObject *name = ReadObject();
+        setBlockVariable(vm, frame, name, lpeek(0));
+        DISPATCH();
+    }
+    OP_BLOCKVAR:
+    {
+        MyMoObject *name = ReadObject();
+        Value value = lpop();
+        MyMoFunction *blk = AS_FUNCTION(V_AS_OBJ(lpeek(0)));
+        if (blk->bound == NULL)
+            blk->bound = newDict(vm);
+        setEntryV(vm, blk->bound, name, value);
+        DISPATCH();
+    }
+    OP_CALLIF:
+    {
+        Value v = lpeek(0);
+        if (!V_IS_OBJ(v))
+            DISPATCH();
+        MyMoObjectType t = V_AS_OBJ(v)->type;
+        if (t != OBJ_FUNCTION && t != OBJ_BUILTIN_FUNCTION && t != OBJ_BOUND_METHOD && t != OBJ_BUILTIN_METHOD)
+            DISPATCH();
+        // Same as `v()`: a zero-argument OP_CALL.
+        GC_SAFEPOINT();
+        SAVE();
+        if (!caller(vm, V_AS_OBJ(v), 0))
+            goto _runtime_error;
+        LOAD();
+        DISPATCH();
+    }
     OP_GETG:
     {
         MyMoObject *name = ReadObject();
         Value value;
-        if (!getEntryV(&vm->globals, name, &value) && !getEntryV(&vm->builtins, name, &value))
+        MyMoDict *scope = globalScope(vm, frame);
+        if (!getEntryV(scope, name, &value) && !getEntryV(&vm->globals, name, &value) &&
+            !getEntryV(&vm->builtins, name, &value))
         {
             SAVE();
             runtimeError(vm, "NameError: Undefined variable '%s'.", AS_STRING(name)->value);
@@ -2758,7 +2893,7 @@ int runMVM(MVM *vm)
     OP_SETG:
     {
         MyMoObject *name = ReadObject();
-        setEntryV(vm, &vm->globals, name, lpeek(0));
+        setEntryV(vm, globalScope(vm, frame), name, lpeek(0));
         DISPATCH();
     }
     OP_SETNL:
@@ -2916,6 +3051,7 @@ int runMVM(MVM *vm)
             // exactly one CallFrame per imported module. Negligible
             // — modules don't churn — and worth the simplicity.
             copyDict(vm, &frame->locals, vm->currentModule->variables);
+            vm->currentModule->frame = frame;
             vm->currentModule = vm->currentModule->parent;
             frame = vm->fiber->callFrames[--vm->fiber->frameCount];
             ip = frame->ip;
@@ -3053,7 +3189,9 @@ int runMVM(MVM *vm)
             {
             case OBJ_INSTANCE: dest = AS_INSTANCE(target)->fields; break;
             case OBJ_CLASS:    dest = AS_CLASS(target)->variables; break;
-            case OBJ_MODULE:   dest = AS_MODULE(target)->variables; break;
+            case OBJ_MODULE:
+                dest = AS_MODULE(target)->frame ? &AS_MODULE(target)->frame->locals : AS_MODULE(target)->variables;
+                break;
             // JS-style dot-write: `d.status = v` is `d["status"] = v`.
             case OBJ_DICT:     dest = AS_DICT(target); break;
             case OBJ_BUILTIN_CLASS:
@@ -3203,6 +3341,8 @@ int runMVM(MVM *vm)
         {
             MyMoModule *module = AS_MODULE(recv);
             MyMoObject *variable = ReadObject();
+            if (module->frame && getEntryV(&module->frame->locals, variable, &value))
+                GETP_FOUND(value);
             if (getEntryV(module->variables, variable, &value))
                 GETP_FOUND(value);
             SAVE();
@@ -3505,7 +3645,7 @@ int runMVM(MVM *vm)
     {
         MyMoObject *name = pop(vm);
         MyMoObject *value = pop(vm);
-        if ((IS_FIBER_ROOT(vm->fiber)) && vm->fiber->frameCount == 0)
+        if (AT_TOP_LEVEL(vm))
         {
             setEntry(vm, &vm->globals, name, value);
         }
@@ -3518,7 +3658,7 @@ int runMVM(MVM *vm)
     OP_COPY:
     {
         MyMoModule *module = AS_MODULE(pop(vm));
-        copyDict(vm, module->variables, (((IS_FIBER_ROOT(vm->fiber)) && vm->fiber->frameCount == 0) ? &vm->globals : &frame->locals));
+        copyDict(vm, module->variables, (AT_TOP_LEVEL(vm) ? &vm->globals : &frame->locals));
         DISPATCH();
     }
     OP_WILDCARD:
@@ -3590,13 +3730,15 @@ int runMVM(MVM *vm)
                     || getEntryV(vm->currentClass->methods, variable, &val);
             if (!have)
             {
-                if ((IS_FIBER_ROOT(vm->fiber)) && vm->fiber->frameCount == 0)
+                if (AT_TOP_LEVEL(vm))
                 {
                     if ((have = getEntryV(&vm->globals, variable, &val))) { hitTag = IC_TAG_GLOBALS; hitDict = &vm->globals; }
                 }
                 else
                 {
                     if ((have = getEntryV(&frame->locals, variable, &val))) { hitTag = IC_TAG_LOCALS; hitDict = &frame->locals; }
+                    if (!have && frame->function->bound)
+                        have = getEntryV(frame->function->bound, variable, &val);
                     if (!have)
                         have = lookupEnclosing(vm, frame->function->frame, variable, &val);
                     if (!have && (have = getEntryV(&vm->globals, variable, &val))) { hitTag = IC_TAG_GLOBALS; hitDict = &vm->globals; }
@@ -3708,7 +3850,7 @@ int runMVM(MVM *vm)
                 else
                 {
                     for (int i = (int)argCount - 1; i >= 0; i--)
-                        setEntry(vm, &newFrame->locals, AS_OBJECT(function->argv[i]), V_AS_OBJ(*--sp));
+                        setEntryV(vm, &newFrame->locals, AS_OBJECT(function->argv[i]), *--sp);
                 }
             }
             // Push callee so OP_FRET's "pop callee" branch (FN_FUNCTION>FN_METHOD)
@@ -3815,7 +3957,7 @@ int runMVM(MVM *vm)
         u8 hit_tag = IC_TAG_COLD;
         if (!vm->currentClass)
         {
-            if (!vm->fiber->parent && vm->fiber->frameCount == 0)
+            if (AT_TOP_LEVEL(vm))
             {
                 target = &vm->globals; hit_tag = IC_TAG_GLOBALS;
             }

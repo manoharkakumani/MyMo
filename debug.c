@@ -76,6 +76,12 @@ int disassembleInstruction(Chunk *chunk, int offset)
         return constantInstruction("OP_SETG", chunk, offset);
     case OP_SETNL:
         return constantInstruction("OP_SETNL", chunk, offset);
+    case OP_SETB:
+        return constantInstruction("OP_SETB", chunk, offset);
+    case OP_CALLIF:
+        return simpleInstruction("OP_CALLIF", offset);
+    case OP_BLOCKVAR:
+        return constantInstruction("OP_BLOCKVAR", chunk, offset);
     case OP_LEXTEND:
         return simpleInstruction("OP_LEXTEND", offset);
     case OP_DADD:

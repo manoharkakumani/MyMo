@@ -1,0 +1,10 @@
+plain 1 2.0 0.30000000000000004 1e+20 Nil True
+["a", 1, 2.5, ("t",), {"k": [Nil]}]
+"quote \" and\nnewline" 3 2.0
+[1, "x"] [1, "x"] (1, 2)
+(1, 2) (1, 2) p=(1, 2)
+[(1, 2), (1, 2)]
+$2.5 [Money(250)] Money(250)
+<Plain instance>
+error: TypeError: __str__() returned <object 'int'>, not a string
+[[[[1]]]]

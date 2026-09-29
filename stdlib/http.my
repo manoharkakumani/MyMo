@@ -1,0 +1,115 @@
+# http: an HTTP/HTTPS client (libcurl underneath).
+#
+#   from "http" use get, post
+#
+#   r = get("https://api.github.com/repos/python/cpython",
+#           headers={"Authorization": "Bearer " + token})
+#   if r.ok:
+#       print(r.json["stargazers_count"])
+#
+#   post("https://example.com/api/todos", json={"title": "Buy milk"})
+#
+# Every call returns a response dict (fields also readable as r.status):
+#   status   int (0 if the request never got an answer)
+#   ok       True for 2xx
+#   body     the response text
+#   json     the body decoded, when the server says it's JSON (else Nil)
+#   headers  dict of lower-case header names
+#   url      the final URL (after redirects)
+#   error    Nil, or why the request failed (DNS, timeout, TLS, ...)
+#
+# A failed connection doesn't raise; check r.ok / r.error. Pass
+# raise_errors=True to get an IOError for network errors and non-2xx.
+#
+# Requests run on a worker thread. Inside a ui handler or a mono route,
+# the calling handler waits while the app keeps serving everyone else;
+# anywhere else the call simply blocks until the response arrives.
+
+from "_http" use start, fd, done, wait, result, can_yield
+from "json" use encode, decode
+
+__HEX = "0123456789ABCDEF"
+__SAFE = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~"
+
+# Percent-encode a string for a URL query or form body.
+fn quote(s):
+    out = []
+    for ch in str(s):
+        if ch in __SAFE:
+            out.append(ch)
+        else:
+            for b in __utf8(ch):
+                out.append("%" + __HEX[b // 16] + __HEX[b % 16])
+    return "".join(out)
+
+fn __utf8(ch):
+    c = ord(ch)
+    if c < 0x80:
+        return [c]
+    if c < 0x800:
+        return [0xC0 | (c >> 6), 0x80 | (c & 0x3F)]
+    if c < 0x10000:
+        return [0xE0 | (c >> 12), 0x80 | ((c >> 6) & 0x3F), 0x80 | (c & 0x3F)]
+    return [0xF0 | (c >> 18), 0x80 | ((c >> 12) & 0x3F), 0x80 | ((c >> 6) & 0x3F), 0x80 | (c & 0x3F)]
+
+# {"q": "a b", "n": 2} -> "q=a%20b&n=2"
+fn urlencode(params):
+    return "&".join([quote(k) + "=" + quote(params[k]) for k in params])
+
+fn request(method, url, body=Nil, headers=Nil, json=Nil, form=Nil, params=Nil,
+           timeout=30, raise_errors=False):
+    hdrs = {}
+    if headers != Nil:
+        for k in headers:
+            hdrs[k] = headers[k]
+    lower = [k.lower() for k in hdrs]
+    if json != Nil:
+        body = encode(json)
+        if "content-type" not in lower:
+            hdrs["Content-Type"] = "application/json"
+    elif form != Nil:
+        body = urlencode(form)
+        if "content-type" not in lower:
+            hdrs["Content-Type"] = "application/x-www-form-urlencoded"
+    if "accept" not in lower:
+        hdrs["Accept"] = "application/json, text/plain, */*"
+    if params != Nil and len(params) > 0:
+        url += ("&" if "?" in url else "?") + urlencode(params)
+    h = start(method.upper(), url, body, hdrs, timeout)
+    if can_yield():
+        while not done(h):
+            yield({"fd": fd(h)})
+    else:
+        wait(h)
+    r = result(h)
+    r["json"] = Nil
+    ctype = r["headers"].get("content-type", "")
+    if "json" in ctype and r["body"] != "":
+        try:
+            r["json"] = decode(r["body"])
+        catch:
+            r["json"] = Nil
+    if raise_errors:
+        if r["error"] != Nil:
+            raise IOError(method.upper() + " " + url + ": " + r["error"])
+        if not r["ok"]:
+            raise IOError(method.upper() + " " + url + ": HTTP " + str(r["status"]))
+    return r
+
+fn get(url, **options):
+    return request("GET", url, **options)
+
+fn post(url, body=Nil, **options):
+    return request("POST", url, body, **options)
+
+fn put(url, body=Nil, **options):
+    return request("PUT", url, body, **options)
+
+fn patch(url, body=Nil, **options):
+    return request("PATCH", url, body, **options)
+
+fn delete(url, **options):
+    return request("DELETE", url, **options)
+
+fn head(url, **options):
+    return request("HEAD", url, **options)

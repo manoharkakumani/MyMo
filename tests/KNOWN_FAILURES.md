@@ -3,7 +3,7 @@
 ## Release build: nothing failing
 
 Every example in `examples/` plus `test.my` passes against `master` in the
-default release build. `make test` runs all 18 to completion.
+default release build, and `make test` passes in full.
 
 ## Historical: `fall` + `$:` stack underflow (resolved)
 
@@ -19,24 +19,15 @@ Fixed in `statement.c::caseStatement` and `statement.c::cases` by emitting
 extra slot is harmless — the trailing not-equal-path `OP_POP` at the end
 of `cases()` still pairs up correctly.
 
-## AddressSanitizer: heap-buffer-overflow in `iskeyword` (lexer.c)
+## Historical: ASan heap-buffer-overflow in `iskeyword` (resolved)
 
-Building with `-fsanitize=address` and running any non-trivial example trips
-ASan with a 4–8 byte read past the end of the source buffer allocated in
-`runFile()` (`utils.c`). The trace points at `iskeyword` (`lexer.c`) doing
-`memcmp(token, candidate, k)` where `token` is right at the end of the
-mmapped/malloc'd source and the keyword length `k` reads past EOF.
+An ASan build used to report a read past the end of the source buffer in
+`iskeyword` (lexer.c). As of 2026-09-28 an ASan+UBSan build runs every
+example cleanly, with and without `MYMO_GC_STRESS=1`:
 
-This is a pre-existing bug independent of the perf-redesign work — the
-release build does not trip it because the over-read happens to land on
-accessible memory. Address it as part of Phase 8 cleanup (alongside the REPL
-input-handling overhaul), or earlier if a real crash emerges.
-
-To reproduce:
 ```bash
 make clean
-make CFLAGS_EXTRA="-fsanitize=address -fno-omit-frame-pointer"
-./mymo examples/variable.my       # ASan report points at iskeyword in lexer.c
+make CFLAGS_EXTRA="-fsanitize=address,undefined -fno-omit-frame-pointer"
 ```
 
 ## Historical: stale `.myc` cache pollution (resolved 2026-04-26)

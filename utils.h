@@ -8,4 +8,6 @@ void defineBuiltInFunctions(MVM *vm);
 char *pathResolver(MVM *vm, char *path);
 MyMoFunction *runFile(MVM *vm, char *path);
 
+void setProjectRoot(const char *scriptPath);
+
 #endif

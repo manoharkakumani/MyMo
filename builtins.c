@@ -180,8 +180,27 @@ bool appendIterable(MVM *vm, const char *fn, Value v, ValueArray *out)
         case OBJ_INSTANCE:
             return appendFromIterator(vm, fn, v, out);
         case OBJ_FIBER:
-            runtimeError(vm, "TypeError: %s() can't consume a fiber; collect it with [x for x in f]", fn);
-            return false;
+        {
+            // The yields must land in a MyMo frame above this host call,
+            // so let the prelude's `[x for x in f]` do the iterating.
+            Value drain, items;
+            if (!getEntryV(&vm->builtins, AS_OBJECT(newString(vm, "__drain_fiber", 13)), &drain))
+            {
+                runtimeError(vm, "RuntimeError: %s() can't consume a fiber (prelude not loaded)", fn);
+                return false;
+            }
+            vm->quietErrors++;
+            MyMoResult r = mymo_call(vm, drain, 1, &v, &items);
+            vm->quietErrors--;
+            if (r != MYMO_OK)
+            {
+                MyMoObject *exc = vm->fiber->exception;
+                Value text = exc ? valueToStr(vm, objectToValue(exc)) : V_EMPTY_VAL;
+                runtimeError(vm, "%s", V_IS_EMPTY(text) ? vm->lastError : AS_STRING(V_AS_OBJ(text))->value);
+                return false;
+            }
+            return appendIterable(vm, fn, items, out);
+        }
         default:
             break;
         }

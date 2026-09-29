@@ -1,0 +1,8 @@
+line1
+line2
+tab[	]
+quote["] apostrophe['] hex[AB]
+path C:\dir and unknown \d kept
+f-string 42 with literal {braces} and "quotes"
+backtick	tab
+3 0

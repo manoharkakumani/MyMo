@@ -57,7 +57,7 @@ SRC_DT      := $(wildcard datatypes/*.c)
 SRC_MOD     := modules/math.c modules/time.c modules/os.c modules/io.c \
                modules/random.c modules/date.c modules/socket.c modules/http.c \
                modules/json.c modules/sqlite.c modules/server.c modules/nodes.c \
-               modules/runloop.c \
+               modules/runloop.c modules/term.c \
                modules/modules.c
 SRC         := $(SRC_ROOT) $(SRC_DT) $(SRC_MOD)
 

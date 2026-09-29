@@ -457,6 +457,41 @@ MyMoFunction *runFile(MVM *vm, char *path)
     return function;
 }
 
+// The folder of the script `mymo` was started with: imports that aren't
+// found next to the importing file are looked up here too, so any file
+// in a project can `from "components/cards" use ...`.
+static char g_projectRoot[4096];
+
+void setProjectRoot(const char *scriptPath)
+{
+    snprintf(g_projectRoot, sizeof g_projectRoot, "%s", scriptPath);
+    char *slash = strrchr(g_projectRoot, '/');
+#ifdef _WIN32
+    char *back = strrchr(g_projectRoot, '\\');
+    if (back && (!slash || back > slash))
+        slash = back;
+#endif
+    if (slash)
+        slash[1] = '\0';
+    else
+        g_projectRoot[0] = '\0';
+}
+
+// <project root>/<name>.my if that file exists (malloc'd), else NULL.
+static char *projectModule(const char *name)
+{
+    if (g_projectRoot[0] == '\0' || name[0] == '/' || name[0] == '.')
+        return NULL;
+    size_t n = strlen(g_projectRoot) + strlen(name) + 4;
+    char *candidate = New(char, n);
+    snprintf(candidate, n, "%s%s.my", g_projectRoot, name);
+    Stat st;
+    if (stat(candidate, &st) == 0)
+        return candidate;
+    free(candidate);
+    return NULL;
+}
+
 char *pathResolver(MVM *vm, char *_path)
 {
     #define DELIMITER '/'
@@ -571,6 +606,9 @@ char *pathResolver(MVM *vm, char *_path)
     // the same `from "name" use ...` syntax as user files.
     free(cachePath);
     free(path);
+    char *fromRoot = projectModule(_path);
+    if (fromRoot)
+        return fromRoot;
     if (stdlib_source_lookup(_path) != NULL)
     {
         size_t nameLen = strlen(_path);

@@ -22,6 +22,9 @@ MyMoFunction *newFunction(MVM *vm)
     function->chunk = newChunk(vm);
     function->frame = NULL;
     function->isargs = false;
+    function->kwonly = 0;
+    function->block = false;
+    function->bound = NULL;
     function->klass = AS_OBJECT(vm->builtInClasses[OBJ_OBJECT]);
     function->proto = NULL;
     function->defaultCount = 0;
@@ -37,6 +40,7 @@ MyMoFunction *cloneFunction(MVM *vm, MyMoFunction *proto)
     memcpy((char *)function + sizeof(MyMoObject), (char *)proto + sizeof(MyMoObject),
            sizeof(MyMoFunction) - sizeof(MyMoObject));
     function->proto = proto->proto ? proto->proto : proto;
+    function->bound = NULL;
     if (proto->defaultCount > 0)
     {
         function->defaults = malloc(sizeof(Value) * (size_t)proto->defaultCount);
@@ -50,7 +54,13 @@ int missingDefaults(MyMoFunction *function, int argc)
     if (argc == function->argc)
         return 0;
     if (argc < function->argc && argc >= function->argc - function->defaultCount)
-        return function->argc - argc;
+    {
+        int fill = function->argc - argc;
+        for (int i = function->defaultCount - fill; i < function->defaultCount; i++)
+            if (V_IS_EMPTY(function->defaults[i]))
+                return -1; // a required keyword-only parameter
+        return fill;
+    }
     return -1;
 }
 

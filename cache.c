@@ -17,7 +17,7 @@
 //   u64     source hash          FNV-1a of the .my text (0 = unknown)
 //   function                     the script's top-level function
 //
-//   function := u8 type, i32 argc, u8 isargs, str|none name,
+//   function := u8 type, i32 argc, u8 isargs, u8 kwonly, u8 block, str|none name,
 //               str argv[argc], chunk
 //   chunk    := i32 count, u8 code[count], u32 lines[count],
 //               u32 cols[count], i32 nconst, const[nconst]
@@ -75,7 +75,7 @@ static bool ensureCacheDir(const char *cachePath)
     return ok;
 }
 
-#define MYMO_CACHE_VERSION 6 // 3: OP_WIDE; 4: OP_DEFAULTS; 5: OP_METV; 6: varargs flags
+#define MYMO_CACHE_VERSION 8 // 3: OP_WIDE; 4: OP_DEFAULTS; 5: OP_METV; 6: varargs flags; 7: kwonly; 8: blocks, OP_SETB, OP_CALLIF
 
 // Stamped by the Makefile, which rebuilds cache.o whenever any other object
 // changes; so any compiler/VM change invalidates existing caches.
@@ -174,7 +174,7 @@ static bool putChunk(FILE *f, Chunk *c)
 
 static bool putFunction(FILE *f, MyMoFunction *fn)
 {
-    if (!putU8(f, (uint8_t)fn->type) || !putI32(f, fn->argc) || !putU8(f, fn->isargs)
+    if (!putU8(f, (uint8_t)fn->type) || !putI32(f, fn->argc) || !putU8(f, fn->isargs) || !putU8(f, fn->kwonly) || !putU8(f, fn->block)
         || !putU8(f, fn->name != NULL) || (fn->name && !putStr(f, fn->name)))
         return false;
     for (int i = 0; i < fn->argc; i++)
@@ -314,15 +314,17 @@ static bool getChunk(MVM *vm, FILE *f, Chunk *c)
 
 static MyMoFunction *getFunction(MVM *vm, FILE *f)
 {
-    uint8_t type, isargs, hasName;
+    uint8_t type, isargs, kwonly, block, hasName;
     int32_t argc;
     if (!get(f, &type, 1) || !getI32(f, &argc) || argc < 0 || argc > 255
-        || !get(f, &isargs, 1) || !get(f, &hasName, 1))
+        || !get(f, &isargs, 1) || !get(f, &kwonly, 1) || !get(f, &block, 1) || !get(f, &hasName, 1))
         return NULL;
     MyMoFunction *fn = newFunction(vm);
     fn->type = (FunctionType)type;
     fn->argc = argc;
     fn->isargs = isargs;
+    fn->kwonly = kwonly;
+    fn->block = block != 0;
     if (hasName && !(fn->name = getStr(vm, f)))
         return NULL;
     for (int i = 0; i < argc; i++)

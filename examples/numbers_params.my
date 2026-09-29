@@ -1,0 +1,12 @@
+# Functions with more than 8 parameters (their arguments spill from the
+# frame's inline slots into its locals) and number literal forms.
+
+fn f(a, b, c=3, d=4, e=5, g=6, h=7, i=8, j=9):
+    return [a, b, c, d, e, g, h, i, j]
+print(f(1, 2))
+print(f(1, 2, 30, j=90))
+fn k(a, b, c, d, e, f, g, h, i):
+    return i
+print(k(1,2,3,4,5,6,7,8,9))
+print(0x80, 0xFF, 32 < 0x80, 0x1F600, 0b1010, 0o17, 0O7, 1_000_000, 0xFF_FF, 3.141_5, 007, 0, 0.5, 10)
+print(0xC0 | (233 >> 6))

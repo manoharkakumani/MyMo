@@ -235,37 +235,27 @@ Token getToken(Lexer *lexer)
                 {
                     goto fraction;
                 }
-                else if (lexer->currentChar == 'x' || lexer->currentChar == 'X')
+                else if (lexer->currentChar == 'x' || lexer->currentChar == 'X' ||
+                         lexer->currentChar == 'o' || lexer->currentChar == 'O' ||
+                         lexer->currentChar == 'b' || lexer->currentChar == 'B')
                 {
+                    // 0x1F, 0o17, 0b1010 (the compiler converts; _ separates digits)
+                    int radix = (lexer->currentChar | 32) == 'x' ? 16 : (lexer->currentChar | 32) == 'o' ? 8 : 2;
                     lexerAdvance(lexer);
-                    if (!(isxdigit(lexer->currentChar)))
+                    int digits = 0;
+                    for (;; lexerAdvance(lexer))
                     {
-                        return newToken("Invalid Hex literal", ERROR, lexer->len, start, lexer->indent, lexer->line);
+                        int c = lexer->currentChar;
+                        int v = isdigit(c) ? c - '0' : isxdigit(c) ? (c | 32) - 'a' + 10 : c == '_' ? -2 : -1;
+                        if (v == -2)
+                            continue;
+                        if (v < 0 || v >= radix)
+                            break;
+                        digits++;
                     }
-                    while (isxdigit(lexer->currentChar))
-                    {
-                        lexerAdvance(lexer);
-                        if (lexer->currentChar == '.')
-                        {
-                            return newToken("Invalid Hex literal", ERROR, lexer->len, start, lexer->indent, lexer->line);
-                        }
-                    }
-                }
-                else if (lexer->currentChar == 'o' || lexer->currentChar == 'O')
-                {
-                    lexerAdvance(lexer);
-                    if (!(isxdigit(lexer->currentChar)))
-                    {
-                        return newToken("Invalid Octal literal", ERROR, lexer->len, start, lexer->indent, lexer->line);
-                    }
-                    while (isxdigit(lexer->currentChar))
-                    {
-                        lexerAdvance(lexer);
-                        if (lexer->currentChar == '.')
-                        {
-                            return newToken("Invalid Octal literal", ERROR, lexer->len, start, lexer->indent, lexer->line);
-                        }
-                    }
+                    if (digits == 0 || isalnum(lexer->currentChar) || lexer->currentChar == '.')
+                        return newToken(radix == 16 ? "Invalid hex literal" : radix == 8 ? "Invalid octal literal" : "Invalid binary literal",
+                                        ERROR, lexer->len, start, lexer->indent, lexer->line);
                 }
                 else
                     goto ints;
@@ -273,7 +263,7 @@ Token getToken(Lexer *lexer)
             else
             {
             ints:
-                while (isdigit(lexer->currentChar))
+                while (isdigit(lexer->currentChar) || (lexer->currentChar == '_' && isdigit(lexer->src[lexer->srcLen])))
                 {
                     lexerAdvance(lexer);
                     if (lexer->currentChar == 'e' || lexer->currentChar == 'E')
@@ -292,7 +282,7 @@ Token getToken(Lexer *lexer)
                         {
                             return newToken("Invalid Number", ERROR, lexer->len, start, lexer->indent, lexer->line);
                         }
-                    } while (isdigit(lexer->currentChar));
+                    } while (isdigit(lexer->currentChar) || (lexer->currentChar == '_' && isdigit(lexer->src[lexer->srcLen])));
                 }
             exponent:
                 if (lexer->currentChar == 'e' || lexer->currentChar == 'E')

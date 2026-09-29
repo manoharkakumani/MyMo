@@ -1,0 +1,135 @@
+# final: runs on every way out of a try: normal end, exceptions,
+# return, break and continue, including nested trys.
+
+fn ret_value():
+    try:
+        return "from try"
+    final:
+        print("final after return")
+
+print(ret_value())
+
+fn ret_bare():
+    try:
+        return
+    final:
+        print("final after bare return")
+
+print(ret_bare())
+
+fn ret_in_catch():
+    try:
+        raise ValueError("boom")
+    catch ValueError as e:
+        return "caught " + str(e)
+    final:
+        print("final after return in catch")
+
+print(ret_in_catch())
+
+fn ret_raises():
+    try:
+        return int("x")
+    catch ValueError:
+        return "return value raised, caught"
+    final:
+        print("final after raising return")
+
+print(ret_raises())
+
+for i in range(5):
+    try:
+        if i == 1:
+            continue
+        if i == 3:
+            break
+        print("body", i)
+    final:
+        print("final", i)
+print("after loop")
+
+j = 0
+while j < 4:
+    j += 1
+    try:
+        if j % 2 == 0:
+            continue
+        print("odd", j)
+    final:
+        print("cleanup", j)
+
+fn nested():
+    try:
+        try:
+            return "inner"
+        final:
+            print("inner final")
+    final:
+        print("outer final")
+
+print(nested())
+
+fn loop_in_try():
+    try:
+        for x in [1, 2, 3]:
+            for y in [10, 20]:
+                if x == 2:
+                    return x * y
+    final:
+        print("final after return from nested loops")
+
+print(loop_in_try())
+
+fn try_in_loop():
+    for x in [1, 2, 3]:
+        try:
+            if x == 2:
+                return x
+        final:
+            print("final x =", x)
+
+print(try_in_loop())
+
+fn exit_from_final():
+    for x in [1, 2, 3]:
+        try:
+            print("try", x)
+        final:
+            if x == 2:
+                break
+    return "broke out of final"
+
+print(exit_from_final())
+
+fn override():
+    try:
+        return 1
+    final:
+        return 2
+
+print(override())
+
+fn swallow():
+    for x in [1]:
+        try:
+            raise ValueError("lost")
+        final:
+            break
+    return "exception discarded by break in final"
+
+print(swallow())
+
+fn many():
+    total = 0
+    for i in range(1000):
+        try:
+            if i % 2:
+                continue
+            total += i
+        final:
+            total += 0
+    return total
+
+print(many())
+
+print("done")

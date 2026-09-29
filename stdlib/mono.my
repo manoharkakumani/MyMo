@@ -43,6 +43,7 @@ from "server" use listen, accept_nb, read_request, respond, respond_json, close
 from "runloop" use nonblock, ready
 from "time" use monotonic
 from "json" use encode, decode
+from "_http" use hosting as __hosting
 
 # Mutable state goes in a dict so handlers (closures) can mutate it
 # without shadowing the outer binding.
@@ -267,11 +268,17 @@ fn __task(req):
 # according to what it asked for.
 fn __step(task, value):
     fb = task["fiber"]
-    if task["started"]:
-        signal = fb.resume(value)
-    else:
-        task["started"] = True
-        signal = fb.run(task["req"])
+    # While this loop steps a handler, `http` calls in it suspend the
+    # handler (yield {"fd": ...}) instead of blocking the server.
+    __hosting(True)
+    try:
+        if task["started"]:
+            signal = fb.resume(value)
+        else:
+            task["started"] = True
+            signal = fb.run(task["req"])
+    final:
+        __hosting(False)
     if fb.alive() == False:
         return Nil
     if type(signal) == type({}):

@@ -4,10 +4,34 @@
 #include "datatypes/datatypes.h"
 #include "error.h"
 
+// A number token's text without `_` separators.
+static void numberText(Token *t, char *buf, size_t size)
+{
+    size_t n = 0;
+    for (int i = 0; i < t->length && n + 1 < size; i++)
+        if (t->token[i] != '_')
+            buf[n++] = t->token[i];
+    buf[n] = '\0';
+}
+
 void integer_(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);
-    long n = strtol(compiler->parser->previous.token, NULL, 10);
+    char text[128];
+    numberText(&compiler->parser->previous, text, sizeof text);
+    // 0x.. / 0o.. / 0b.. (leading zeros before the prefix are allowed)
+    const char *digits = text;
+    while (digits[0] == '0' && digits[1] == '0')
+        digits++;
+    int base = 10;
+    if (digits[0] == '0' && digits[1] != '\0')
+    {
+        char p = (char)(digits[1] | 32);
+        base = p == 'x' ? 16 : p == 'o' ? 8 : p == 'b' ? 2 : 10;
+        if (base != 10)
+            digits += 2;
+    }
+    long n = strtol(digits, NULL, base);
     // Fits in 32 bits → emit inline NaN-boxed int. Otherwise fall back to a
     // heap MyMoInt for the wider value (rare; will become a small-bignum
     // slow path in a later step).
@@ -26,7 +50,9 @@ void double_(Compiler *compiler, bool canAssign)
     UNUSED(canAssign);
     // Doubles are stored directly in the NaN-boxed Value (any non-QNaN
     // bit pattern). Skip the heap MyMoDouble entirely for literals.
-    double d = strtod(compiler->parser->previous.token, NULL);
+    char text[128];
+    numberText(&compiler->parser->previous, text, sizeof text);
+    double d = strtod(text, NULL);
     emitConstantV(compiler, V_DOUBLE_VAL(d));
 }
 
@@ -1074,6 +1100,9 @@ static bool hasKeywordArguments(Compiler *compiler)
                 argStart = true;
             token = getToken(&probe);
             continue;
+        case NEWLINE: // a multi-line call: `f(\n    a,\n    k=v,\n)`
+            token = getToken(&probe);
+            continue;
         case NAME:
             if (depth == 0 && argStart)
             {
@@ -1332,6 +1361,17 @@ typedef struct
     int valueLen;
     u32 result; // hidden local holding the list/dict being built
 } Comprehension;
+// Where a token starts in the source. STRING tokens point past their
+// opening quote (and FSTRING past `f"`), so step back over it.
+static const char *tokenSource(Token *t)
+{
+    if (t->type == STRING)
+        return t->token - 1;
+    if (t->type == FSTRING)
+        return t->token - 2;
+    return t->token;
+}
+
 static void comprehension(Compiler *compiler, Comprehension *comp, TokenType closer);
 
 void list(Compiler *compiler, bool canAssign)
@@ -1357,7 +1397,7 @@ void list(Compiler *compiler, bool canAssign)
         // re-emit it inside the comprehension's loop body. Token
         // pointers reference lexer->src directly; the slice is
         // (start, end_of_last_token).
-        const char *exprStart = compiler->parser->current.token;
+        const char *exprStart = tokenSource(&compiler->parser->current);
         int savedChunkCount = compiler->function->chunk->count;
         expression(compiler);
         // Use the START of the NEXT token as the end-of-expr cursor.
@@ -1366,7 +1406,7 @@ void list(Compiler *compiler, bool canAssign)
         // STRING tokens point at the content (between quotes), so
         // token+length lands AT the closing quote, not after it,
         // and we'd lose the closing `"`.
-        const char *exprEnd = compiler->parser->current.token;
+        const char *exprEnd = tokenSource(&compiler->parser->current);
         skipNewLines(compiler);
         if (checkToken(compiler, FOR))
         {
@@ -1595,12 +1635,12 @@ void dictionary(Compiler *compiler, bool canAssign)
             {
                 break;
             }
-            const char *keyStart = compiler->parser->current.token;
+            const char *keyStart = tokenSource(&compiler->parser->current);
             int savedChunkCount = compiler->function->chunk->count;
             compiler->flags.dict++; // a comma ends the element here
             expression(compiler);
             compiler->flags.dict--;
-            const char *keyEnd = compiler->parser->current.token;
+            const char *keyEnd = tokenSource(&compiler->parser->current);
             skipNewLines(compiler);
             if (count == 0 && !checkToken(compiler, COLON))
             {
@@ -1610,11 +1650,11 @@ void dictionary(Compiler *compiler, bool canAssign)
             }
             consumeToken(compiler, COLON, "Expected ':'");
             skipNewLines(compiler);
-            const char *valueStart = compiler->parser->current.token;
+            const char *valueStart = tokenSource(&compiler->parser->current);
             compiler->flags.dict++;
             expression(compiler);
             compiler->flags.dict--;
-            const char *valueEnd = compiler->parser->current.token;
+            const char *valueEnd = tokenSource(&compiler->parser->current);
             skipNewLines(compiler);
             if (count == 0 && checkToken(compiler, FOR))
             {

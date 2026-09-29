@@ -1,0 +1,10 @@
+evaluated 2
+2
+evaluated 3
+3
+evaluated 6
+6
+big 12 [-1, 2, -3, 4] 3 8 0
+False True 7 Nil Nil True 3 Nil Nil Nil ok
+AttributeError: <object 'nil'> has no attribute 'x'.
+AttributeError: <object 'int'> has no attribute 'nope'.

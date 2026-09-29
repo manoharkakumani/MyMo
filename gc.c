@@ -136,6 +136,7 @@ static void blacken(MVM *vm, MyMoObject *object)
         // A closure copy shares its prototype's chunk and argv.
         markObject(vm, AS_OBJECT(function->proto));
         markFrame(vm, function->frame);
+        markObject(vm, AS_OBJECT(function->bound));
         for (int i = 0; i < function->defaultCount; i++)
             markValue(vm, function->defaults[i]);
         break;
@@ -180,6 +181,7 @@ static void blacken(MVM *vm, MyMoObject *object)
         markObject(vm, AS_OBJECT(module->path));
         markObject(vm, AS_OBJECT(module->variables));
         markObject(vm, AS_OBJECT(module->parent));
+        markFrame(vm, module->frame);
         break;
     }
     case OBJ_CODE:

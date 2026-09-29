@@ -1,0 +1,15 @@
+hello, ana! hi, bo! hey, cy?
+21 2
+6 105 5
+1 4 105 8
+8 40
+0 1 2
+1 2 2
+TypeError: greet() takes 1 to 3 arguments but got 0.
+TypeError: greet() takes 1 to 3 arguments but got 4.
+TypeError: add() takes 1 to 2 arguments but got 0.
+ana greets you?! bo greets me.! 7 base hello hi!
+["init", "greet"]
+stack ok 2003000
+ana greets bound later?!
+50000 True 7

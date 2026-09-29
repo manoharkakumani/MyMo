@@ -1,0 +1,8 @@
+1 2 2
+1 2
+1 2 7
+17
+20
+NameError: no enclosing variable 'zzz' for nonlocal
+1 2
+(1, 2)

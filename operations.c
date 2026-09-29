@@ -11,7 +11,7 @@
 // Language rules kept here: two bools combine logically (+ is or, - is
 // "a and not b", * and / are and); a bool mixed with a number counts as
 // 0/1; str + str concatenates; list + list and tuple + tuple concatenate;
-// str * int repeats.
+// str, list and tuple * int repeat.
 
 // Bytewise lexicographic order (like strcmp, but length-aware so
 // embedded NULs compare correctly): <0, 0 or >0.
@@ -45,6 +45,21 @@ static Value repeatString(MVM *vm, MyMoString *s, long n)
     MyMoObject *result = NEW_STRING(vm, chars, (int)length);
     free(chars);
     return V_OBJ_VAL(result);
+}
+
+// `xs * n` for a list or tuple: a new one with xs's elements n times
+// (empty for n <= 0). The elements themselves are shared, not copied.
+static Value repeatSequence(MVM *vm, MyMoObject *seq, long n)
+{
+    bool isList = seq->type == OBJ_LIST;
+    ValueArray *src = isList ? &AS_LIST(seq)->values : &AS_TUPLE(seq)->values;
+    MyMoObject *out = isList ? AS_OBJECT(newList(vm)) : AS_OBJECT(newTuple(vm));
+    ValueArray *dst = isList ? &AS_LIST(out)->values : &AS_TUPLE(out)->values;
+    int count = src->count;
+    for (long r = 0; r < n; r++)
+        for (int i = 0; i < count; i++)
+            writeValueArray(vm, dst, src->values[i]);
+    return V_OBJ_VAL(out);
 }
 
 // A bool used in arithmetic next to a number is 0 or 1.
@@ -134,6 +149,10 @@ Value mulValues(MVM *vm, Value a, Value b)
         return repeatString(vm, AS_STRING(V_AS_OBJ(a)), valueToLong(b));
     if (valueLooksLikeInt(a) && isType(b, OBJ_STRING))
         return repeatString(vm, AS_STRING(V_AS_OBJ(b)), valueToLong(a));
+    if ((isType(a, OBJ_LIST) || isType(a, OBJ_TUPLE)) && valueLooksLikeInt(b))
+        return repeatSequence(vm, V_AS_OBJ(a), valueToLong(b));
+    if (valueLooksLikeInt(a) && (isType(b, OBJ_LIST) || isType(b, OBJ_TUPLE)))
+        return repeatSequence(vm, V_AS_OBJ(b), valueToLong(a));
     return typeError(vm, "*", a, b);
 }
 

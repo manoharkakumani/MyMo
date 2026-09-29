@@ -40,6 +40,9 @@ typedef enum
 
 #define VARARGS_REST 1
 #define VARARGS_KW 2
+// Has keyword-only parameters (after `*rest` or a bare `*`). Only set so
+// calls skip the fast paths; the count is MyMoFunction.kwonly.
+#define VARARGS_KWONLY 4
 // Parameters before *rest / **kw.
 #define FIXED_PARAMS(fn) ((fn)->argc - (((fn)->isargs & VARARGS_REST) != 0) - (((fn)->isargs & VARARGS_KW) != 0))
 
@@ -56,6 +59,17 @@ typedef struct MyMoFunction
   // of the extra positional arguments) and/or a `**kw` parameter (a dict
   // of the extra keyword arguments), in that order.
   u8 isargs;
+  // Keyword-only parameters: the last `kwonly` of the FIXED_PARAMS. They
+  // are declared after *rest in the source but stored before it, so the
+  // frame is always [positional..., kwonly..., rest, kw].
+  u8 kwonly;
+  // A trailing block (`card:` + indented lines, `button "x": stmt`): a
+  // closure whose assignments go to the enclosing scope (OP_SETB) and
+  // which pins enclosing loop variables in `bound` (OP_BLOCKVAR).
+  bool block;
+  // A block's pinned loop variables (NULL if none); checked right after
+  // the block's own locals.
+  struct MyMoDict *bound;
   Chunk *chunk;
   // Defining frame, walked for free-variable lookup (see OP_FN).
   struct CallFrame *frame;
@@ -64,7 +78,8 @@ typedef struct MyMoFunction
   // prototype's chunk/argv, so only the prototype frees them.
   struct MyMoFunction *proto;
   // Default values for the last `defaultCount` parameters, evaluated when
-  // the `fn` statement runs (OP_DEFAULTS). Owned by each function object
+  // the `fn` statement runs (OP_DEFAULTS). V_EMPTY_VAL marks a required
+  // keyword-only parameter that follows one with a default. Owned by each function object
   // (closure copies get their own copy).
   int defaultCount;
   Value *defaults;

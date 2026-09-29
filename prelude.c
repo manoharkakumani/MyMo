@@ -55,13 +55,17 @@ static const char *PRELUDE =
     "class MemoryError(Exception):\n"
     "    pass\n"
     "class StopIteration(Exception):\n"
-    "    pass\n";
+    "    pass\n"
+    "\n"
+    "fn __drain_fiber(f):\n"
+    "    return [x for x in f]\n"
+    "\n";
 
 static const char *PRELUDE_NAMES[] = {
     "Exception", "ArithmeticError", "ZeroDivisionError", "OverflowError", "LookupError", "KeyError",
     "IndexError", "ValueError", "TypeError", "NameError", "AttributeError", "AssertionError", "RuntimeError",
     "RecursionError", "NotImplementedError", "OSError", "IOError", "ImportError", "MemoryError",
-    "StopIteration", NULL};
+    "StopIteration", "__drain_fiber", NULL};
 
 void loadPrelude(MVM *vm)
 {

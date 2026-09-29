@@ -206,6 +206,7 @@ Parser *initParser(MVM *vm, const char *src)
     parser->lexer = initLexer(src);
     parser->hadError = false;
     parser->panicMode = false;
+    parser->repl = false;
     return parser;
 }
 
@@ -221,6 +222,8 @@ Compiler *initCompiler(MVM *vm, Parser *parser, FunctionType type)
     compiler->parser = parser;
     compiler->loop = NULL;
     compiler->tryDepth = 0;
+    compiler->tryCtx = NULL;
+    compiler->scopeSeq = 0;
     compiler->lastWideTarget = -1;
     compiler->infixLeftStart = 0;
     compiler->scopeCount = 0;
@@ -256,6 +259,7 @@ void freeCompiler(Compiler *compiler)
 MyMoFunction *compile(MVM *vm, const char *src, const char *path, CompileType type)
 {
     Parser *parser = initParser(vm, src);
+    parser->repl = type == COMPILE_REPL;
     Compiler *compiler = initCompiler(vm, parser, type == COMPILE_STRING ? FN_COMPILED : FN_SCRIPT);
     compiler->flags.compileType = type;
     advanceToken(compiler);

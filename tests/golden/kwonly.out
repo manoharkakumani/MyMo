@@ -1,0 +1,18 @@
+1 2 3!
+1, 2, 3!
+a-b?
+!
+x.com:80 secure=True
+x.com:443 secure=False
+TypeError: connect() takes 1 positional argument but 3 were given
+TypeError: connect() missing required keyword-only argument 'secure'
+(1, 2, (), False, {})
+(1, 3, (4, 5), True, {"color": "red"})
+(9, 2, (), True, {})
+hi mo
+TypeError: need() missing required keyword-only argument 'name'
+[Save primary=True md] [SAVE primary=True md] [x primary=False lg]
+1+2+3!
+1/2/3.
+3
+((((1,), 3), "x"), 2)

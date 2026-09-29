@@ -65,6 +65,9 @@ static Value srv_listen(MVM *vm, uint argc, Value argv[])
     }
     int yes = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes));
+#ifndef _WIN32
+    fcntl(fd, F_SETFD, FD_CLOEXEC); // not inherited by os.exec (ui --dev restarts)
+#endif
 
     struct sockaddr_in sa;
     memset(&sa, 0, sizeof(sa));
@@ -343,6 +346,7 @@ static Value srv_accept_nb(MVM *vm, uint argc, Value argv[])
     }
     int flags = fcntl(cfd, F_GETFL, 0);
     fcntl(cfd, F_SETFL, (flags < 0 ? 0 : flags) | O_NONBLOCK);
+    fcntl(cfd, F_SETFD, FD_CLOEXEC);
     conn_drop(cfd); // a recycled fd number must start with an empty buffer
     conn_get(cfd)->nonblocking = true;
     return objectToValue(mymo_int(vm, cfd));
@@ -481,15 +485,28 @@ static Value do_respond(MVM *vm, const char *fn,
     return MYMO_BOOL(keep);
 }
 
+// respond(fd, status, body, content_type="text/plain; charset=utf-8")
 static Value srv_respond(MVM *vm, uint argc, Value argv[])
 {
     long cfd, status;
     const char *body; int blen;
-    if (!mymo_parse(vm, "server.respond", argc, argv, "iisn",
-                    &cfd, &status, &body, &blen))
+    const char *type = "text/plain; charset=utf-8";
+    if (argc == 4)
+    {
+        int tlen;
+        if (!mymo_parse(vm, "server.respond", argc, argv, "iisnsn",
+                        &cfd, &status, &body, &blen, &type, &tlen))
+            return MYMO_ERROR;
+        if (strpbrk(type, "\r\n") || tlen > 200)
+        {
+            runtimeError(vm, "ValueError: server.respond(): invalid content type");
+            return MYMO_ERROR;
+        }
+    }
+    else if (!mymo_parse(vm, "server.respond", argc, argv, "iisn",
+                         &cfd, &status, &body, &blen))
         return MYMO_ERROR;
-    return do_respond(vm, "server.respond", cfd, status, body, blen,
-                      "text/plain; charset=utf-8");
+    return do_respond(vm, "server.respond", cfd, status, body, blen, type);
 }
 
 static Value srv_respond_json(MVM *vm, uint argc, Value argv[])

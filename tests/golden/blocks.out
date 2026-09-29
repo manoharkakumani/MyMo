@@ -1,0 +1,22 @@
+show ("hi Ada", 2) {"sep": "-"} 
+show ("flags",) {"primary": True, "big": True} 
+show ("a",) {"size": 3, "muted": True} 
+show () {} block
+in block
+show ("inline",) {} block
+inline block
+show (1,) {"x": 2} block
+paren form
+count 3
+i was 0
+i was 1
+i was 2
+outer total 20
+item y
+bare call works
+[1, 2]
+no parens ok
+show ("outer",) {} block
+show ("inner 0",) {} block
+show ("inner 1",) {} block
+[0, 1]

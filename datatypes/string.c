@@ -11,6 +11,7 @@
 #include "../repr.h"
 #include "../builtins.h"
 #include "../format.h"
+#include "../unicase.h"
 
 MyMoString *newString(MVM *vm, const char *chars, int length)
 {
@@ -152,42 +153,53 @@ static Value makeString(MVM *vm, const char *chars, int length)
     return V_OBJ_VAL(AS_OBJECT(newString(vm, chars, length)));
 }
 
-// Copy of s with each byte passed through `map` (ASCII case mapping).
-static Value mapChars(MVM *vm, MyMoString *s, int (*map)(int))
+// Case conversions work per code point (unicase.c), so they handle
+// non-ASCII letters: "straße".upper() == "STRASSE", "ÉCOLE".lower().
+enum { CASE_UPPER, CASE_LOWER, CASE_SWAP, CASE_CAPITALIZE, CASE_TITLE };
+
+static Value caseMap(MVM *vm, MyMoString *s, int mode)
 {
-    char *buf = New(char, s->length + 1);
-    for (int i = 0; i < s->length; i++)
-        buf[i] = (char)map((unsigned char)s->value[i]);
-    Value out = makeString(vm, buf, s->length);
+    // No mapping grows a character's UTF-8 length (ß -> "SS" is 2 -> 2).
+    char *buf = New(char, s->length + 4);
+    int n = 0;
+    bool inWord = false;
+    for (int i = 0; i < s->length;)
+    {
+        uint32_t cp = ucDecode(s->value, s->length, &i);
+        bool upper;
+        switch (mode)
+        {
+        case CASE_UPPER: upper = true; break;
+        case CASE_LOWER: upper = false; break;
+        case CASE_SWAP: upper = ucIsLower(cp); break;
+        case CASE_CAPITALIZE: upper = n == 0; break;
+        default: upper = !inWord; break;
+        }
+        inWord = ucIsAlpha(cp);
+        if (mode == CASE_SWAP && !ucIsLower(cp) && !ucIsUpper(cp))
+            n += ucEncode(cp, buf + n);
+        else if (upper && cp == 0xDF && mode != CASE_TITLE && mode != CASE_CAPITALIZE)
+        {
+            buf[n++] = 'S'; // ß has no single upper-case letter
+            buf[n++] = 'S';
+        }
+        else
+            n += ucEncode(upper ? ucToUpper(cp) : ucToLower(cp), buf + n);
+    }
+    Value out = makeString(vm, buf, n);
     free(buf);
     return out;
 }
 
-Value upperStringMethod(MVM *vm, uint argc, Value args[])
+static Value caseMethod(MVM *vm, const char *fn, uint argc, int mode)
 {
-    MyMoObject *self = methodEnter(vm, "upper", argc, 0, 0);
+    MyMoObject *self = methodEnter(vm, fn, argc, 0, 0);
     if (!self) return V_EMPTY_VAL;
-    MyMoString *s = AS_STRING(self);
-    char *buf = New(char, s->length + 1);
-    for (int i = 0; i < s->length; i++)
-        buf[i] = (char)toupper((unsigned char)s->value[i]);
-    MyMoObject *out = NEW_STRING(vm, buf, s->length);
-    free(buf);
-    return objectToValue(out);
+    return caseMap(vm, AS_STRING(self), mode);
 }
 
-Value lowerStringMethod(MVM *vm, uint argc, Value args[])
-{
-    MyMoObject *self = methodEnter(vm, "lower", argc, 0, 0);
-    if (!self) return V_EMPTY_VAL;
-    MyMoString *s = AS_STRING(self);
-    char *buf = New(char, s->length + 1);
-    for (int i = 0; i < s->length; i++)
-        buf[i] = (char)tolower((unsigned char)s->value[i]);
-    MyMoObject *out = NEW_STRING(vm, buf, s->length);
-    free(buf);
-    return objectToValue(out);
-}
+Value upperStringMethod(MVM *vm, uint argc, Value args[]) { return caseMethod(vm, "upper", argc, CASE_UPPER); }
+Value lowerStringMethod(MVM *vm, uint argc, Value args[]) { return caseMethod(vm, "lower", argc, CASE_LOWER); }
 
 // Strip whitespace, or any of the characters in `chars`, from the
 // left and/or right end.
@@ -479,61 +491,28 @@ static Value partitionAt(MVM *vm, const char *fn, uint argc, Value args[], bool 
 Value partitionStringMethod(MVM *vm, uint argc, Value args[]) { return partitionAt(vm, "partition", argc, args, false); }
 Value rpartitionStringMethod(MVM *vm, uint argc, Value args[]) { return partitionAt(vm, "rpartition", argc, args, true); }
 
-Value capitalizeStringMethod(MVM *vm, uint argc, Value args[])
-{
-    MyMoObject *self = methodEnter(vm, "capitalize", argc, 0, 0);
-    if (!self) return V_EMPTY_VAL;
-    MyMoString *s = AS_STRING(self);
-    char *buf = New(char, s->length + 1);
-    for (int i = 0; i < s->length; i++)
-        buf[i] = (char)(i == 0 ? toupper((unsigned char)s->value[i]) : tolower((unsigned char)s->value[i]));
-    Value out = makeString(vm, buf, s->length);
-    free(buf);
-    return out;
-}
-
+Value capitalizeStringMethod(MVM *vm, uint argc, Value args[]) { return caseMethod(vm, "capitalize", argc, CASE_CAPITALIZE); }
 // Upper-case the first letter of every word, lower-case the rest.
-Value titleStringMethod(MVM *vm, uint argc, Value args[])
-{
-    MyMoObject *self = methodEnter(vm, "title", argc, 0, 0);
-    if (!self) return V_EMPTY_VAL;
-    MyMoString *s = AS_STRING(self);
-    char *buf = New(char, s->length + 1);
-    bool inWord = false;
-    for (int i = 0; i < s->length; i++)
-    {
-        unsigned char c = (unsigned char)s->value[i];
-        buf[i] = (char)(inWord ? tolower(c) : toupper(c));
-        inWord = isalpha(c) != 0;
-    }
-    Value out = makeString(vm, buf, s->length);
-    free(buf);
-    return out;
-}
+Value titleStringMethod(MVM *vm, uint argc, Value args[]) { return caseMethod(vm, "title", argc, CASE_TITLE); }
+Value swapcaseStringMethod(MVM *vm, uint argc, Value args[]) { return caseMethod(vm, "swapcase", argc, CASE_SWAP); }
 
-static int swapCase(int c) { return isupper(c) ? tolower(c) : islower(c) ? toupper(c) : c; }
-
-Value swapcaseStringMethod(MVM *vm, uint argc, Value args[])
-{
-    MyMoObject *self = methodEnter(vm, "swapcase", argc, 0, 0);
-    if (!self) return V_EMPTY_VAL;
-    return mapChars(vm, AS_STRING(self), swapCase);
-}
-
-// is*() predicates: true when the string is non-empty and every byte
-// passes (isupper/islower: has a cased letter and none of the other case).
-static Value classify(MVM *vm, const char *fn, uint argc, int (*test)(int))
+// is*() predicates: true when the string is non-empty and every code
+// point passes (isupper/islower: has a cased letter and none of the
+// other case).
+static Value classify(MVM *vm, const char *fn, uint argc, bool (*test)(uint32_t))
 {
     MyMoObject *self = methodEnter(vm, fn, argc, 0, 0);
     if (!self) return V_EMPTY_VAL;
     MyMoString *s = AS_STRING(self);
     if (s->length == 0)
         return V_FALSE_VAL;
-    for (int i = 0; i < s->length; i++)
-        if (!test((unsigned char)s->value[i]))
+    for (int i = 0; i < s->length;)
+        if (!test(ucDecode(s->value, s->length, &i)))
             return V_FALSE_VAL;
     return V_TRUE_VAL;
 }
+
+static bool ucIsAlnum(uint32_t cp) { return ucIsAlpha(cp) || ucIsDigit(cp); }
 
 static Value caseCheck(MVM *vm, const char *fn, uint argc, bool upper)
 {
@@ -541,21 +520,22 @@ static Value caseCheck(MVM *vm, const char *fn, uint argc, bool upper)
     if (!self) return V_EMPTY_VAL;
     MyMoString *s = AS_STRING(self);
     bool cased = false;
-    for (int i = 0; i < s->length; i++)
+    for (int i = 0; i < s->length;)
     {
-        unsigned char c = (unsigned char)s->value[i];
-        if (upper ? islower(c) : isupper(c))
+        uint32_t cp = ucDecode(s->value, s->length, &i);
+        bool isUp = ucIsUpper(cp), isLow = ucIsLower(cp);
+        if (upper ? isLow : isUp)
             return V_FALSE_VAL;
-        if (isalpha(c))
+        if (isUp || isLow)
             cased = true;
     }
     return V_BOOL_VAL(cased);
 }
 
-Value isdigitStringMethod(MVM *vm, uint argc, Value args[]) { return classify(vm, "isdigit", argc, isdigit); }
-Value isalphaStringMethod(MVM *vm, uint argc, Value args[]) { return classify(vm, "isalpha", argc, isalpha); }
-Value isalnumStringMethod(MVM *vm, uint argc, Value args[]) { return classify(vm, "isalnum", argc, isalnum); }
-Value isspaceStringMethod(MVM *vm, uint argc, Value args[]) { return classify(vm, "isspace", argc, isspace); }
+Value isdigitStringMethod(MVM *vm, uint argc, Value args[]) { return classify(vm, "isdigit", argc, ucIsDigit); }
+Value isalphaStringMethod(MVM *vm, uint argc, Value args[]) { return classify(vm, "isalpha", argc, ucIsAlpha); }
+Value isalnumStringMethod(MVM *vm, uint argc, Value args[]) { return classify(vm, "isalnum", argc, ucIsAlnum); }
+Value isspaceStringMethod(MVM *vm, uint argc, Value args[]) { return classify(vm, "isspace", argc, ucIsSpace); }
 Value isupperStringMethod(MVM *vm, uint argc, Value args[]) { return caseCheck(vm, "isupper", argc, true); }
 Value islowerStringMethod(MVM *vm, uint argc, Value args[]) { return caseCheck(vm, "islower", argc, false); }
 

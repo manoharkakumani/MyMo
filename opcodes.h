@@ -115,9 +115,19 @@ typedef enum
     OP_SETG,    // name           [v] -> [v]              globals[name] = v
     OP_SETNL,   // name           [v] -> [v]              enclosing function's name = v (`nonlocal`)
     OP_DUPUNDER, //               [a, b] -> [b, a, b]      (a < b < c)
-    OP_NIP       //               [a, b] -> [b]
+    OP_NIP,      //               [a, b] -> [b]
+    //   OP_SETB name             [v] -> [v]   assignment inside a trailing block:
+    //                            the block's own local if it has one, else the
+    //                            nearest enclosing scope (or global) that has
+    //                            `name`, else a new block local
+    OP_SETB,
+    //   OP_CALLIF                [v] -> [v()] if v is callable, else [v]
+    //                            (a bare `name` statement calls it)
+    OP_CALLIF,
+    //   OP_BLOCKVAR name         [block, v] -> [block]   block.bound[name] = v
+    OP_BLOCKVAR
 } OpCode;
 
 // Number of opcodes (keep in sync with the last enum entry).
-#define OP_COUNT (OP_NIP + 1)
+#define OP_COUNT (OP_BLOCKVAR + 1)
 #endif
