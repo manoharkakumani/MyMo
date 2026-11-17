@@ -4,7 +4,7 @@
 
 #include "common.h"
 
-#define KEYWORDS 32
+#define KEYWORDS 35
 
 typedef enum
 {
@@ -59,6 +59,7 @@ typedef enum
     PITHRU,
     PLUS,
     QMARK,
+    QDOT,
     RBRACE,
     RPAR,
     RSQB,
@@ -66,6 +67,7 @@ typedef enum
     SLASH,
     STAR,
     STRING,
+    FSTRING,
     TILD,
     UMINUS, // -@
     UPLUS,  // +@
@@ -74,6 +76,7 @@ typedef enum
     // keywords
     AND,
     AS,
+    ASSERT,
     BREAK,
     CASE,
     CLASS,
@@ -89,11 +92,13 @@ typedef enum
     FOR,
     FN,
     FROM,
+    GLOBAL,
     IF,
     IN,
     IS,
     NOT,
     NIL,
+    NONLOCAL,
     OR,
     PASS,
     RAISE,

@@ -4,3 +4,18 @@
 *.tar.*
 *.zip
 .vs/
+
+.claude/
+.claude
+*.o
+Claude.md
+*.o.d
+*.do.d
+*.do
+mymo-debug
+libmymo.a
+examples/embed/host
+__mycache__/
+
+# Expected outputs for `make test` are part of the repo.
+!tests/golden/*.out

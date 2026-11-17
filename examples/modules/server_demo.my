@@ -1,0 +1,23 @@
+# server — minimal HTTP server. Run me, then in another shell:
+#   curl -i http://127.0.0.1:18181/hello
+#   curl -i -X POST -d 'a=1&b=2' http://127.0.0.1:18181/echo
+# Press ^C to stop. Single-threaded; one client at a time.
+from "server" use listen, accept, respond, respond_json
+from "json" use encode
+
+srv = listen("127.0.0.1", 18181, 16)
+print("server up on http://127.0.0.1:18181")
+
+while True:
+    req = accept(srv)
+    if req == Nil:
+        continue
+    print(req["method"], req["path"])
+
+    if req["path"] == "/echo":
+        body = encode({"method": req["method"],
+                       "path":   req["path"],
+                       "body":   req["body"]})
+        respond_json(req["client_fd"], 200, body)
+    else:
+        respond(req["client_fd"], 200, "hello from MyMo\n")

@@ -1,0 +1,11 @@
+# math — basic numerics + module-level constants
+from "math" use sqrt, sin, cos, tan, ceil, pi, e, phi
+
+print("pi =", pi)
+print("e  =", e)
+print("phi=", phi)
+print("sqrt(2) =", sqrt(2))
+print("sin(0)  =", sin(0))
+print("cos(0)  =", cos(0))
+print("tan(0)  =", tan(0))
+print("ceil(3.1)  =", ceil(3.1))

@@ -1,0 +1,38 @@
+# a if c else b evaluates only the branch it returns.
+fn side(x):
+    print("evaluated", x)
+    return x
+
+print(side(1) if False else side(2))
+print(side(3) if True else side(4))
+print(False ? side(5) : side(6))
+
+x = 5
+y = "big" if x > 3 else "small"
+z = (1 if x > 10 else 2) + (10 if x > 1 else 20)
+w = [i if i % 2 == 0 else -i for i in [1,2,3,4]]
+n = 1 if False else 2 if False else 3
+f = v => v * 2 if v > 0 else 0
+print(y, z, w, n, f(4), f(-1))
+
+class P:
+    k = 1
+    fn __init__(self):
+        self.a = Nil
+        self.b = True
+        self.n = 5
+p = P()
+p.n += 2
+p.a = False
+d = {"x": Nil, "y": {"z": 3}}
+d.w = True
+P.k = Nil
+print(p.a, p.b, p.n, P.k, d.x, d.w, d?.y?.z, d?.nope, Nil?.x, d.get("x"), (5).__len__ if False else "ok")
+try:
+    print(Nil.x)
+catch e:
+    print(e)
+try:
+    print((3).nope)
+catch e:
+    print(e)

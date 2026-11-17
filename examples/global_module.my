@@ -1,0 +1,18 @@
+# global inside a module's function means that module's variables.
+from "global_module_lib" use bump, show
+x = 100
+bump()
+bump()
+print(show(), x)
+fn f():
+    global x
+    x = 5
+f()
+print(x)
+
+# mod.name reads the module's live variables.
+use "global_module_lib"
+bump()
+print(global_module_lib.show(), global_module_lib.x)
+global_module_lib.x = 0
+print(global_module_lib.show())

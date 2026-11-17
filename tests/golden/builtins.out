@@ -1,0 +1,18 @@
+[3, 5] 9 1 [3, 5]
+[7, 3, 8, 5, 10, 11] 2 True False
+[11, 10, 5, 3, 7]
+["Ana", "ana", "bo", "cy"]
+[1, 2, 3] (1, 2, 3, 4)
+True True True True True True
+Hello, World   HELLO, WORLD   hello, world
+["a", "b", "", "c"] ["one", "two", "three"] x-y-z
+2 -1 True
+True True
+bbbbbb hell0 w0rld
+caught: IndexError: pop from empty list
+caught: TypeError: '<' not supported between <object 'string'> and <object 'int'>
+rex lab rex makes a sound (woof) animal
+bit pug bit makes a sound (woof) (tiny)
+<object 'instance'> rex makes a sound (woof)
+(1,) (1, 2, 3) 5 <object 'tuple'> (1, 2) ()
+1 7

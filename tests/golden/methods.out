@@ -1,0 +1,33 @@
+2 1 3 4
+[1, 2, 3, 2, 1, 0, 1, "a", "b"]
+2 3 4
+1 Nil 0 [("a", 1), ("b", 2)]
+a = 1
+b = 2
+1 none {"b": 2}
+[] 2 {"b": 2, "c": []}
+{"b": 2, "c": [1], "x": 10} ("y", 20) {"b": 2, "c": [1], "x": 10}
+{} {"b": 2, "c": [1], "x": 10, "new": 1} 0
+KeyError: "missing"
+IndexError: list index out of range
+KeyError: "nope"
+TypeError: unhashable value <object 'list'>: dict keys and set elements must be strings, numbers, booleans, Nil or tuples of them
+30 c 1 6 4
+y .
+Hello World |Hello World  | |  Hello World| hi
+2 3 3 1 2 4
+["a", "b", "", "c"] ["a", "b", "c"] ["a", "b,c"] ["a", "b c"]
+["l1", "l2", "l3"] ("k", "=", "v=w") ("k=v", "=", "w") ("abc", "", "")
+Hello world Hello World Foo-Bar aBc
+True False True True True True True False
+[ab   ] [***ab] [--ab--] 00042 -0042
+name file  a-b x,y,z
+ValueError: substring not found
+21 True False 9
+deep empty odd
+2 0 False True
+19999 22
+TypeError: unhashable tuple: a tuple used as a dict key or set element may only hold strings, numbers, booleans, Nil or tuples
+{(1, 2): "a"} 1
+True False True True True
+1

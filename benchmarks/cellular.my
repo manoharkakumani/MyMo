@@ -1,0 +1,51 @@
+size = 100
+prev = []
+
+i = 0
+while i < size - 1:
+    False |> prev.append
+    i+=1
+
+True |> prev.append
+
+fn calc(p, i):
+    prev = p[i - 1]
+    curr = p[i]
+    next = p[i + 1]
+    if (prev and curr and next):
+        return False
+    if (prev and curr and !next):
+        return True
+    if (prev and !curr and next):
+        return True
+    if (prev and !curr and !next):
+        return False
+
+    if (!prev and curr and next):
+        return True
+
+    if (!prev and curr and !next):
+        return True
+
+    if (!prev and !curr and next):
+        return True
+    return False
+
+
+i = 0
+while (i < size):
+    line = [False]
+    j  = 1
+    while j < size - 1:
+        prev |> calc(j) |> line.append
+        j+=1
+    False |> line.append
+    output = ""
+    j = 0
+    while j < size:
+        output += "*" if line[j]  else " "
+        j+=1
+    output |> print
+    prev = line
+    i+=1
+

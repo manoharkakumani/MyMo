@@ -1,0 +1,70 @@
+# Keyword-only parameters: anything after *rest (or a bare *) can only be
+# passed by name, with or without a default.
+
+fn show(*items, sep=" ", end="!"):
+    return sep.join([str(x) for x in items]) + end
+
+print(show(1, 2, 3))
+print(show(1, 2, 3, sep=", "))
+print(show("a", "b", end="?", sep="-"))
+print(show())
+
+fn connect(host, *, port=80, secure):
+    return f"{host}:{port} secure={secure}"
+
+print(connect("x.com", secure=True))
+print(connect("x.com", port=443, secure=False))
+try:
+    connect("x.com", 443, True)
+catch TypeError as e:
+    print(e)
+try:
+    connect("x.com")
+catch TypeError as e:
+    print(e)
+
+fn everything(a, b=2, *rest, flag=False, **opts):
+    return (a, b, rest, flag, opts)
+
+print(everything(1))
+print(everything(1, 3, 4, 5, flag=True, color="red"))
+print(everything(a=9, flag=True))
+
+fn need(*, name):
+    return "hi " + name
+print(need(name="mo"))
+try:
+    need()
+catch TypeError as e:
+    print(e)
+
+class Button:
+    fn __init__(self, label, *, primary=False, size="md"):
+        self.label = label
+        self.primary = primary
+        self.size = size
+    fn render(self, *, upper=False):
+        t = self.label.upper() if upper else self.label
+        return f"[{t} primary={self.primary} {self.size}]"
+
+b = Button("Save", primary=True)
+print(b.render(), b.render(upper=True), Button("x", size="lg").render())
+
+args = [1, 2, 3]
+print(show(*args, sep="+"))
+kw = {"sep": "/", "end": "."}
+print(show(*args, **kw))
+
+fn later(*xs, total=len):
+    return total(xs)
+print(later(1, 2, 3))
+
+
+# Keyword arguments on their own lines in a multi-line call.
+fn col(*kids, gap=1):
+    return (kids, gap)
+print(col(
+    col(1, gap=3),
+    "x",
+    gap=2,
+))

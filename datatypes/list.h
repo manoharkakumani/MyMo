@@ -2,23 +2,29 @@
 #define __LIST_H__
 
 #include "object.h"
+#include "../value.h"
 
 #define NEW_LIST(vm) AS_OBJECT(newList(vm))
 #define AS_LIST(object) ((MyMoList *)object)
 #define IS_LIST(object) (object->type == OBJ_LIST)
 
+// Elements are NaN-boxed Values: ints, doubles, nil and bools are stored
+// inline, everything else as an object pointer.
 typedef struct MyMoList
 {
     MyMoObject object;
-    MyMoObjectArray values;
+    ValueArray values;
 } MyMoList;
 
 MyMoList *newList(MVM *vm);
 
 void printList(MyMoList *list);
 
-MyMoObject *getValueByIndex(MyMoList *list, uint index);
 
 void defineListClass(MVM *vm);
+
+// index()/count() shared by lists and tuples.
+Value sequenceIndexMethod(MVM *vm, uint argc, Value args[]);
+Value sequenceCountMethod(MVM *vm, uint argc, Value args[]);
 
 #endif

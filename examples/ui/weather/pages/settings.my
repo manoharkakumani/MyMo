@@ -1,0 +1,19 @@
+from "ui" use *
+from "components/layout" use layout
+use "store"
+
+fn units_changed():
+    store.fetch()
+    store.refresh_cities()
+    toast "Units updated" success
+
+page "/settings":
+    layout "Settings":
+        card "Units":
+            text "Temperature" muted
+            tabs ["°C", "°F"], store.units: units_changed()
+            text "Wind speed" muted
+            tabs ["km/h", "mph"], store.wind: units_changed()
+        card "Updates":
+            switch "Refresh every 10 minutes", store.auto_refresh
+            small "Data from Open-Meteo.com, updated hourly."

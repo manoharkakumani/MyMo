@@ -1,0 +1,30 @@
+# A to-do list: Enter to add, checkboxes, filter tabs, delete.
+from "ui" use *
+
+todos = []
+draft = state("")
+show = state("All")
+
+fn add():
+    if draft.value.strip() != "":
+        todos.append({"text": draft.value.strip(), "done": False})
+        draft.clear()
+
+page "/":
+    card max=560, style="margin:0 auto":
+        h2 "To-do"
+        row:
+            input draft, placeholder="What needs doing?": add()
+            button "Add" primary: add()
+        tabs ["All", "Open", "Done"], show
+        for t in todos:
+            if show.value == "All" or (show.value == "Done") == t["done"]:
+                row:
+                    checkbox t["text"], t["done"]: t["done"] = not t["done"]
+                    spacer()
+                    button icon="x" ghost small: todos.remove(t)
+        if len(todos) == 0:
+            empty "Nothing here", "Add something above."
+        small "{len([t for t in todos if not t['done']])} left"
+
+run "To-do", accent="#10b981"

@@ -1,0 +1,169 @@
+# `mymo new <name>`: create a ui app project in ./<name>.
+
+from "os" use args, exit
+from "io" use write, mkdir, exists
+
+__APP = `# Entry point: import the pages, then start the app.
+#
+#   mymo app.my --dev          browser, reloads when you save
+#   mymo app.my --desktop      its own window
+#   mymo app.my --phone        on your phone (same Wi-Fi)
+#   mymo app.my --term         in the terminal
+
+from "ui" use *
+from "pages/home" use *
+from "pages/users" use *
+from "pages/about" use *
+
+run "__TITLE__", accent="#6d5dfc"
+`
+
+__LAYOUT = `# The frame every page shares. Use it as a block:
+#
+#   page "/":
+#       layout "Title":
+#           ...page content...
+
+from "ui" use *
+
+fn layout(title, body=Nil):
+    shell:
+        sidebar "__TITLE__":
+            nav "Home", "/", icon="home"
+            nav "Users", "/users", icon="users"
+            nav "About", "/about", icon="info"
+        h1 title
+        if body:
+            body()
+`
+
+__HOME = `from "ui" use *
+from "components/layout" use layout
+
+count = 0
+name = state("")
+
+page "/":
+    layout "Home":
+        text "Edit pages/home.my and save: the app reloads by itself." muted
+        grid min=220:
+            stat "Clicks", count, icon="zap"
+            stat "Pages", 3, icon="layers"
+        card "Say hello":
+            input name, placeholder="Your name"
+            text "Hello, {name}!" if name.value != "" else "Type your name above."
+            row:
+                button "Click me" primary: count += 1
+                button "Reset" ghost: count = 0
+`
+
+__USERS = `from "ui" use *
+from "components/layout" use layout
+from "api/users" use fetch_users
+
+users = []
+loading = False
+problem = Nil
+
+# Runs in the background: the page shows the spinner meanwhile.
+fn load():
+    global users, loading, problem
+    loading = True
+    problem = Nil
+    users, problem = fetch_users()
+    loading = False
+
+spawn: load()
+
+page "/users":
+    layout "Users":
+        row:
+            text "{len(users)} people from a public API" muted
+            spacer()
+            button "Reload" icon="refresh": load()
+        if loading:
+            spinner "Loading…"
+        elif problem != Nil:
+            alert problem error, title="Couldn't load users"
+        else:
+            table each(users, u => {"name": u["name"], "email": u["email"], "city": u["address"]["city"]})
+`
+
+__ABOUT = `from "ui" use *
+from "components/layout" use layout
+
+page "/about":
+    layout "About":
+        card:
+            text "Built with MyMo's ui library."
+            bullets [
+                "pages/: one file per page",
+                "components/: pieces you reuse across pages",
+                "api/: talking to servers and databases",
+                "static/: images, fonts and app.css",
+            ]
+`
+
+__API = `# Talking to the outside world lives here, away from the screens.
+from "http" use get
+
+API = "https://jsonplaceholder.typicode.com"
+
+# (users, error): error is Nil when it worked.
+fn fetch_users():
+    r = get(API + "/users", timeout=10)
+    if r.error != Nil:
+        return ([], r.error)
+    if not r.ok:
+        return ([], "HTTP " + str(r.status))
+    return (r.json, Nil)
+`
+
+__CSS = `/* Your styles. Loaded after the built-in design system, so anything
+   here wins. Components also take style="..." and cls="...". */
+`
+
+__README = `# __TITLE__
+
+A [MyMo](https://github.com/) ui app.
+
+    mymo app.my --dev        # develop: browser tab that reloads on save
+    mymo app.my --desktop    # desktop window
+    mymo app.my --phone      # open it on your phone
+    mymo app.my --term       # terminal version
+
+    app.my          entry point: imports the pages and starts the app
+    pages/          one file per page (page "/path": ...)
+    components/     reusable pieces (layout.my is the shared frame)
+    api/            HTTP calls and other I/O
+    static/         files served at /static/... (app.css is loaded automatically)
+`
+
+fn main():
+    if len(args) < 2 or args[1].startswith("-"):
+        print("usage: mymo new <name>")
+        exit(64)
+    name = args[1]
+    if exists(name):
+        print("mymo new: '" + name + "' already exists")
+        exit(1)
+    title = name.split("/")[-1].replace("-", " ").replace("_", " ")
+    title = " ".join([w[:1].upper() + w[1:] for w in title.split(" ") if w != ""])
+    files = {
+        "app.my": __APP, "components/layout.my": __LAYOUT, "pages/home.my": __HOME,
+        "pages/users.my": __USERS, "pages/about.my": __ABOUT, "api/users.my": __API,
+        "static/app.css": __CSS, "README.md": __README,
+    }
+    for d in ["pages", "components", "api", "static"]:
+        mkdir(name + "/" + d)
+    for f in files:
+        write(name + "/" + f, files[f].replace("__TITLE__", title))
+    print("Created " + name + "/")
+    for f in files:
+        print("  " + f)
+    print("")
+    print("Next:")
+    print("  cd " + name)
+    print("  mymo app.my --dev")
+
+main()

@@ -1,0 +1,6 @@
+dict sizes with missed keys: 0
+[True, Nil, 1, 2.5, "s", (1, 2), [3]] True 3
+pattern with inline bool/nil matched
+False True False False False False False False
+empty list is falsy
+default

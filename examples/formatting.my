@@ -1,0 +1,49 @@
+# How values print: str() form at the top level, repr() form inside
+# containers, and user __str__ / __repr__ on classes.
+print("plain", 1, 2.0, 0.1 + 0.2, 1e20, Nil, True)
+print(["a", 1, 2.5, ("t",), {"k": [Nil]}])
+print(repr("quote \" and\nnewline"), repr(3), repr(2.0))
+print(str([1, "x"]), f"{[1, "x"]} {(1, 2)}")
+
+class Point:
+    fn __init__(self, x, y):
+        self.x = x
+        self.y = y
+    fn __str__(self):
+        return f"({self.x}, {self.y})"
+
+class Money:
+    fn __init__(self, cents):
+        self.cents = cents
+    fn __repr__(self):
+        return f"Money({self.cents})"
+    fn __str__(self):
+        return f"${self.cents / 100}"
+
+p = Point(1, 2)
+print(p, str(p), f"p={p}")
+print([p, p])
+m = Money(250)
+print(m, [m], repr(m))
+
+class Plain:
+    fn __init__(self):
+        self.v = 1
+print(Plain())
+
+class Bad:
+    fn __init__(self):
+        self.v = 1
+    fn __str__(self):
+        return 42
+try:
+    print(Bad())
+catch e:
+    print("error:", e)
+
+nested = [1]
+i = 0
+while i < 3:
+    nested = [nested]
+    i += 1
+print(nested)

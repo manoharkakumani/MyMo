@@ -1,0 +1,44 @@
+# The ui library without a server: build views, run handlers and render
+# them as terminal text (render_text) and HTML (render).
+from "ui" use *
+
+count = state(2)
+name = state("Ada")
+agree = state(False)
+size = state("M")
+level = state(30)
+items = state(["apples", "pears"])
+
+fn add_item():
+    items.push(name.value)
+
+fn view():
+    return card(
+        h1("Order"),
+        text(f"Hello {name}, you have {count} items"),
+        input(bind=name, label="Name"),
+        row(button("-", on=count.dec), button("+", on=count.inc, primary=True), spacer(), badge("new", color="green")),
+        checkbox("I agree", bind=agree),
+        select(["S", "M", "L"], bind=size, label="Size"),
+        slider(level, label="Level"),
+        tabs(["S", "M", "L"], bind=size),
+        progress(level.value, label="Progress"),
+        table([{"fruit": f, "qty": len(f)} for f in items.value]),
+        kv({"size": size.value, "agreed": agree.value}),
+        alert("Saved", kind="success"),
+        title="Shop",
+    )
+
+page("/", view)
+print(render_text("/", width=60))
+
+# Simulate the browser: post values, click handlers by id.
+html = render("/")
+print("buttons:", html.count("m-btn"), "bound:", html.count("data-bind"))
+__handle("/", "1", {name.id: "Grace", agree.id: True})
+__handle("/", "1", Nil)
+__handle("/", "0", Nil)
+print(count.value, name.value, agree.value)
+__handle("/", Nil, {level.id: 75, size.id: "L"})
+print(level.value, size.value)
+print(render_text("/", width=60).split("\n")[1:3])

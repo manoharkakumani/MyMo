@@ -1,0 +1,11 @@
+# time — wall clock, monotonic, sleep, format
+from "time" use now, monotonic, sleep, format
+
+print("epoch now =", now())
+print("monotonic =", monotonic())
+print("formatted =", format(now(), "%Y-%m-%d %H:%M:%S"))
+
+t0 = monotonic()
+sleep(0.05)
+t1 = monotonic()
+print("slept ~", t1 - t0, "s")

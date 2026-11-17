@@ -1,0 +1,105 @@
+# Typed exceptions: exception classes, catch Type as e, several clauses, final:.
+fn risky(kind):
+    if kind == "key":
+        return {}["missing"]
+    if kind == "index":
+        return [][3]
+    if kind == "zero":
+        return 1 / 0
+    if kind == "value":
+        raise ValueError("bad value")
+    if kind == "custom":
+        raise InsufficientFunds(50)
+    if kind == "string":
+        raise "plain string"
+    if kind == "class":
+        raise NotImplementedError
+    return "ok"
+
+class InsufficientFunds(Exception):
+    fn __init__(self, needed):
+        self.needed = needed
+        self.message = f"need {needed} more"
+
+for kind in ["key", "index", "zero", "value", "custom", "string", "class", "none"]:
+    try:
+        print(kind, "->", risky(kind))
+    catch KeyError as e:
+        print(kind, "-> KeyError, message:", e.message)
+    catch (IndexError, ZeroDivisionError) as e:
+        print(kind, "-> index/zero:", e, typename(e))
+    catch InsufficientFunds as e:
+        print(kind, "-> custom:", e, e.needed)
+    catch ValueError:
+        print(kind, "-> some ValueError")
+    catch e:
+        print(kind, "-> other:", e)
+
+try:
+    try:
+        risky("zero")
+    catch KeyError:
+        print("not here")
+catch ArithmeticError as e:
+    print("outer caught by base class:", e, isinstance(e, ZeroDivisionError), isinstance(e, Exception))
+
+fn with_cleanup(kind):
+    try:
+        print("  body", kind)
+        if kind == "fail":
+            raise ValueError("fail")
+        if kind == "unhandled":
+            raise TypeError("nobody catches me")
+    catch ValueError as e:
+        print("  caught", e)
+    final:
+        print("  cleanup", kind)
+    print("  after", kind)
+
+with_cleanup("ok")
+with_cleanup("fail")
+try:
+    with_cleanup("unhandled")
+catch TypeError as e:
+    print("propagated:", e)
+
+try:
+    try:
+        raise ValueError("first")
+    catch ValueError:
+        raise KeyError("raised in catch")
+    final:
+        print("final runs even when a catch clause raises")
+catch LookupError as e:
+    print("then:", e)
+
+try:
+    undefined_thing
+catch NameError as e:
+    print("NameError:", e.message)
+try:
+    "a" + 1
+catch TypeError as e:
+    print(e)
+try:
+    Nil.foo
+catch AttributeError as e:
+    print("attr:", typename(e))
+print(typename(1), typename("s"), typename([]), typename({}), typename(InsufficientFunds(1)), typename(Nil), typename(1.5), typename(True))
+e = ValueError("x")
+print(str(e), repr(e), Exception(), RuntimeError("r").message)
+fn deep(n):
+    return deep(n + 1)
+try:
+    deep(0)
+catch RecursionError:
+    print("recursion caught")
+fn first_neg(xs):
+    for x in xs:
+        try:
+            if x < 0:
+                return x
+        catch e:
+            print("never")
+    return Nil
+print(first_neg([1, -2, 3]), first_neg([1]))

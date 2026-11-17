@@ -1,0 +1,14 @@
+# random — deterministic with seed
+from "random" use seed, int as rint, float as rfloat, choice
+
+seed(42)
+a = rint(1, 100)
+b = rint(1, 100)
+print("first roll  =", a)
+print("second roll =", b)
+
+f = rfloat()
+print("rfloat()    =", f)
+
+pick = choice(["alpha", "beta", "gamma", "delta"])
+print("choice      =", pick)

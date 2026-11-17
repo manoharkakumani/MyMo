@@ -1,0 +1,10 @@
+# os — environment + cwd
+from "os" use getenv, setenv, unsetenv, getcwd
+
+print("cwd:", getcwd())
+print("PATH ends with:", getenv("PATH"))
+
+setenv("MYMO_DEMO", "hello")
+print("MYMO_DEMO =", getenv("MYMO_DEMO"))
+unsetenv("MYMO_DEMO")
+print("after unset:", getenv("MYMO_DEMO"))

@@ -10,7 +10,7 @@ fib3 = n =>
 
 
 if (__name__ == "__main__") : 
-    print(fib1(6),fib(3),fib3(3))
+    print(fib1(30),fib(3),fib3(3))
 
 
 

@@ -1,0 +1,83 @@
+# Closures: inner fns and arrows capture the enclosing function's
+# arguments and locals, and keep them after the outer call returns.
+fn adder(n):
+    return x => x + n
+
+add2 = adder(2)
+add10 = adder(10)
+print("adders", add2(1), add10(1), add2(5))
+
+fn counter():
+    state = {"n": 0}
+    fn inc():
+        state["n"] = state["n"] + 1
+        return state["n"]
+    return inc
+
+c1 = counter()
+c2 = counter()
+c1()
+c1()
+print("counters", c1(), c2())
+
+fn level1(a):
+    b = a + 1
+    fn level2(c):
+        fn level3(d):
+            return a + b + c + d
+        return level3
+    return level2
+
+print("nested", level1(1)(10)(100))
+
+fn make_fact():
+    fn fact(n):
+        if n <= 1:
+            return 1
+        return n * fact(n - 1)
+    return fact
+
+print("recursive", make_fact()(5))
+
+fs = []
+for i in [1, 2, 3]:
+    fs.append(adder(i))
+
+print("loop", fs[0](0), fs[1](0), fs[2](0))
+
+class Greeter:
+    fn __init__(self, word):
+        self.word = word
+    fn maker(self, suffix):
+        w = self.word
+        return name => w + " " + name + suffix
+
+g = Greeter("hi")
+print("method", g.maker("!")("bob"))
+
+fn route(path):
+    fn deco(h):
+        return path + ":" + h()
+    return deco
+
+fn home():
+    return "home"
+
+print("factory", route("/x")(home))
+
+fn safe(v):
+    try:
+        raise "boom"
+    catch e:
+        return z => v + z
+
+print("after catch", safe(1)(2))
+
+fn gen():
+    base = 100
+    f = k => base + k
+    yield(f(1))
+    yield(f(2))
+
+fb = fiber(gen)
+print("fiber", fb.run(), fb.resume())

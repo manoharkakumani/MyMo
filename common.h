@@ -11,7 +11,7 @@
 #include <time.h>
 #include <assert.h>
 
-#define VERSION "0.0.1"
+#define VERSION "0.2.0"
 
 #define UNUSED(_X_) (void)_X_
 

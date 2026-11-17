@@ -1,0 +1,2475 @@
+# Constant-pool stress: over 700 top-level functions and many distinct
+# names/literals push constant indices far past 255, so every
+# constant-reading opcode below runs with an OP_WIDE prefix.
+# Generated; the expected values are computed independently.
+
+seed_small = 1   # gives the literal 1 a small index, so `x += 1` below
+                 # fuses into OP_INCR_VAR with a wide name index
+
+fn f0(x):
+    return x + 1000
+
+fn f1(x):
+    return x + 1007
+
+fn f2(x):
+    return x + 1014
+
+fn f3(x):
+    return x + 1021
+
+fn f4(x):
+    return x + 1028
+
+fn f5(x):
+    return x + 1035
+
+fn f6(x):
+    return x + 1042
+
+fn f7(x):
+    return x + 1049
+
+fn f8(x):
+    return x + 1056
+
+fn f9(x):
+    return x + 1063
+
+fn f10(x):
+    return x + 1070
+
+fn f11(x):
+    return x + 1077
+
+fn f12(x):
+    return x + 1084
+
+fn f13(x):
+    return x + 1091
+
+fn f14(x):
+    return x + 1098
+
+fn f15(x):
+    return x + 1105
+
+fn f16(x):
+    return x + 1112
+
+fn f17(x):
+    return x + 1119
+
+fn f18(x):
+    return x + 1126
+
+fn f19(x):
+    return x + 1133
+
+fn f20(x):
+    return x + 1140
+
+fn f21(x):
+    return x + 1147
+
+fn f22(x):
+    return x + 1154
+
+fn f23(x):
+    return x + 1161
+
+fn f24(x):
+    return x + 1168
+
+fn f25(x):
+    return x + 1175
+
+fn f26(x):
+    return x + 1182
+
+fn f27(x):
+    return x + 1189
+
+fn f28(x):
+    return x + 1196
+
+fn f29(x):
+    return x + 1203
+
+fn f30(x):
+    return x + 1210
+
+fn f31(x):
+    return x + 1217
+
+fn f32(x):
+    return x + 1224
+
+fn f33(x):
+    return x + 1231
+
+fn f34(x):
+    return x + 1238
+
+fn f35(x):
+    return x + 1245
+
+fn f36(x):
+    return x + 1252
+
+fn f37(x):
+    return x + 1259
+
+fn f38(x):
+    return x + 1266
+
+fn f39(x):
+    return x + 1273
+
+fn f40(x):
+    return x + 1280
+
+fn f41(x):
+    return x + 1287
+
+fn f42(x):
+    return x + 1294
+
+fn f43(x):
+    return x + 1301
+
+fn f44(x):
+    return x + 1308
+
+fn f45(x):
+    return x + 1315
+
+fn f46(x):
+    return x + 1322
+
+fn f47(x):
+    return x + 1329
+
+fn f48(x):
+    return x + 1336
+
+fn f49(x):
+    return x + 1343
+
+fn f50(x):
+    return x + 1350
+
+fn f51(x):
+    return x + 1357
+
+fn f52(x):
+    return x + 1364
+
+fn f53(x):
+    return x + 1371
+
+fn f54(x):
+    return x + 1378
+
+fn f55(x):
+    return x + 1385
+
+fn f56(x):
+    return x + 1392
+
+fn f57(x):
+    return x + 1399
+
+fn f58(x):
+    return x + 1406
+
+fn f59(x):
+    return x + 1413
+
+fn f60(x):
+    return x + 1420
+
+fn f61(x):
+    return x + 1427
+
+fn f62(x):
+    return x + 1434
+
+fn f63(x):
+    return x + 1441
+
+fn f64(x):
+    return x + 1448
+
+fn f65(x):
+    return x + 1455
+
+fn f66(x):
+    return x + 1462
+
+fn f67(x):
+    return x + 1469
+
+fn f68(x):
+    return x + 1476
+
+fn f69(x):
+    return x + 1483
+
+fn f70(x):
+    return x + 1490
+
+fn f71(x):
+    return x + 1497
+
+fn f72(x):
+    return x + 1504
+
+fn f73(x):
+    return x + 1511
+
+fn f74(x):
+    return x + 1518
+
+fn f75(x):
+    return x + 1525
+
+fn f76(x):
+    return x + 1532
+
+fn f77(x):
+    return x + 1539
+
+fn f78(x):
+    return x + 1546
+
+fn f79(x):
+    return x + 1553
+
+fn f80(x):
+    return x + 1560
+
+fn f81(x):
+    return x + 1567
+
+fn f82(x):
+    return x + 1574
+
+fn f83(x):
+    return x + 1581
+
+fn f84(x):
+    return x + 1588
+
+fn f85(x):
+    return x + 1595
+
+fn f86(x):
+    return x + 1602
+
+fn f87(x):
+    return x + 1609
+
+fn f88(x):
+    return x + 1616
+
+fn f89(x):
+    return x + 1623
+
+fn f90(x):
+    return x + 1630
+
+fn f91(x):
+    return x + 1637
+
+fn f92(x):
+    return x + 1644
+
+fn f93(x):
+    return x + 1651
+
+fn f94(x):
+    return x + 1658
+
+fn f95(x):
+    return x + 1665
+
+fn f96(x):
+    return x + 1672
+
+fn f97(x):
+    return x + 1679
+
+fn f98(x):
+    return x + 1686
+
+fn f99(x):
+    return x + 1693
+
+fn f100(x):
+    return x + 1700
+
+fn f101(x):
+    return x + 1707
+
+fn f102(x):
+    return x + 1714
+
+fn f103(x):
+    return x + 1721
+
+fn f104(x):
+    return x + 1728
+
+fn f105(x):
+    return x + 1735
+
+fn f106(x):
+    return x + 1742
+
+fn f107(x):
+    return x + 1749
+
+fn f108(x):
+    return x + 1756
+
+fn f109(x):
+    return x + 1763
+
+fn f110(x):
+    return x + 1770
+
+fn f111(x):
+    return x + 1777
+
+fn f112(x):
+    return x + 1784
+
+fn f113(x):
+    return x + 1791
+
+fn f114(x):
+    return x + 1798
+
+fn f115(x):
+    return x + 1805
+
+fn f116(x):
+    return x + 1812
+
+fn f117(x):
+    return x + 1819
+
+fn f118(x):
+    return x + 1826
+
+fn f119(x):
+    return x + 1833
+
+fn f120(x):
+    return x + 1840
+
+fn f121(x):
+    return x + 1847
+
+fn f122(x):
+    return x + 1854
+
+fn f123(x):
+    return x + 1861
+
+fn f124(x):
+    return x + 1868
+
+fn f125(x):
+    return x + 1875
+
+fn f126(x):
+    return x + 1882
+
+fn f127(x):
+    return x + 1889
+
+fn f128(x):
+    return x + 1896
+
+fn f129(x):
+    return x + 1903
+
+fn f130(x):
+    return x + 1910
+
+fn f131(x):
+    return x + 1917
+
+fn f132(x):
+    return x + 1924
+
+fn f133(x):
+    return x + 1931
+
+fn f134(x):
+    return x + 1938
+
+fn f135(x):
+    return x + 1945
+
+fn f136(x):
+    return x + 1952
+
+fn f137(x):
+    return x + 1959
+
+fn f138(x):
+    return x + 1966
+
+fn f139(x):
+    return x + 1973
+
+fn f140(x):
+    return x + 1980
+
+fn f141(x):
+    return x + 1987
+
+fn f142(x):
+    return x + 1994
+
+fn f143(x):
+    return x + 2001
+
+fn f144(x):
+    return x + 2008
+
+fn f145(x):
+    return x + 2015
+
+fn f146(x):
+    return x + 2022
+
+fn f147(x):
+    return x + 2029
+
+fn f148(x):
+    return x + 2036
+
+fn f149(x):
+    return x + 2043
+
+fn f150(x):
+    return x + 2050
+
+fn f151(x):
+    return x + 2057
+
+fn f152(x):
+    return x + 2064
+
+fn f153(x):
+    return x + 2071
+
+fn f154(x):
+    return x + 2078
+
+fn f155(x):
+    return x + 2085
+
+fn f156(x):
+    return x + 2092
+
+fn f157(x):
+    return x + 2099
+
+fn f158(x):
+    return x + 2106
+
+fn f159(x):
+    return x + 2113
+
+fn f160(x):
+    return x + 2120
+
+fn f161(x):
+    return x + 2127
+
+fn f162(x):
+    return x + 2134
+
+fn f163(x):
+    return x + 2141
+
+fn f164(x):
+    return x + 2148
+
+fn f165(x):
+    return x + 2155
+
+fn f166(x):
+    return x + 2162
+
+fn f167(x):
+    return x + 2169
+
+fn f168(x):
+    return x + 2176
+
+fn f169(x):
+    return x + 2183
+
+fn f170(x):
+    return x + 2190
+
+fn f171(x):
+    return x + 2197
+
+fn f172(x):
+    return x + 2204
+
+fn f173(x):
+    return x + 2211
+
+fn f174(x):
+    return x + 2218
+
+fn f175(x):
+    return x + 2225
+
+fn f176(x):
+    return x + 2232
+
+fn f177(x):
+    return x + 2239
+
+fn f178(x):
+    return x + 2246
+
+fn f179(x):
+    return x + 2253
+
+fn f180(x):
+    return x + 2260
+
+fn f181(x):
+    return x + 2267
+
+fn f182(x):
+    return x + 2274
+
+fn f183(x):
+    return x + 2281
+
+fn f184(x):
+    return x + 2288
+
+fn f185(x):
+    return x + 2295
+
+fn f186(x):
+    return x + 2302
+
+fn f187(x):
+    return x + 2309
+
+fn f188(x):
+    return x + 2316
+
+fn f189(x):
+    return x + 2323
+
+fn f190(x):
+    return x + 2330
+
+fn f191(x):
+    return x + 2337
+
+fn f192(x):
+    return x + 2344
+
+fn f193(x):
+    return x + 2351
+
+fn f194(x):
+    return x + 2358
+
+fn f195(x):
+    return x + 2365
+
+fn f196(x):
+    return x + 2372
+
+fn f197(x):
+    return x + 2379
+
+fn f198(x):
+    return x + 2386
+
+fn f199(x):
+    return x + 2393
+
+fn f200(x):
+    return x + 2400
+
+fn f201(x):
+    return x + 2407
+
+fn f202(x):
+    return x + 2414
+
+fn f203(x):
+    return x + 2421
+
+fn f204(x):
+    return x + 2428
+
+fn f205(x):
+    return x + 2435
+
+fn f206(x):
+    return x + 2442
+
+fn f207(x):
+    return x + 2449
+
+fn f208(x):
+    return x + 2456
+
+fn f209(x):
+    return x + 2463
+
+fn f210(x):
+    return x + 2470
+
+fn f211(x):
+    return x + 2477
+
+fn f212(x):
+    return x + 2484
+
+fn f213(x):
+    return x + 2491
+
+fn f214(x):
+    return x + 2498
+
+fn f215(x):
+    return x + 2505
+
+fn f216(x):
+    return x + 2512
+
+fn f217(x):
+    return x + 2519
+
+fn f218(x):
+    return x + 2526
+
+fn f219(x):
+    return x + 2533
+
+fn f220(x):
+    return x + 2540
+
+fn f221(x):
+    return x + 2547
+
+fn f222(x):
+    return x + 2554
+
+fn f223(x):
+    return x + 2561
+
+fn f224(x):
+    return x + 2568
+
+fn f225(x):
+    return x + 2575
+
+fn f226(x):
+    return x + 2582
+
+fn f227(x):
+    return x + 2589
+
+fn f228(x):
+    return x + 2596
+
+fn f229(x):
+    return x + 2603
+
+fn f230(x):
+    return x + 2610
+
+fn f231(x):
+    return x + 2617
+
+fn f232(x):
+    return x + 2624
+
+fn f233(x):
+    return x + 2631
+
+fn f234(x):
+    return x + 2638
+
+fn f235(x):
+    return x + 2645
+
+fn f236(x):
+    return x + 2652
+
+fn f237(x):
+    return x + 2659
+
+fn f238(x):
+    return x + 2666
+
+fn f239(x):
+    return x + 2673
+
+fn f240(x):
+    return x + 2680
+
+fn f241(x):
+    return x + 2687
+
+fn f242(x):
+    return x + 2694
+
+fn f243(x):
+    return x + 2701
+
+fn f244(x):
+    return x + 2708
+
+fn f245(x):
+    return x + 2715
+
+fn f246(x):
+    return x + 2722
+
+fn f247(x):
+    return x + 2729
+
+fn f248(x):
+    return x + 2736
+
+fn f249(x):
+    return x + 2743
+
+fn f250(x):
+    return x + 2750
+
+fn f251(x):
+    return x + 2757
+
+fn f252(x):
+    return x + 2764
+
+fn f253(x):
+    return x + 2771
+
+fn f254(x):
+    return x + 2778
+
+fn f255(x):
+    return x + 2785
+
+fn f256(x):
+    return x + 2792
+
+fn f257(x):
+    return x + 2799
+
+fn f258(x):
+    return x + 2806
+
+fn f259(x):
+    return x + 2813
+
+fn f260(x):
+    return x + 2820
+
+fn f261(x):
+    return x + 2827
+
+fn f262(x):
+    return x + 2834
+
+fn f263(x):
+    return x + 2841
+
+fn f264(x):
+    return x + 2848
+
+fn f265(x):
+    return x + 2855
+
+fn f266(x):
+    return x + 2862
+
+fn f267(x):
+    return x + 2869
+
+fn f268(x):
+    return x + 2876
+
+fn f269(x):
+    return x + 2883
+
+fn f270(x):
+    return x + 2890
+
+fn f271(x):
+    return x + 2897
+
+fn f272(x):
+    return x + 2904
+
+fn f273(x):
+    return x + 2911
+
+fn f274(x):
+    return x + 2918
+
+fn f275(x):
+    return x + 2925
+
+fn f276(x):
+    return x + 2932
+
+fn f277(x):
+    return x + 2939
+
+fn f278(x):
+    return x + 2946
+
+fn f279(x):
+    return x + 2953
+
+fn f280(x):
+    return x + 2960
+
+fn f281(x):
+    return x + 2967
+
+fn f282(x):
+    return x + 2974
+
+fn f283(x):
+    return x + 2981
+
+fn f284(x):
+    return x + 2988
+
+fn f285(x):
+    return x + 2995
+
+fn f286(x):
+    return x + 3002
+
+fn f287(x):
+    return x + 3009
+
+fn f288(x):
+    return x + 3016
+
+fn f289(x):
+    return x + 3023
+
+fn f290(x):
+    return x + 3030
+
+fn f291(x):
+    return x + 3037
+
+fn f292(x):
+    return x + 3044
+
+fn f293(x):
+    return x + 3051
+
+fn f294(x):
+    return x + 3058
+
+fn f295(x):
+    return x + 3065
+
+fn f296(x):
+    return x + 3072
+
+fn f297(x):
+    return x + 3079
+
+fn f298(x):
+    return x + 3086
+
+fn f299(x):
+    return x + 3093
+
+fn f300(x):
+    return x + 3100
+
+fn f301(x):
+    return x + 3107
+
+fn f302(x):
+    return x + 3114
+
+fn f303(x):
+    return x + 3121
+
+fn f304(x):
+    return x + 3128
+
+fn f305(x):
+    return x + 3135
+
+fn f306(x):
+    return x + 3142
+
+fn f307(x):
+    return x + 3149
+
+fn f308(x):
+    return x + 3156
+
+fn f309(x):
+    return x + 3163
+
+fn f310(x):
+    return x + 3170
+
+fn f311(x):
+    return x + 3177
+
+fn f312(x):
+    return x + 3184
+
+fn f313(x):
+    return x + 3191
+
+fn f314(x):
+    return x + 3198
+
+fn f315(x):
+    return x + 3205
+
+fn f316(x):
+    return x + 3212
+
+fn f317(x):
+    return x + 3219
+
+fn f318(x):
+    return x + 3226
+
+fn f319(x):
+    return x + 3233
+
+fn f320(x):
+    return x + 3240
+
+fn f321(x):
+    return x + 3247
+
+fn f322(x):
+    return x + 3254
+
+fn f323(x):
+    return x + 3261
+
+fn f324(x):
+    return x + 3268
+
+fn f325(x):
+    return x + 3275
+
+fn f326(x):
+    return x + 3282
+
+fn f327(x):
+    return x + 3289
+
+fn f328(x):
+    return x + 3296
+
+fn f329(x):
+    return x + 3303
+
+fn f330(x):
+    return x + 3310
+
+fn f331(x):
+    return x + 3317
+
+fn f332(x):
+    return x + 3324
+
+fn f333(x):
+    return x + 3331
+
+fn f334(x):
+    return x + 3338
+
+fn f335(x):
+    return x + 3345
+
+fn f336(x):
+    return x + 3352
+
+fn f337(x):
+    return x + 3359
+
+fn f338(x):
+    return x + 3366
+
+fn f339(x):
+    return x + 3373
+
+fn f340(x):
+    return x + 3380
+
+fn f341(x):
+    return x + 3387
+
+fn f342(x):
+    return x + 3394
+
+fn f343(x):
+    return x + 3401
+
+fn f344(x):
+    return x + 3408
+
+fn f345(x):
+    return x + 3415
+
+fn f346(x):
+    return x + 3422
+
+fn f347(x):
+    return x + 3429
+
+fn f348(x):
+    return x + 3436
+
+fn f349(x):
+    return x + 3443
+
+fn f350(x):
+    return x + 3450
+
+fn f351(x):
+    return x + 3457
+
+fn f352(x):
+    return x + 3464
+
+fn f353(x):
+    return x + 3471
+
+fn f354(x):
+    return x + 3478
+
+fn f355(x):
+    return x + 3485
+
+fn f356(x):
+    return x + 3492
+
+fn f357(x):
+    return x + 3499
+
+fn f358(x):
+    return x + 3506
+
+fn f359(x):
+    return x + 3513
+
+fn f360(x):
+    return x + 3520
+
+fn f361(x):
+    return x + 3527
+
+fn f362(x):
+    return x + 3534
+
+fn f363(x):
+    return x + 3541
+
+fn f364(x):
+    return x + 3548
+
+fn f365(x):
+    return x + 3555
+
+fn f366(x):
+    return x + 3562
+
+fn f367(x):
+    return x + 3569
+
+fn f368(x):
+    return x + 3576
+
+fn f369(x):
+    return x + 3583
+
+fn f370(x):
+    return x + 3590
+
+fn f371(x):
+    return x + 3597
+
+fn f372(x):
+    return x + 3604
+
+fn f373(x):
+    return x + 3611
+
+fn f374(x):
+    return x + 3618
+
+fn f375(x):
+    return x + 3625
+
+fn f376(x):
+    return x + 3632
+
+fn f377(x):
+    return x + 3639
+
+fn f378(x):
+    return x + 3646
+
+fn f379(x):
+    return x + 3653
+
+fn f380(x):
+    return x + 3660
+
+fn f381(x):
+    return x + 3667
+
+fn f382(x):
+    return x + 3674
+
+fn f383(x):
+    return x + 3681
+
+fn f384(x):
+    return x + 3688
+
+fn f385(x):
+    return x + 3695
+
+fn f386(x):
+    return x + 3702
+
+fn f387(x):
+    return x + 3709
+
+fn f388(x):
+    return x + 3716
+
+fn f389(x):
+    return x + 3723
+
+fn f390(x):
+    return x + 3730
+
+fn f391(x):
+    return x + 3737
+
+fn f392(x):
+    return x + 3744
+
+fn f393(x):
+    return x + 3751
+
+fn f394(x):
+    return x + 3758
+
+fn f395(x):
+    return x + 3765
+
+fn f396(x):
+    return x + 3772
+
+fn f397(x):
+    return x + 3779
+
+fn f398(x):
+    return x + 3786
+
+fn f399(x):
+    return x + 3793
+
+fn f400(x):
+    return x + 3800
+
+fn f401(x):
+    return x + 3807
+
+fn f402(x):
+    return x + 3814
+
+fn f403(x):
+    return x + 3821
+
+fn f404(x):
+    return x + 3828
+
+fn f405(x):
+    return x + 3835
+
+fn f406(x):
+    return x + 3842
+
+fn f407(x):
+    return x + 3849
+
+fn f408(x):
+    return x + 3856
+
+fn f409(x):
+    return x + 3863
+
+fn f410(x):
+    return x + 3870
+
+fn f411(x):
+    return x + 3877
+
+fn f412(x):
+    return x + 3884
+
+fn f413(x):
+    return x + 3891
+
+fn f414(x):
+    return x + 3898
+
+fn f415(x):
+    return x + 3905
+
+fn f416(x):
+    return x + 3912
+
+fn f417(x):
+    return x + 3919
+
+fn f418(x):
+    return x + 3926
+
+fn f419(x):
+    return x + 3933
+
+fn f420(x):
+    return x + 3940
+
+fn f421(x):
+    return x + 3947
+
+fn f422(x):
+    return x + 3954
+
+fn f423(x):
+    return x + 3961
+
+fn f424(x):
+    return x + 3968
+
+fn f425(x):
+    return x + 3975
+
+fn f426(x):
+    return x + 3982
+
+fn f427(x):
+    return x + 3989
+
+fn f428(x):
+    return x + 3996
+
+fn f429(x):
+    return x + 4003
+
+fn f430(x):
+    return x + 4010
+
+fn f431(x):
+    return x + 4017
+
+fn f432(x):
+    return x + 4024
+
+fn f433(x):
+    return x + 4031
+
+fn f434(x):
+    return x + 4038
+
+fn f435(x):
+    return x + 4045
+
+fn f436(x):
+    return x + 4052
+
+fn f437(x):
+    return x + 4059
+
+fn f438(x):
+    return x + 4066
+
+fn f439(x):
+    return x + 4073
+
+fn f440(x):
+    return x + 4080
+
+fn f441(x):
+    return x + 4087
+
+fn f442(x):
+    return x + 4094
+
+fn f443(x):
+    return x + 4101
+
+fn f444(x):
+    return x + 4108
+
+fn f445(x):
+    return x + 4115
+
+fn f446(x):
+    return x + 4122
+
+fn f447(x):
+    return x + 4129
+
+fn f448(x):
+    return x + 4136
+
+fn f449(x):
+    return x + 4143
+
+fn f450(x):
+    return x + 4150
+
+fn f451(x):
+    return x + 4157
+
+fn f452(x):
+    return x + 4164
+
+fn f453(x):
+    return x + 4171
+
+fn f454(x):
+    return x + 4178
+
+fn f455(x):
+    return x + 4185
+
+fn f456(x):
+    return x + 4192
+
+fn f457(x):
+    return x + 4199
+
+fn f458(x):
+    return x + 4206
+
+fn f459(x):
+    return x + 4213
+
+fn f460(x):
+    return x + 4220
+
+fn f461(x):
+    return x + 4227
+
+fn f462(x):
+    return x + 4234
+
+fn f463(x):
+    return x + 4241
+
+fn f464(x):
+    return x + 4248
+
+fn f465(x):
+    return x + 4255
+
+fn f466(x):
+    return x + 4262
+
+fn f467(x):
+    return x + 4269
+
+fn f468(x):
+    return x + 4276
+
+fn f469(x):
+    return x + 4283
+
+fn f470(x):
+    return x + 4290
+
+fn f471(x):
+    return x + 4297
+
+fn f472(x):
+    return x + 4304
+
+fn f473(x):
+    return x + 4311
+
+fn f474(x):
+    return x + 4318
+
+fn f475(x):
+    return x + 4325
+
+fn f476(x):
+    return x + 4332
+
+fn f477(x):
+    return x + 4339
+
+fn f478(x):
+    return x + 4346
+
+fn f479(x):
+    return x + 4353
+
+fn f480(x):
+    return x + 4360
+
+fn f481(x):
+    return x + 4367
+
+fn f482(x):
+    return x + 4374
+
+fn f483(x):
+    return x + 4381
+
+fn f484(x):
+    return x + 4388
+
+fn f485(x):
+    return x + 4395
+
+fn f486(x):
+    return x + 4402
+
+fn f487(x):
+    return x + 4409
+
+fn f488(x):
+    return x + 4416
+
+fn f489(x):
+    return x + 4423
+
+fn f490(x):
+    return x + 4430
+
+fn f491(x):
+    return x + 4437
+
+fn f492(x):
+    return x + 4444
+
+fn f493(x):
+    return x + 4451
+
+fn f494(x):
+    return x + 4458
+
+fn f495(x):
+    return x + 4465
+
+fn f496(x):
+    return x + 4472
+
+fn f497(x):
+    return x + 4479
+
+fn f498(x):
+    return x + 4486
+
+fn f499(x):
+    return x + 4493
+
+fn f500(x):
+    return x + 4500
+
+fn f501(x):
+    return x + 4507
+
+fn f502(x):
+    return x + 4514
+
+fn f503(x):
+    return x + 4521
+
+fn f504(x):
+    return x + 4528
+
+fn f505(x):
+    return x + 4535
+
+fn f506(x):
+    return x + 4542
+
+fn f507(x):
+    return x + 4549
+
+fn f508(x):
+    return x + 4556
+
+fn f509(x):
+    return x + 4563
+
+fn f510(x):
+    return x + 4570
+
+fn f511(x):
+    return x + 4577
+
+fn f512(x):
+    return x + 4584
+
+fn f513(x):
+    return x + 4591
+
+fn f514(x):
+    return x + 4598
+
+fn f515(x):
+    return x + 4605
+
+fn f516(x):
+    return x + 4612
+
+fn f517(x):
+    return x + 4619
+
+fn f518(x):
+    return x + 4626
+
+fn f519(x):
+    return x + 4633
+
+fn f520(x):
+    return x + 4640
+
+fn f521(x):
+    return x + 4647
+
+fn f522(x):
+    return x + 4654
+
+fn f523(x):
+    return x + 4661
+
+fn f524(x):
+    return x + 4668
+
+fn f525(x):
+    return x + 4675
+
+fn f526(x):
+    return x + 4682
+
+fn f527(x):
+    return x + 4689
+
+fn f528(x):
+    return x + 4696
+
+fn f529(x):
+    return x + 4703
+
+fn f530(x):
+    return x + 4710
+
+fn f531(x):
+    return x + 4717
+
+fn f532(x):
+    return x + 4724
+
+fn f533(x):
+    return x + 4731
+
+fn f534(x):
+    return x + 4738
+
+fn f535(x):
+    return x + 4745
+
+fn f536(x):
+    return x + 4752
+
+fn f537(x):
+    return x + 4759
+
+fn f538(x):
+    return x + 4766
+
+fn f539(x):
+    return x + 4773
+
+fn f540(x):
+    return x + 4780
+
+fn f541(x):
+    return x + 4787
+
+fn f542(x):
+    return x + 4794
+
+fn f543(x):
+    return x + 4801
+
+fn f544(x):
+    return x + 4808
+
+fn f545(x):
+    return x + 4815
+
+fn f546(x):
+    return x + 4822
+
+fn f547(x):
+    return x + 4829
+
+fn f548(x):
+    return x + 4836
+
+fn f549(x):
+    return x + 4843
+
+fn f550(x):
+    return x + 4850
+
+fn f551(x):
+    return x + 4857
+
+fn f552(x):
+    return x + 4864
+
+fn f553(x):
+    return x + 4871
+
+fn f554(x):
+    return x + 4878
+
+fn f555(x):
+    return x + 4885
+
+fn f556(x):
+    return x + 4892
+
+fn f557(x):
+    return x + 4899
+
+fn f558(x):
+    return x + 4906
+
+fn f559(x):
+    return x + 4913
+
+fn f560(x):
+    return x + 4920
+
+fn f561(x):
+    return x + 4927
+
+fn f562(x):
+    return x + 4934
+
+fn f563(x):
+    return x + 4941
+
+fn f564(x):
+    return x + 4948
+
+fn f565(x):
+    return x + 4955
+
+fn f566(x):
+    return x + 4962
+
+fn f567(x):
+    return x + 4969
+
+fn f568(x):
+    return x + 4976
+
+fn f569(x):
+    return x + 4983
+
+fn f570(x):
+    return x + 4990
+
+fn f571(x):
+    return x + 4997
+
+fn f572(x):
+    return x + 5004
+
+fn f573(x):
+    return x + 5011
+
+fn f574(x):
+    return x + 5018
+
+fn f575(x):
+    return x + 5025
+
+fn f576(x):
+    return x + 5032
+
+fn f577(x):
+    return x + 5039
+
+fn f578(x):
+    return x + 5046
+
+fn f579(x):
+    return x + 5053
+
+fn f580(x):
+    return x + 5060
+
+fn f581(x):
+    return x + 5067
+
+fn f582(x):
+    return x + 5074
+
+fn f583(x):
+    return x + 5081
+
+fn f584(x):
+    return x + 5088
+
+fn f585(x):
+    return x + 5095
+
+fn f586(x):
+    return x + 5102
+
+fn f587(x):
+    return x + 5109
+
+fn f588(x):
+    return x + 5116
+
+fn f589(x):
+    return x + 5123
+
+fn f590(x):
+    return x + 5130
+
+fn f591(x):
+    return x + 5137
+
+fn f592(x):
+    return x + 5144
+
+fn f593(x):
+    return x + 5151
+
+fn f594(x):
+    return x + 5158
+
+fn f595(x):
+    return x + 5165
+
+fn f596(x):
+    return x + 5172
+
+fn f597(x):
+    return x + 5179
+
+fn f598(x):
+    return x + 5186
+
+fn f599(x):
+    return x + 5193
+
+fn f600(x):
+    return x + 5200
+
+fn f601(x):
+    return x + 5207
+
+fn f602(x):
+    return x + 5214
+
+fn f603(x):
+    return x + 5221
+
+fn f604(x):
+    return x + 5228
+
+fn f605(x):
+    return x + 5235
+
+fn f606(x):
+    return x + 5242
+
+fn f607(x):
+    return x + 5249
+
+fn f608(x):
+    return x + 5256
+
+fn f609(x):
+    return x + 5263
+
+fn f610(x):
+    return x + 5270
+
+fn f611(x):
+    return x + 5277
+
+fn f612(x):
+    return x + 5284
+
+fn f613(x):
+    return x + 5291
+
+fn f614(x):
+    return x + 5298
+
+fn f615(x):
+    return x + 5305
+
+fn f616(x):
+    return x + 5312
+
+fn f617(x):
+    return x + 5319
+
+fn f618(x):
+    return x + 5326
+
+fn f619(x):
+    return x + 5333
+
+fn f620(x):
+    return x + 5340
+
+fn f621(x):
+    return x + 5347
+
+fn f622(x):
+    return x + 5354
+
+fn f623(x):
+    return x + 5361
+
+fn f624(x):
+    return x + 5368
+
+fn f625(x):
+    return x + 5375
+
+fn f626(x):
+    return x + 5382
+
+fn f627(x):
+    return x + 5389
+
+fn f628(x):
+    return x + 5396
+
+fn f629(x):
+    return x + 5403
+
+fn f630(x):
+    return x + 5410
+
+fn f631(x):
+    return x + 5417
+
+fn f632(x):
+    return x + 5424
+
+fn f633(x):
+    return x + 5431
+
+fn f634(x):
+    return x + 5438
+
+fn f635(x):
+    return x + 5445
+
+fn f636(x):
+    return x + 5452
+
+fn f637(x):
+    return x + 5459
+
+fn f638(x):
+    return x + 5466
+
+fn f639(x):
+    return x + 5473
+
+fn f640(x):
+    return x + 5480
+
+fn f641(x):
+    return x + 5487
+
+fn f642(x):
+    return x + 5494
+
+fn f643(x):
+    return x + 5501
+
+fn f644(x):
+    return x + 5508
+
+fn f645(x):
+    return x + 5515
+
+fn f646(x):
+    return x + 5522
+
+fn f647(x):
+    return x + 5529
+
+fn f648(x):
+    return x + 5536
+
+fn f649(x):
+    return x + 5543
+
+fn f650(x):
+    return x + 5550
+
+fn f651(x):
+    return x + 5557
+
+fn f652(x):
+    return x + 5564
+
+fn f653(x):
+    return x + 5571
+
+fn f654(x):
+    return x + 5578
+
+fn f655(x):
+    return x + 5585
+
+fn f656(x):
+    return x + 5592
+
+fn f657(x):
+    return x + 5599
+
+fn f658(x):
+    return x + 5606
+
+fn f659(x):
+    return x + 5613
+
+fn f660(x):
+    return x + 5620
+
+fn f661(x):
+    return x + 5627
+
+fn f662(x):
+    return x + 5634
+
+fn f663(x):
+    return x + 5641
+
+fn f664(x):
+    return x + 5648
+
+fn f665(x):
+    return x + 5655
+
+fn f666(x):
+    return x + 5662
+
+fn f667(x):
+    return x + 5669
+
+fn f668(x):
+    return x + 5676
+
+fn f669(x):
+    return x + 5683
+
+fn f670(x):
+    return x + 5690
+
+fn f671(x):
+    return x + 5697
+
+fn f672(x):
+    return x + 5704
+
+fn f673(x):
+    return x + 5711
+
+fn f674(x):
+    return x + 5718
+
+fn f675(x):
+    return x + 5725
+
+fn f676(x):
+    return x + 5732
+
+fn f677(x):
+    return x + 5739
+
+fn f678(x):
+    return x + 5746
+
+fn f679(x):
+    return x + 5753
+
+fn f680(x):
+    return x + 5760
+
+fn f681(x):
+    return x + 5767
+
+fn f682(x):
+    return x + 5774
+
+fn f683(x):
+    return x + 5781
+
+fn f684(x):
+    return x + 5788
+
+fn f685(x):
+    return x + 5795
+
+fn f686(x):
+    return x + 5802
+
+fn f687(x):
+    return x + 5809
+
+fn f688(x):
+    return x + 5816
+
+fn f689(x):
+    return x + 5823
+
+fn f690(x):
+    return x + 5830
+
+fn f691(x):
+    return x + 5837
+
+fn f692(x):
+    return x + 5844
+
+fn f693(x):
+    return x + 5851
+
+fn f694(x):
+    return x + 5858
+
+fn f695(x):
+    return x + 5865
+
+fn f696(x):
+    return x + 5872
+
+fn f697(x):
+    return x + 5879
+
+fn f698(x):
+    return x + 5886
+
+fn f699(x):
+    return x + 5893
+
+total = 0
+i = 0
+while i < 10:
+    total = total + f699(i) + f350(i)
+    i += 1
+print("calls", total, f0(1), f699(1))
+late_str = "wide string constant"
+print(late_str, 123456, 3.25, -98765)
+class WideBase:
+    fn __init__(self, v):
+        self.wide_field_alpha = v
+    fn describe(self):
+        return "base " + str(self.wide_field_alpha)
+
+class WideChild(WideBase):
+    fn __init__(self, v):
+        super().__init__(v * 2)
+        self.wide_field_beta = v
+    fn describe(self):
+        return super().describe() + " child " + str(self.wide_field_beta)
+
+w = WideChild(21)
+w.wide_field_beta = w.wide_field_beta + 1
+print(w.describe(), w.wide_field_alpha)
+cfg = {"wide_key_one": 1, "wide_key_two": {"inner_wide": 5}}
+print(cfg.wide_key_one, cfg?.wide_key_two?.inner_wide, cfg?.missing_wide_key)
+fn make_adder_wide(n):
+    return q => q + n
+
+add5 = make_adder_wide(5)
+print(add5(10), 7 |> add5)
+fn classify_wide(t):
+    case t:
+        (1, _second):
+            return "one-then " + str(second)
+        "wide literal arm":
+            return "literal"
+        _:
+            return "other"
+
+print(classify_wide((1, 44)), classify_wide("wide literal arm"), classify_wide(9))
+fn scratch_wide():
+    tmp_wide_local = 5
+    del tmp_wide_local
+    return "deleted"
+
+from "math" use sqrt
+from "strutil" use starts_with
+print(scratch_wide(), sqrt(144), starts_with("widefile", "wide"))
+fn big_locals_wide(seed):
+    local_wide_0 = "lw0"
+    local_wide_1 = "lw1"
+    local_wide_2 = "lw2"
+    local_wide_3 = "lw3"
+    local_wide_4 = "lw4"
+    local_wide_5 = "lw5"
+    local_wide_6 = "lw6"
+    local_wide_7 = "lw7"
+    local_wide_8 = "lw8"
+    local_wide_9 = "lw9"
+    local_wide_10 = "lw10"
+    local_wide_11 = "lw11"
+    local_wide_12 = "lw12"
+    local_wide_13 = "lw13"
+    local_wide_14 = "lw14"
+    local_wide_15 = "lw15"
+    local_wide_16 = "lw16"
+    local_wide_17 = "lw17"
+    local_wide_18 = "lw18"
+    local_wide_19 = "lw19"
+    local_wide_20 = "lw20"
+    local_wide_21 = "lw21"
+    local_wide_22 = "lw22"
+    local_wide_23 = "lw23"
+    local_wide_24 = "lw24"
+    local_wide_25 = "lw25"
+    local_wide_26 = "lw26"
+    local_wide_27 = "lw27"
+    local_wide_28 = "lw28"
+    local_wide_29 = "lw29"
+    local_wide_30 = "lw30"
+    local_wide_31 = "lw31"
+    local_wide_32 = "lw32"
+    local_wide_33 = "lw33"
+    local_wide_34 = "lw34"
+    local_wide_35 = "lw35"
+    local_wide_36 = "lw36"
+    local_wide_37 = "lw37"
+    local_wide_38 = "lw38"
+    local_wide_39 = "lw39"
+    local_wide_40 = "lw40"
+    local_wide_41 = "lw41"
+    local_wide_42 = "lw42"
+    local_wide_43 = "lw43"
+    local_wide_44 = "lw44"
+    local_wide_45 = "lw45"
+    local_wide_46 = "lw46"
+    local_wide_47 = "lw47"
+    local_wide_48 = "lw48"
+    local_wide_49 = "lw49"
+    local_wide_50 = "lw50"
+    local_wide_51 = "lw51"
+    local_wide_52 = "lw52"
+    local_wide_53 = "lw53"
+    local_wide_54 = "lw54"
+    local_wide_55 = "lw55"
+    local_wide_56 = "lw56"
+    local_wide_57 = "lw57"
+    local_wide_58 = "lw58"
+    local_wide_59 = "lw59"
+    local_wide_60 = "lw60"
+    local_wide_61 = "lw61"
+    local_wide_62 = "lw62"
+    local_wide_63 = "lw63"
+    local_wide_64 = "lw64"
+    local_wide_65 = "lw65"
+    local_wide_66 = "lw66"
+    local_wide_67 = "lw67"
+    local_wide_68 = "lw68"
+    local_wide_69 = "lw69"
+    local_wide_70 = "lw70"
+    local_wide_71 = "lw71"
+    local_wide_72 = "lw72"
+    local_wide_73 = "lw73"
+    local_wide_74 = "lw74"
+    local_wide_75 = "lw75"
+    local_wide_76 = "lw76"
+    local_wide_77 = "lw77"
+    local_wide_78 = "lw78"
+    local_wide_79 = "lw79"
+    local_wide_80 = "lw80"
+    local_wide_81 = "lw81"
+    local_wide_82 = "lw82"
+    local_wide_83 = "lw83"
+    local_wide_84 = "lw84"
+    local_wide_85 = "lw85"
+    local_wide_86 = "lw86"
+    local_wide_87 = "lw87"
+    local_wide_88 = "lw88"
+    local_wide_89 = "lw89"
+    local_wide_90 = "lw90"
+    local_wide_91 = "lw91"
+    local_wide_92 = "lw92"
+    local_wide_93 = "lw93"
+    local_wide_94 = "lw94"
+    local_wide_95 = "lw95"
+    local_wide_96 = "lw96"
+    local_wide_97 = "lw97"
+    local_wide_98 = "lw98"
+    local_wide_99 = "lw99"
+    local_wide_100 = "lw100"
+    local_wide_101 = "lw101"
+    local_wide_102 = "lw102"
+    local_wide_103 = "lw103"
+    local_wide_104 = "lw104"
+    local_wide_105 = "lw105"
+    local_wide_106 = "lw106"
+    local_wide_107 = "lw107"
+    local_wide_108 = "lw108"
+    local_wide_109 = "lw109"
+    local_wide_110 = "lw110"
+    local_wide_111 = "lw111"
+    local_wide_112 = "lw112"
+    local_wide_113 = "lw113"
+    local_wide_114 = "lw114"
+    local_wide_115 = "lw115"
+    local_wide_116 = "lw116"
+    local_wide_117 = "lw117"
+    local_wide_118 = "lw118"
+    local_wide_119 = "lw119"
+    local_wide_120 = "lw120"
+    local_wide_121 = "lw121"
+    local_wide_122 = "lw122"
+    local_wide_123 = "lw123"
+    local_wide_124 = "lw124"
+    local_wide_125 = "lw125"
+    local_wide_126 = "lw126"
+    local_wide_127 = "lw127"
+    local_wide_128 = "lw128"
+    local_wide_129 = "lw129"
+    local_wide_130 = "lw130"
+    local_wide_131 = "lw131"
+    local_wide_132 = "lw132"
+    local_wide_133 = "lw133"
+    local_wide_134 = "lw134"
+    local_wide_135 = "lw135"
+    local_wide_136 = "lw136"
+    local_wide_137 = "lw137"
+    local_wide_138 = "lw138"
+    local_wide_139 = "lw139"
+    local_wide_140 = "lw140"
+    local_wide_141 = "lw141"
+    local_wide_142 = "lw142"
+    local_wide_143 = "lw143"
+    local_wide_144 = "lw144"
+    local_wide_145 = "lw145"
+    local_wide_146 = "lw146"
+    local_wide_147 = "lw147"
+    local_wide_148 = "lw148"
+    local_wide_149 = "lw149"
+    local_wide_150 = "lw150"
+    local_wide_151 = "lw151"
+    local_wide_152 = "lw152"
+    local_wide_153 = "lw153"
+    local_wide_154 = "lw154"
+    local_wide_155 = "lw155"
+    local_wide_156 = "lw156"
+    local_wide_157 = "lw157"
+    local_wide_158 = "lw158"
+    local_wide_159 = "lw159"
+    local_wide_160 = "lw160"
+    local_wide_161 = "lw161"
+    local_wide_162 = "lw162"
+    local_wide_163 = "lw163"
+    local_wide_164 = "lw164"
+    local_wide_165 = "lw165"
+    local_wide_166 = "lw166"
+    local_wide_167 = "lw167"
+    local_wide_168 = "lw168"
+    local_wide_169 = "lw169"
+    local_wide_170 = "lw170"
+    local_wide_171 = "lw171"
+    local_wide_172 = "lw172"
+    local_wide_173 = "lw173"
+    local_wide_174 = "lw174"
+    local_wide_175 = "lw175"
+    local_wide_176 = "lw176"
+    local_wide_177 = "lw177"
+    local_wide_178 = "lw178"
+    local_wide_179 = "lw179"
+    local_wide_180 = "lw180"
+    local_wide_181 = "lw181"
+    local_wide_182 = "lw182"
+    local_wide_183 = "lw183"
+    local_wide_184 = "lw184"
+    local_wide_185 = "lw185"
+    local_wide_186 = "lw186"
+    local_wide_187 = "lw187"
+    local_wide_188 = "lw188"
+    local_wide_189 = "lw189"
+    local_wide_190 = "lw190"
+    local_wide_191 = "lw191"
+    local_wide_192 = "lw192"
+    local_wide_193 = "lw193"
+    local_wide_194 = "lw194"
+    local_wide_195 = "lw195"
+    local_wide_196 = "lw196"
+    local_wide_197 = "lw197"
+    local_wide_198 = "lw198"
+    local_wide_199 = "lw199"
+    local_wide_200 = "lw200"
+    local_wide_201 = "lw201"
+    local_wide_202 = "lw202"
+    local_wide_203 = "lw203"
+    local_wide_204 = "lw204"
+    local_wide_205 = "lw205"
+    local_wide_206 = "lw206"
+    local_wide_207 = "lw207"
+    local_wide_208 = "lw208"
+    local_wide_209 = "lw209"
+    local_wide_210 = "lw210"
+    local_wide_211 = "lw211"
+    local_wide_212 = "lw212"
+    local_wide_213 = "lw213"
+    local_wide_214 = "lw214"
+    local_wide_215 = "lw215"
+    local_wide_216 = "lw216"
+    local_wide_217 = "lw217"
+    local_wide_218 = "lw218"
+    local_wide_219 = "lw219"
+    local_wide_220 = "lw220"
+    local_wide_221 = "lw221"
+    local_wide_222 = "lw222"
+    local_wide_223 = "lw223"
+    local_wide_224 = "lw224"
+    local_wide_225 = "lw225"
+    local_wide_226 = "lw226"
+    local_wide_227 = "lw227"
+    local_wide_228 = "lw228"
+    local_wide_229 = "lw229"
+    local_wide_230 = "lw230"
+    local_wide_231 = "lw231"
+    local_wide_232 = "lw232"
+    local_wide_233 = "lw233"
+    local_wide_234 = "lw234"
+    local_wide_235 = "lw235"
+    local_wide_236 = "lw236"
+    local_wide_237 = "lw237"
+    local_wide_238 = "lw238"
+    local_wide_239 = "lw239"
+    local_wide_240 = "lw240"
+    local_wide_241 = "lw241"
+    local_wide_242 = "lw242"
+    local_wide_243 = "lw243"
+    local_wide_244 = "lw244"
+    local_wide_245 = "lw245"
+    local_wide_246 = "lw246"
+    local_wide_247 = "lw247"
+    local_wide_248 = "lw248"
+    local_wide_249 = "lw249"
+    local_wide_250 = "lw250"
+    local_wide_251 = "lw251"
+    local_wide_252 = "lw252"
+    local_wide_253 = "lw253"
+    local_wide_254 = "lw254"
+    local_wide_255 = "lw255"
+    local_wide_256 = "lw256"
+    local_wide_257 = "lw257"
+    local_wide_258 = "lw258"
+    local_wide_259 = "lw259"
+    local_wide_260 = "lw260"
+    local_wide_261 = "lw261"
+    local_wide_262 = "lw262"
+    local_wide_263 = "lw263"
+    local_wide_264 = "lw264"
+    local_wide_265 = "lw265"
+    local_wide_266 = "lw266"
+    local_wide_267 = "lw267"
+    local_wide_268 = "lw268"
+    local_wide_269 = "lw269"
+    local_wide_270 = "lw270"
+    local_wide_271 = "lw271"
+    local_wide_272 = "lw272"
+    local_wide_273 = "lw273"
+    local_wide_274 = "lw274"
+    local_wide_275 = "lw275"
+    local_wide_276 = "lw276"
+    local_wide_277 = "lw277"
+    local_wide_278 = "lw278"
+    local_wide_279 = "lw279"
+    local_wide_280 = "lw280"
+    local_wide_281 = "lw281"
+    local_wide_282 = "lw282"
+    local_wide_283 = "lw283"
+    local_wide_284 = "lw284"
+    local_wide_285 = "lw285"
+    local_wide_286 = "lw286"
+    local_wide_287 = "lw287"
+    local_wide_288 = "lw288"
+    local_wide_289 = "lw289"
+    local_wide_290 = "lw290"
+    local_wide_291 = "lw291"
+    local_wide_292 = "lw292"
+    local_wide_293 = "lw293"
+    local_wide_294 = "lw294"
+    local_wide_295 = "lw295"
+    local_wide_296 = "lw296"
+    local_wide_297 = "lw297"
+    local_wide_298 = "lw298"
+    local_wide_299 = "lw299"
+    acc_wide = seed
+    acc_wide += 1
+    tmp_to_delete = 9
+    del tmp_to_delete
+    case (7, seed):
+        (7, _bound_wide):
+            acc_wide = acc_wide + bound_wide
+        _:
+            acc_wide = -1
+    return local_wide_0 + local_wide_299 + " " + str(acc_wide)
+
+print(big_locals_wide(5))
+counter_wide = 0
+for k in [1, 2, 3]:
+    counter_wide += 10
+    counter_wide += 1
+print("incr", counter_wide)

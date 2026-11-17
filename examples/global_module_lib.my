@@ -1,0 +1,6 @@
+x = 1
+fn bump():
+    global x
+    x += 10
+fn show():
+    return x

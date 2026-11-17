@@ -1,0 +1,32 @@
+from "ui" use *
+from "components/layout" use layout
+from "components/bits" use deg, weather_icon, hour_tile
+from "api/weather" use describe
+use "store"
+
+page "/":
+    layout "Today":
+        now = store.now
+        today = store.days[0]
+        label, name = describe(now["code"], now["is_day"])
+        card cls="hero":
+            row:
+                col gap=1:
+                    text "{store.place['name']}, {store.place['country']}" bold
+                    text deg(now["temp"]), size="display"
+                    text "{label} · feels like {deg(now['feels'])}"
+                    small "High {deg(today['high'])} · Low {deg(today['low'])}"
+                spacer()
+                icon name, size=112
+            row:
+                spacer()
+                button "Save city" ghost small icon="star": store.save_current()
+        grid min=160:
+            stat "Humidity", "{now['humidity']}%", icon="droplet"
+            stat "Wind", "{round(now['wind'])} {store.wind.value}", icon="wind"
+            stat "Chance of rain", "{today['rain']}%", icon="cloud-rain"
+            stat "Sunrise / sunset", "{today['sunrise']} / {today['sunset']}", icon="sun"
+        card "Next 12 hours":
+            grid min=64 gap=2:
+                for h in store.hours:
+                    hour_tile(h)

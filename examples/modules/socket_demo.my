@@ -1,0 +1,18 @@
+# socket: TCP loopback echo. Opens a listener, dials it from the same
+# process, exchanges one ping/pong, closes. In a real program the peer
+# lives in another process or machine.
+from "socket" use listen, accept, connect, send, recv, close, gethostname
+print("hostname =", gethostname())
+srv = listen("127.0.0.1", 19191, 1)
+print("listening on 127.0.0.1:19191")
+cfd = connect("127.0.0.1", 19191)
+peer = accept(srv)
+send(cfd, "ping")
+got = recv(peer, 64)
+print("server received:", got)
+send(peer, "pong")
+back = recv(cfd, 64)
+print("client received:", back)
+close(cfd)
+close(peer)
+close(srv)

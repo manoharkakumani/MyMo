@@ -107,6 +107,10 @@ ParseRule rules[] = {
     [ECAP] = {NULL, NULL, PREC_NONE},
     [EQUAL] = {NULL, NULL, PREC_NONE},
     [EXCMARK] = {unary, NULL, PREC_UNARY},
+    // Prefix `not x`; infix only as `x not in y` (comparison level).
+    [NOT] = {unary, notInOp, PREC_COMPARISON},
+    [IN] = {NULL, inOp, PREC_COMPARISON},
+    [IS] = {NULL, isOp, PREC_EQUALITY},
     [DEQUAL] = {NULL, binary, PREC_EQUALITY},
     [NEQUAL] = {NULL, binary, PREC_EQUALITY},
     [GREATER] = {NULL, binary, PREC_COMPARISON},
@@ -115,6 +119,7 @@ ParseRule rules[] = {
     [LESS] = {NULL, binary, PREC_COMPARISON},
     [DLESS] = {NULL, binary, PREC_SHIFT},
     [QMARK] = {NULL, trenaryCond, PREC_ASSIGNMENT},
+    [QDOT] = {NULL, optDot, PREC_CALL},
     [ELESS] = {NULL, binary, PREC_COMPARISON},
     [ARROW] = {NULL, NULL, PREC_NONE},
     [PITHRU] = {NULL, pipeThrough, PREC_PITAR},
@@ -123,6 +128,7 @@ ParseRule rules[] = {
     [UPLUS] = {NULL, NULL, PREC_NONE},
     [NAME] = {variable, NULL, PREC_NONE},
     [STRING] = {string_, NULL, PREC_NONE},
+    [FSTRING] = {fstring_, NULL, PREC_NONE},
     [INT] = {integer_, NULL, PREC_NONE},
     [DOUBLE] = {double_, NULL, PREC_NONE},
     [AND] = {NULL, and_, PREC_AND},
@@ -146,6 +152,9 @@ ParseRule rules[] = {
     [FROM] = {NULL, NULL, PREC_NONE},
     [PASS] = {NULL, NULL, PREC_NONE},
     [DEL] = {NULL, NULL, PREC_NONE},
+    [ASSERT] = {NULL, NULL, PREC_NONE},
+    [GLOBAL] = {NULL, NULL, PREC_NONE},
+    [NONLOCAL] = {NULL, NULL, PREC_NONE},
     [ERROR] = {NULL, NULL, PREC_NONE},
     [END] = {NULL, NULL, PREC_NONE},
     [YIELD] = {yeild, NULL, PREC_NONE},
@@ -170,6 +179,7 @@ void parsePrecedence(Compiler *compiler, Precedence precedence)
         return;
     }
     bool canAssign = precedence <= PREC_ASSIGNMENT;
+    int leftStart = currentChunk(compiler)->count;
     prefixRule(compiler, canAssign);
     if (compiler->flags.tuple)
     {
@@ -180,6 +190,7 @@ void parsePrecedence(Compiler *compiler, Precedence precedence)
     {
         advanceToken(compiler);
         ParseFn infixRule = getRule(compiler->parser->previous.type)->infix;
+        compiler->infixLeftStart = leftStart;
         infixRule(compiler, canAssign);
     }
     if (canAssign && matchToken(compiler, EQUAL))
@@ -195,6 +206,7 @@ Parser *initParser(MVM *vm, const char *src)
     parser->lexer = initLexer(src);
     parser->hadError = false;
     parser->panicMode = false;
+    parser->repl = false;
     return parser;
 }
 
@@ -209,6 +221,12 @@ Compiler *initCompiler(MVM *vm, Parser *parser, FunctionType type)
     Compiler *compiler = New(Compiler, 1);
     compiler->parser = parser;
     compiler->loop = NULL;
+    compiler->tryDepth = 0;
+    compiler->tryCtx = NULL;
+    compiler->scopeSeq = 0;
+    compiler->lastWideTarget = -1;
+    compiler->infixLeftStart = 0;
+    compiler->scopeCount = 0;
     compiler->flags.cl_fn = false;
     compiler->flags.dontSetVar = 0;
     compiler->flags.pithru = 0;
@@ -217,6 +235,10 @@ Compiler *initCompiler(MVM *vm, Parser *parser, FunctionType type)
     compiler->flags.list = 0;
     compiler->flags.tuple = 0;
     compiler->flags.multiCase = 0;
+    compiler->flags.casePattern = 0;
+    compiler->flags.casePatternDepth = 0;
+    for (int i = 0; i < 4; i++) compiler->flags.casePatternStackPos[i] = 0;
+    compiler->flags.bindingsCount = 0;
     MyMoFunction *function = newFunction(vm);
     function->type = type;
     if (type != FN_SCRIPT && type != FN_ARROWFN && type != FN_COMPILED)
@@ -237,6 +259,7 @@ void freeCompiler(Compiler *compiler)
 MyMoFunction *compile(MVM *vm, const char *src, const char *path, CompileType type)
 {
     Parser *parser = initParser(vm, src);
+    parser->repl = type == COMPILE_REPL;
     Compiler *compiler = initCompiler(vm, parser, type == COMPILE_STRING ? FN_COMPILED : FN_SCRIPT);
     compiler->flags.compileType = type;
     advanceToken(compiler);
@@ -251,21 +274,38 @@ MyMoFunction *compile(MVM *vm, const char *src, const char *path, CompileType ty
     if (function)
     {
         function->name = newString(vm, path, strlen(path));
-#ifdef NOCACHE
-#else
-        if (path && type != COMPILE_REPL)
-        {
-            char *cachePath = malloc(strlen(path) + 2);
-            strcpy(cachePath, path);
-            strcat(cachePath, "c");
-            FILE *stream = fopen(cachePath, "wb");
-            functionSerialize(function, stream);
-            fclose(stream);
-            free(cachePath);
-        }
-#endif
+        if (src)
+            attachSource(function, src);
     }
     return function;
+}
+
+// Stash the source on every function chunk under this compilation unit
+// so runtimeError can echo the offending line for nested call frames
+// too. Nested `fn` bodies show up as MyMoFunction-typed constants. Also
+// used after loading a .myc cache, which doesn't store the source.
+void attachSource(MyMoFunction *function, const char *src)
+{
+    // Workqueue: avoid recursion in case of deep nesting.
+    MyMoFunction *stack[64];
+    int sp = 0;
+    stack[sp++] = function;
+    while (sp > 0)
+    {
+        MyMoFunction *f = stack[--sp];
+        if (f->chunk->source == NULL)
+            f->chunk->source = strdup(src);
+        for (int ci = 0; ci < f->chunk->constants.count; ci++)
+        {
+            Value v = f->chunk->constants.values[ci];
+            if (V_IS_OBJ(v))
+            {
+                MyMoObject *o = V_AS_OBJ(v);
+                if (o && o->type == OBJ_FUNCTION && sp < 64)
+                    stack[sp++] = (MyMoFunction *)o;
+            }
+        }
+    }
 }
 
 Chunk *currentChunk(Compiler *compiler)

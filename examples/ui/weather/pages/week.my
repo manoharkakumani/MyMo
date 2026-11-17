@@ -1,0 +1,31 @@
+from "ui" use *
+from "components/layout" use layout
+from "components/bits" use deg
+from "api/weather" use describe
+use "store"
+
+fn day_row(d):
+    label, name = describe(d["code"])
+    return {
+        "day": text(d["day"], bold=True),
+        "sky": row(icon(name, color="accent"), text(label), gap=2),
+        "low": text(deg(d["low"]), muted=True),
+        "high": text(deg(d["high"]), bold=True),
+        "rain": badge(str(d["rain"]) + "%", color="blue" if d["rain"] >= 50 else "gray"),
+    }
+
+page "/week":
+    layout "7 days":
+        text "{store.place['name']}: the week ahead" muted
+        table each(store.days, day_row)
+        # Each day's high against the week's range, as bars.
+        card "Temperature range":
+            bottom = min([d["low"] for d in store.days]) - 1
+            span = max([d["high"] for d in store.days]) - bottom
+            for d in store.days:
+                row gap=4 wrap=False:
+                    text d["day"], width=56
+                    text deg(d["low"]), muted=True, width=40
+                    col grow=True:
+                        progress d["high"] - bottom, max=span
+                    text deg(d["high"]), bold=True, width=40

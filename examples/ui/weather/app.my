@@ -1,0 +1,19 @@
+# A multi-page weather app.
+#
+#   mymo app.my --dev        browser, reloads when you save
+#   mymo app.my --desktop    desktop window
+#   mymo app.my --phone      on your phone
+#   mymo app.my --term       in the terminal
+
+from "ui" use *
+from "pages/today" use *
+from "pages/week" use *
+from "pages/cities" use *
+from "pages/settings" use *
+use "store"
+
+spawn: store.load(store.cities[0])
+spawn: store.refresh_cities()
+every 600: store.refresh()
+
+run "Weather", accent="#0ea5e9"

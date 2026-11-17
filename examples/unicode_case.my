@@ -1,0 +1,12 @@
+# upper/lower/title/swapcase and the is*() predicates work on Unicode
+# code points, not just ASCII.
+
+print("straße".upper(), "ÉCOLE Ÿ".lower(), "ΑΒΓ σοφία".upper(), "ΣΟΦΊΑ".lower())
+print("привет мир".upper(), "ПРИВЕТ".lower(), "Ǎǎ Ǆ".lower())
+print("héllo wörld".title(), "élan VITAL".capitalize(), "ÀbC ß".swapcase())
+print("Tiếng Việt".upper(), "ı".upper(), "ſ".upper(), "İ".lower())
+print("日本語".isalpha(), "héllo".isalpha(), "abc1".isalpha(), "٣٤".isdigit(), "²".isdigit())
+print("ÉCOLE".isupper(), "école".islower(), "Écolé".isupper(), "日本".isupper(), " 　".isspace())
+print("abc".upper(), "ABC".lower(), "a1b2".isalnum(), "x y".isalnum(), "".isalpha())
+print(len("straße".upper()), "Ωμέγα".upper())
+print("Ǆ ǅ ǆ ǲ".lower(), "ǆ ǅ ǉ ǳ".upper(), "ǅ".isupper())

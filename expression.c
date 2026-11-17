@@ -4,22 +4,312 @@
 #include "datatypes/datatypes.h"
 #include "error.h"
 
+// A number token's text without `_` separators.
+static void numberText(Token *t, char *buf, size_t size)
+{
+    size_t n = 0;
+    for (int i = 0; i < t->length && n + 1 < size; i++)
+        if (t->token[i] != '_')
+            buf[n++] = t->token[i];
+    buf[n] = '\0';
+}
+
 void integer_(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);
-    emitConstant(compiler, (NEW_INT(compiler->parser->vm, strtol(compiler->parser->previous.token, NULL, 10))));
+    char text[128];
+    numberText(&compiler->parser->previous, text, sizeof text);
+    // 0x.. / 0o.. / 0b.. (leading zeros before the prefix are allowed)
+    const char *digits = text;
+    while (digits[0] == '0' && digits[1] == '0')
+        digits++;
+    int base = 10;
+    if (digits[0] == '0' && digits[1] != '\0')
+    {
+        char p = (char)(digits[1] | 32);
+        base = p == 'x' ? 16 : p == 'o' ? 8 : p == 'b' ? 2 : 10;
+        if (base != 10)
+            digits += 2;
+    }
+    long n = strtol(digits, NULL, base);
+    // Fits in 32 bits → emit inline NaN-boxed int. Otherwise fall back to a
+    // heap MyMoInt for the wider value (rare; will become a small-bignum
+    // slow path in a later step).
+    if (n >= INT32_MIN && n <= INT32_MAX)
+    {
+        emitConstantV(compiler, V_INT_VAL((int32_t)n));
+    }
+    else
+    {
+        emitConstant(compiler, NEW_INT(compiler->parser->vm, n));
+    }
 }
 
 void double_(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);
-    emitConstant(compiler, (NEW_DOUBLE(compiler->parser->vm, strtod(compiler->parser->previous.token, NULL))));
+    // Doubles are stored directly in the NaN-boxed Value (any non-QNaN
+    // bit pattern). Skip the heap MyMoDouble entirely for literals.
+    char text[128];
+    numberText(&compiler->parser->previous, text, sizeof text);
+    double d = strtod(text, NULL);
+    emitConstantV(compiler, V_DOUBLE_VAL(d));
+}
+
+static int hexDigit(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+// Build a string constant from literal source text, decoding escapes:
+// \n \t \r \0 \\ \' \" \` \{ \} \xHH, and \uXXXX / \UXXXXXXXX (code
+// points, stored as UTF-8). Unknown escapes keep the backslash
+// (Python-style), so `"C:\dir"` stays as written.
+static MyMoObject *newUnescapedString(MVM *vm, const char *src, int len)
+{
+    if (!memchr(src, '\\', len))
+        return NEW_STRING(vm, src, len);
+    char *buf = New(char, len);
+    int n = 0;
+    for (int i = 0; i < len; i++)
+    {
+        if (src[i] != '\\' || i + 1 == len)
+        {
+            buf[n++] = src[i];
+            continue;
+        }
+        char c = src[++i];
+        switch (c)
+        {
+        case 'n':  buf[n++] = '\n'; break;
+        case 't':  buf[n++] = '\t'; break;
+        case 'r':  buf[n++] = '\r'; break;
+        case '0':  buf[n++] = '\0'; break;
+        case '\\': case '\'': case '"': case '`': case '{': case '}':
+            buf[n++] = c;
+            break;
+        case 'x':
+            if (i + 2 < len && hexDigit(src[i + 1]) >= 0 && hexDigit(src[i + 2]) >= 0)
+            {
+                buf[n++] = (char)(hexDigit(src[i + 1]) * 16 + hexDigit(src[i + 2]));
+                i += 2;
+                break;
+            }
+            /* fallthrough */
+        default:
+        unknown:
+            buf[n++] = '\\';
+            buf[n++] = c;
+            break;
+        case 'u':
+        case 'U':
+        {
+            int digits = c == 'u' ? 4 : 8;
+            long cp = 0;
+            if (i + digits >= len)
+                goto unknown;
+            for (int k = 1; k <= digits; k++)
+            {
+                int d = hexDigit(src[i + k]);
+                if (d < 0)
+                    goto unknown;
+                cp = cp * 16 + d;
+            }
+            if (cp > 0x10FFFF)
+                goto unknown;
+            i += digits;
+            if (cp < 0x80)
+                buf[n++] = (char)cp;
+            else if (cp < 0x800)
+            {
+                buf[n++] = (char)(0xC0 | (cp >> 6));
+                buf[n++] = (char)(0x80 | (cp & 0x3F));
+            }
+            else if (cp < 0x10000)
+            {
+                buf[n++] = (char)(0xE0 | (cp >> 12));
+                buf[n++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                buf[n++] = (char)(0x80 | (cp & 0x3F));
+            }
+            else
+            {
+                buf[n++] = (char)(0xF0 | (cp >> 18));
+                buf[n++] = (char)(0x80 | ((cp >> 12) & 0x3F));
+                buf[n++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                buf[n++] = (char)(0x80 | (cp & 0x3F));
+            }
+            break;
+        }
+        }
+    }
+    MyMoObject *str = NEW_STRING(vm, buf, n);
+    free(buf);
+    return str;
 }
 
 void string_(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);
-    emitConstant(compiler, (NEW_STRING(compiler->parser->vm, compiler->parser->previous.token, compiler->parser->previous.length)));
+    emitConstant(compiler, newUnescapedString(compiler->parser->vm, compiler->parser->previous.token, compiler->parser->previous.length));
+}
+
+// f-string interpolation. Walks the FSTRING token's content,
+// splitting on `{...}` segments. Each literal piece becomes a string
+// constant; each `{expr}` re-runs the lexer+parser over the expr text
+// and emits OP_TOSTRING. Pieces are concatenated with OP_ADD. The
+// sub-parser shares the outer compiler's chunk, so all emit goes to
+// the same place — we only have to swap the parser-level lexer+
+// lookahead tokens for the duration of each interpolation.
+void fstring_(Compiler *compiler, bool canAssign)
+{
+    UNUSED(canAssign);
+    const char *content = compiler->parser->previous.token;
+    int total = (int)compiler->parser->previous.length;
+    MVM *vm = compiler->parser->vm;
+
+    int piece_count = 0;
+    int i = 0;
+    while (i < total)
+    {
+        // Scan to the next `{` (or end).
+        int seg_start = i;
+        while (i < total && content[i] != '{')
+        {
+            if (content[i] == '\\' && i + 1 < total) i++; // `\{` is a literal brace
+            i++;
+        }
+        int seg_len = i - seg_start;
+        // Emit the literal piece. Always emit even if empty so the
+        // first OP_ADD has a left operand; the compiler optimizer
+        // can later drop empty pieces.
+        if (seg_len > 0 || piece_count == 0)
+        {
+            emitConstant(compiler, newUnescapedString(vm, content + seg_start, seg_len));
+            piece_count++;
+            if (piece_count > 1) emitBytes(compiler, OP_ADD, 0);
+        }
+        if (i >= total) break;
+        // At `{`. Find matching `}` with brace depth tracking so
+        // `{ {"k":1}["k"] }` (a dict-subscript expression) works.
+        // Skip over string literals (single, double, backtick) so
+        // braces inside a nested f-string or a literal don't throw
+        // off the depth counter. Strings here can't escape `}` —
+        // that's what closes us — but they CAN contain `{` for
+        // nested f-strings like `f"{f"x={x}"}"`.
+        i++; // past `{`
+        int expr_start = i;
+        int depth = 1;
+        while (i < total && depth > 0)
+        {
+            char c = content[i];
+            if (c == '"' || c == '\'' || c == '`')
+            {
+                char quote = c;
+                i++;
+                while (i < total && content[i] != quote)
+                {
+                    if (content[i] == '\\' && i + 1 < total) i++;
+                    i++;
+                }
+                if (i < total) i++; // past closing quote
+                continue;
+            }
+            if (c == '{') depth++;
+            else if (c == '}') depth--;
+            if (depth > 0) i++;
+        }
+        if (depth != 0)
+        {
+            errorAtCurrent(compiler, "Unclosed `{` in f-string interpolation.");
+            return;
+        }
+        int expr_len = i - expr_start;
+        i++; // past `}`
+
+        // `{expr!r:spec}`: split off a conversion and a format spec at the
+        // first top-level `!r`/`!s` or `:` (inside brackets or strings
+        // they belong to the expression; `a ? b : c` needs parentheses).
+        int field_len = expr_len;
+        char conversion = 0;
+        const char *spec = NULL;
+        int spec_len = 0;
+        {
+            int d = 0;
+            for (int k = expr_start; k < expr_start + expr_len; k++)
+            {
+                char c = content[k];
+                if (c == '"' || c == '\'' || c == '`')
+                {
+                    for (k++; k < expr_start + expr_len && content[k] != c; k++)
+                        if (content[k] == '\\') k++;
+                    continue;
+                }
+                if (c == '(' || c == '[' || c == '{') d++;
+                else if (c == ')' || c == ']' || c == '}') d--;
+                else if (d == 0 && c == '!' && k + 1 < expr_start + expr_len
+                         && (content[k + 1] == 'r' || content[k + 1] == 's')
+                         && (k + 2 == expr_start + expr_len || content[k + 2] == ':'))
+                {
+                    field_len = k - expr_start;
+                    conversion = content[k + 1];
+                    if (k + 2 < expr_start + expr_len)
+                    {
+                        spec = content + k + 3;
+                        spec_len = expr_start + expr_len - (k + 3);
+                    }
+                    break;
+                }
+                else if (d == 0 && c == ':')
+                {
+                    field_len = k - expr_start;
+                    spec = content + k + 1;
+                    spec_len = expr_start + expr_len - (k + 1);
+                    break;
+                }
+            }
+        }
+        expr_len = field_len;
+
+        // Build a null-terminated buffer for the embedded expression.
+        // We append a `\n` so the sub-lexer's NEWLINE check is
+        // satisfied at end-of-source.
+        char *buf = New(char, expr_len + 2);
+        memcpy(buf, content + expr_start, expr_len);
+        buf[expr_len] = '\n';
+        buf[expr_len + 1] = '\0';
+
+        // Swap parser state, parse the expression, restore.
+        Lexer *outerLexer = compiler->parser->lexer;
+        Token outerCurrent = compiler->parser->current;
+        Token outerPrevious = compiler->parser->previous;
+        Lexer *innerLexer = initLexer(buf);
+        compiler->parser->lexer = innerLexer;
+        compiler->parser->current = getToken(innerLexer);
+        expression(compiler);
+        freeLexer(innerLexer);
+        Free(vm, char, buf);
+        compiler->parser->lexer = outerLexer;
+        compiler->parser->current = outerCurrent;
+        compiler->parser->previous = outerPrevious;
+
+        if (conversion || spec)
+        {
+            emitConstant(compiler, NEW_STRING(vm, spec ? spec : "", spec_len));
+            emitBytes(compiler, OP_FORMAT, (u8)conversion);
+        }
+        else
+            emitByte(compiler, OP_TOSTRING);
+        piece_count++;
+        if (piece_count > 1) emitBytes(compiler, OP_ADD, 0);
+    }
+    if (piece_count == 0)
+    {
+        // Empty f-string `f""`.
+        emitConstant(compiler, NEW_STRING(vm, "", 0));
+    }
 }
 void literal(Compiler *compiler, bool canAssign)
 {
@@ -44,10 +334,17 @@ void unary(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);
     TokenType operatorType = compiler->parser->previous.type;
-    parsePrecedence(compiler, PREC_UNARY);
+    // `not` binds looser than comparisons, like Python:
+    // `not a == b` is `not (a == b)`, `not x in xs` is `not (x in xs)`;
+    // it stops at `and`/`or`. Unary `-`/`+` bind looser than `**`
+    // (`-2 ** 2` is -4); `!` binds tightly.
+    parsePrecedence(compiler, operatorType == NOT ? PREC_BAND
+                              : (operatorType == MINUS || operatorType == PLUS) ? PREC_INDICES
+                              : PREC_UNARY);
     switch (operatorType)
     {
     case EXCMARK:
+    case NOT:
         emitByte(compiler, OP_NOT);
         break;
     case MINUS:
@@ -61,12 +358,61 @@ void unary(Compiler *compiler, bool canAssign)
     }
 }
 
+static bool isOrderingOp(TokenType t) { return t == LESS || t == GREATER || t == ELESS || t == EGREATER; }
+static bool isEqualityOp(TokenType t) { return t == DEQUAL || t == NEQUAL; }
+
+static void emitBinaryOp(Compiler *compiler, TokenType operatorType);
+
+// a < b < c  means  a < b and b < c, with b evaluated once:
+//     a b DUPUNDER <  JIF fail POP   c <   JMP done
+//     fail: NIP        ([b, False] -> [False])
+// Chains stay within one family: < > <= >= or == !=.
+static void comparisonChain(Compiler *compiler, TokenType first)
+{
+    bool ordering = isOrderingOp(first);
+    int failJumps[32];
+    int fails = 0;
+    TokenType op = first;
+    while (ordering ? isOrderingOp(compiler->parser->current.type) : isEqualityOp(compiler->parser->current.type))
+    {
+        emitByte(compiler, OP_DUPUNDER);
+        emitBinaryOp(compiler, op);
+        if (fails == 32)
+        {
+            error(compiler, "Comparison chain too long.");
+            break;
+        }
+        failJumps[fails++] = emitJump(compiler, OP_JIF);
+        emitByte(compiler, OP_POP);
+        advanceToken(compiler);
+        op = compiler->parser->previous.type;
+        parsePrecedence(compiler, (Precedence)(getRule(op)->precedence + 1));
+    }
+    emitBinaryOp(compiler, op);
+    int done = emitJump(compiler, OP_JMP);
+    for (int i = 0; i < fails; i++)
+        patchJump(compiler, failJumps[i]);
+    emitByte(compiler, OP_NIP);
+    patchJump(compiler, done);
+}
+
 void binary(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);
     TokenType operatorType = compiler->parser->previous.type;
     ParseRule *rule = getRule(operatorType);
     parsePrecedence(compiler, (Precedence)(rule->precedence + 1));
+    TokenType next = compiler->parser->current.type;
+    if ((isOrderingOp(operatorType) && isOrderingOp(next)) || (isEqualityOp(operatorType) && isEqualityOp(next)))
+    {
+        comparisonChain(compiler, operatorType);
+        return;
+    }
+    emitBinaryOp(compiler, operatorType);
+}
+
+static void emitBinaryOp(Compiler *compiler, TokenType operatorType)
+{
     u32 inplace = 0;
     switch (operatorType)
     {
@@ -76,6 +422,12 @@ void binary(Compiler *compiler, bool canAssign)
         break;
     case DEQUAL:
         emitBytes(compiler, OP_EQUAL, inplace);
+        break;
+    case IS:
+        // Handled in isOp() below — never emitted here because the
+        // parse rule for IS uses a custom infix that peeks `not`
+        // BEFORE parsing the RHS (so `is not Nil` doesn't get parsed
+        // as `is (not Nil)`).
         break;
     case GREATER:
         emitBytes(compiler, OP_GREATER, inplace);
@@ -132,7 +484,17 @@ void binary(Compiler *compiler, bool canAssign)
     }
 }
 
-bool assign(Compiler *compiler, bool canAssign, u8 set, u8 get, u8 name)
+// IC-aware emitters for the get/set ops inside assign(): when the op is
+// OP_GETV/OP_SETV, also reserve the inline-cache scratch bytes. Property
+// ops (OP_GETP/OP_SETP/OP_AGETP) keep the legacy 2-byte encoding.
+static void emitGetSet(Compiler *c, u8 op, uint name)
+{
+    if (op == OP_GETV) emitGetV(c, name);
+    else if (op == OP_SETV) emitSetV(c, name);
+    else emitConstOp(c, op, name);
+}
+
+bool assign(Compiler *compiler, bool canAssign, u8 set, u8 get, uint name)
 {
     if (!canAssign)
         return false;
@@ -145,107 +507,154 @@ bool assign(Compiler *compiler, bool canAssign, u8 set, u8 get, u8 name)
     if (matchToken(compiler, EQUAL))
     {
         expression(compiler);
-        emitBytes(compiler, set, name);
+        emitGetSet(compiler, set, name);
         return true;
     }
     u32 inplace = 1;
     if (matchToken(compiler, EPLUS))
     {
-        emitBytes(compiler, get, name);
+        // Peephole: `name += int_literal` -> OP_INCR_VAR.
+        int startPos = currentChunk(compiler)->count;
+        emitGetSet(compiler, get, name);
+        int afterGetv = currentChunk(compiler)->count;
         expression(compiler);
+        int afterExpr = currentChunk(compiler)->count;
+        Chunk *ch = currentChunk(compiler);
+        if (set == OP_SETV
+            && afterExpr - afterGetv == 2
+            && ch->code[afterGetv] == OP_CONST)
+        {
+            u8 constIdx = ch->code[afterGetv + 1];
+            Value v = ch->constants.values[constIdx];
+            if (V_IS_INT(v))
+            {
+                ch->count = startPos;
+                emitIncrVar(compiler, name, V_AS_INT(v));
+                return true;
+            }
+        }
         emitBytes(compiler, OP_ADD, inplace);
-        emitBytes(compiler, set, name);
+        emitGetSet(compiler, set, name);
         return true;
     }
     else if (matchToken(compiler, EMINUS))
     {
-        emitBytes(compiler, get, name);
+        emitGetSet(compiler, get, name);
         expression(compiler);
         emitBytes(compiler, OP_SUB, inplace);
-        emitBytes(compiler, set, name);
+        emitGetSet(compiler, set, name);
         return true;
     }
     else if (matchToken(compiler, ESTAR))
     {
-        emitBytes(compiler, get, name);
+        emitGetSet(compiler, get, name);
         expression(compiler);
         emitBytes(compiler, OP_MUL, inplace);
-        emitBytes(compiler, set, name);
+        emitGetSet(compiler, set, name);
         return true;
     }
     else if (matchToken(compiler, ESLASH))
     {
-        emitBytes(compiler, get, name);
+        emitGetSet(compiler, get, name);
         expression(compiler);
         emitBytes(compiler, OP_DIV, inplace);
-        emitBytes(compiler, set, name);
+        emitGetSet(compiler, set, name);
         return true;
     }
     else if (matchToken(compiler, EDSTAR))
     {
-        emitBytes(compiler, get, name);
+        emitGetSet(compiler, get, name);
         expression(compiler);
         emitBytes(compiler, OP_POW, inplace);
-        emitBytes(compiler, set, name);
+        emitGetSet(compiler, set, name);
         return true;
     }
     else if (matchToken(compiler, EDSLASH))
     {
-        emitBytes(compiler, get, name);
+        emitGetSet(compiler, get, name);
         expression(compiler);
         emitBytes(compiler, OP_IDIV, inplace);
-        emitBytes(compiler, set, name);
+        emitGetSet(compiler, set, name);
         return true;
     }
     else if (matchToken(compiler, EPERCENT))
     {
-        emitBytes(compiler, get, name);
+        emitGetSet(compiler, get, name);
         expression(compiler);
         emitBytes(compiler, OP_MOD, inplace);
-        emitBytes(compiler, set, name);
+        emitGetSet(compiler, set, name);
         return true;
     }
     else if (matchToken(compiler, EVBAR))
     {
-        emitBytes(compiler, get, name);
+        emitGetSet(compiler, get, name);
         expression(compiler);
         emitBytes(compiler, OP_BOR, inplace);
-        emitBytes(compiler, set, name);
+        emitGetSet(compiler, set, name);
         return true;
     }
     else if (matchToken(compiler, EAMPER))
     {
-        emitBytes(compiler, get, name);
+        emitGetSet(compiler, get, name);
         expression(compiler);
         emitBytes(compiler, OP_BAND, inplace);
-        emitBytes(compiler, set, name);
+        emitGetSet(compiler, set, name);
         return true;
     }
     else if (matchToken(compiler, ECAP))
     {
-        emitBytes(compiler, get, name);
+        emitGetSet(compiler, get, name);
         expression(compiler);
         emitBytes(compiler, OP_BXOR, inplace);
-        emitBytes(compiler, set, name);
+        emitGetSet(compiler, set, name);
         return true;
     }
     else if (matchToken(compiler, EDGREATER))
     {
-        emitBytes(compiler, get, name);
+        emitGetSet(compiler, get, name);
         expression(compiler);
         emitBytes(compiler, OP_RSFT, inplace);
-        emitBytes(compiler, set, name);
+        emitGetSet(compiler, set, name);
         return true;
     }
     else if (matchToken(compiler, EDLESS))
     {
-        emitBytes(compiler, get, name);
+        emitGetSet(compiler, get, name);
         expression(compiler);
         emitBytes(compiler, OP_LSFT, inplace);
-        emitBytes(compiler, set, name);
+        emitGetSet(compiler, set, name);
         return true;
     }
     return false;
+}
+
+// Infix `is` (with optional `not`). Peeks the next token for `not`
+// before parsing the RHS so that `is not Nil` reads as a single
+// identity check, not `is (not Nil)`. The VM's OP_IS handler takes a
+// one-byte negation flag and produces the final bool directly.
+void isOp(Compiler *compiler, bool canAssign)
+{
+    UNUSED(canAssign);
+    int negate = matchToken(compiler, NOT) ? 1 : 0;
+    parsePrecedence(compiler, (Precedence)(PREC_EQUALITY + 1));
+    emitBytes(compiler, OP_IS, (u32)negate);
+}
+
+// `item in container` / `item not in container` (comparison precedence).
+void inOp(Compiler *compiler, bool canAssign)
+{
+    UNUSED(canAssign);
+    parsePrecedence(compiler, (Precedence)(PREC_COMPARISON + 1));
+    emitByte(compiler, OP_IN);
+}
+
+void notInOp(Compiler *compiler, bool canAssign)
+{
+    UNUSED(canAssign);
+    consumeToken(compiler, IN, "expected 'in' after 'not'.");
+    parsePrecedence(compiler, (Precedence)(PREC_COMPARISON + 1));
+    emitByte(compiler, OP_IN);
+    emitByte(compiler, OP_NOT);
 }
 
 void dot(Compiler *compiler, bool canAssign)
@@ -254,13 +663,141 @@ void dot(Compiler *compiler, bool canAssign)
     u32 name = identifierConstant(compiler, &compiler->parser->previous);
     if (!assign(compiler, canAssign, OP_SETP, OP_AGETP, name))
     {
-        emitBytes(compiler, OP_GETP, name);
+        emitConstOp(compiler, OP_GETP, name);
     }
+}
+
+// JS-style optional chaining: `r?.prop`. If the receiver is Nil, the
+// whole access short-circuits to Nil; otherwise it behaves like `.`.
+// Assignment is intentionally not supported (`r?.x = 1` would be a
+// silent no-op when r is Nil, which is usually a bug).
+void optDot(Compiler *compiler, bool canAssign)
+{
+    consumeToken(compiler, NAME, "Expect property name after '?.'.");
+    u32 name = identifierConstant(compiler, &compiler->parser->previous);
+    emitConstOp(compiler, OP_OGETP, name);
+}
+
+// Resolve an identifier to a function-arg slot if we're inside a function
+// body and the name matches one of the function's declared parameters.
+// Returns the slot index (0..argc-1) or -1 if not an arg.
+static int resolveArgSlot(Compiler *compiler, Token *t);
+
+// Store the value on top of the stack into variable `t` (parameter slot
+// or variable), leaving it on the stack like an assignment expression.
+void emitStoreName(Compiler *compiler, Token *t)
+{
+    int slot = resolveArgSlot(compiler, t);
+    if (slot >= 0)
+        emitBytes(compiler, OP_SETARG, (u8)slot);
+    else
+        emitSetV(compiler, identifierConstant(compiler, t));
+}
+
+static int resolveArgSlot(Compiler *compiler, Token *t)
+{
+    MyMoFunction *fn = compiler->function;
+    if (fn->type == FN_SCRIPT || fn->type == FN_MODULE) return -1;
+    if (fn->argc > CALLFRAME_ARGS_INLINE) return -1;  // spill case stays on dict path
+    for (int i = 0; i < fn->argc; i++)
+    {
+        MyMoString *p = fn->argv[i];
+        if (p && p->length == t->length
+            && memcmp(p->value, t->token, t->length) == 0)
+            return i;
+    }
+    return -1;
 }
 
 void variable(Compiler *compiler, bool canAssign)
 {
-    u8 name = identifierConstant(compiler, &compiler->parser->previous);
+    // Inside a case-arm pattern:
+    //   `_`     -> wildcard (matches anything, no binding)
+    //   `_name` -> wildcard + binding (matches anything, binds to `name`
+    //              when the arm fires). Constraints:
+    //              - Only at the outer-tuple level (depth ≤ 1)
+    //              - Up to 16 bindings per arm
+    //              - `__init__`, `__name__`, etc. (>=2 leading underscores)
+    //                still resolve as variables — Python-style dunders.
+    // Function-arg slot fast path: when `n` (or any other parameter
+    // name) is referenced inside the function body, emit OP_GETARG/
+    // OP_SETARG instead of going through the dict. Cuts ~30 ns per
+    // variable read in tight recursive loops like fib.
+    {
+        int argSlot = resolveArgSlot(compiler, &compiler->parser->previous);
+        if (argSlot >= 0)
+        {
+            // Handle the four common assignment shapes inline. Other
+            // compound forms fall through to the read path; covering them
+            // is mechanical but not needed for the perf hot path.
+            if (canAssign && matchToken(compiler, EQUAL))
+            {
+                expression(compiler);
+                emitBytes(compiler, OP_SETARG, (u8)argSlot);
+                return;
+            }
+            if (canAssign && matchToken(compiler, EPLUS))
+            {
+                emitBytes(compiler, OP_GETARG, (u8)argSlot);
+                expression(compiler);
+                emitBytes(compiler, OP_ADD, 1);
+                emitBytes(compiler, OP_SETARG, (u8)argSlot);
+                return;
+            }
+            if (canAssign && matchToken(compiler, EMINUS))
+            {
+                emitBytes(compiler, OP_GETARG, (u8)argSlot);
+                expression(compiler);
+                emitBytes(compiler, OP_SUB, 1);
+                emitBytes(compiler, OP_SETARG, (u8)argSlot);
+                return;
+            }
+            emitBytes(compiler, OP_GETARG, (u8)argSlot);
+            return;
+        }
+    }
+
+    if (compiler->flags.casePattern
+        && compiler->parser->previous.length >= 1
+        && compiler->parser->previous.token[0] == '_')
+    {
+        Token *t = &compiler->parser->previous;
+        if (t->length == 1)
+        {
+            emitByte(compiler, OP_WILDCARD);
+            return;
+        }
+        if (t->length >= 2 && t->token[1] != '_'
+            && compiler->flags.casePatternDepth <= 4
+            && compiler->flags.bindingsCount < 16)
+        {
+            // Strip the leading `_` to get the binding name.
+            Token nameTok = *t;
+            nameTok.token = t->token + 1;
+            nameTok.length = t->length - 1;
+            uint nameIdx = identifierConstant(compiler, &nameTok);
+            int bIdx = compiler->flags.bindingsCount++;
+            compiler->flags.bindingNameIdx[bIdx] = nameIdx;
+            // Build path from the per-depth position stack. Outermost
+            // index first; inside `((_a, _b), _c)` the binding `a` has
+            // path [0, 0], `b` has [0, 1], `c` has [1].
+            int depth = (int)compiler->flags.casePatternDepth;
+            compiler->flags.bindingPathLen[bIdx] = depth;
+            for (int d = 0; d < depth && d < 4; d++)
+            {
+                // The binding lives at the CURRENT position-1 of this depth
+                // (we've already incremented for the previous element). For
+                // the outermost depth and the innermost, we read the live
+                // counter; intermediate depths likewise.
+                compiler->flags.bindingPath[bIdx][d] = (int)compiler->flags.casePatternStackPos[d];
+            }
+            emitByte(compiler, OP_WILDCARD);
+            return;
+        }
+        // fall through: treat `__name`, `_name` at depth>1, or overflow as
+        // a regular variable reference (current semantics).
+    }
+    uint name = identifierConstant(compiler, &compiler->parser->previous);
     u8 set, get;
     set = OP_SETV;
     get = OP_GETV;
@@ -286,15 +823,21 @@ void variable(Compiler *compiler, bool canAssign)
             }
             else
             {
+                // Inside call args / a list / dict / tuple, a comma ends the
+                // arrow body (`f(x => x * 3, 2)`) instead of making a tuple.
+                arrowCompiler->flags.argv = compiler->flags.argv;
+                arrowCompiler->flags.list = compiler->flags.list;
+                arrowCompiler->flags.dict = compiler->flags.dict;
+                arrowCompiler->flags.tuple = compiler->flags.tuple;
                 expression(arrowCompiler);
                 emitByte(arrowCompiler, OP_FRET);
             }
             MyMoFunction *arrowFunction = endFunction(arrowCompiler);
-            emitBytes(compiler, OP_FN, makeConstant(compiler, AS_OBJECT(arrowFunction)));
+            emitConstOp(compiler, OP_FN, makeConstant(compiler, AS_OBJECT(arrowFunction)));
             // printf("arrow function");
         }
         else
-            emitBytes(compiler, get, name);
+            emitGetSet(compiler, get, name);
     }
 }
 
@@ -361,16 +904,33 @@ void grouping(Compiler *compiler, bool canAssign)
         }
         else
         {
+            // Inside call args / a list / dict / tuple, a comma ends the
+            // arrow body (`f(x => x * 3, 2)`) instead of making a tuple.
+            arrowCompiler->flags.argv = compiler->flags.argv;
+            arrowCompiler->flags.list = compiler->flags.list;
+            arrowCompiler->flags.dict = compiler->flags.dict;
+            arrowCompiler->flags.tuple = compiler->flags.tuple;
             expression(arrowCompiler);
             emitByte(arrowCompiler, OP_FRET);
         }
         MyMoFunction *arrowFunction = endFunction(arrowCompiler);
-        emitBytes(compiler, OP_FN, makeConstant(compiler, AS_OBJECT(arrowFunction)));
+        emitConstOp(compiler, OP_FN, makeConstant(compiler, AS_OBJECT(arrowFunction)));
     }
     else
     {
         u32 count = 0;
+        bool sawComma = false; // `(x,)` is a 1-tuple; `(x)` is grouping
         compiler->flags.tuple++;
+        // Track element position per nesting level so `_name` bindings
+        // can record a full subscript path. Max 4 levels of nesting;
+        // deeper falls back to wildcard-without-binding.
+        bool trackPos = (compiler->flags.casePattern > 0);
+        if (trackPos)
+        {
+            compiler->flags.casePatternDepth++;
+            if (compiler->flags.casePatternDepth <= 4)
+                compiler->flags.casePatternStackPos[compiler->flags.casePatternDepth - 1] = 0;
+        }
         if (!checkToken(compiler, RPAR))
         {
             do
@@ -385,9 +945,12 @@ void grouping(Compiler *compiler, bool canAssign)
                 compiler->flags.dontSetVar--;
                 skipNewLines(compiler);
                 count++;
-            } while (matchToken(compiler, COMMA));
+                if (trackPos && compiler->flags.casePatternDepth >= 1
+                    && compiler->flags.casePatternDepth <= 4)
+                    compiler->flags.casePatternStackPos[compiler->flags.casePatternDepth - 1]++;
+            } while (matchToken(compiler, COMMA) && (sawComma = true));
         }
-        if (count == 1)
+        if (count == 1 && !sawComma)
         {
             consumeToken(compiler, RPAR, "Expect ')' after expression.");
         }
@@ -396,20 +959,202 @@ void grouping(Compiler *compiler, bool canAssign)
             consumeToken(compiler, RPAR, "Expected closing ')'");
             emitBytes(compiler, OP_TUPLE, count);
         }
+        if (trackPos) compiler->flags.casePatternDepth--;
         compiler->flags.tuple--;
     }
 }
 
-u8 argumentList(Compiler *compiler)
+// Is the token after `current` an `=`? (`name=value` keyword argument)
+static bool atKeywordArgument(Compiler *compiler)
 {
-    uint8_t argCount = 0;
+    if (!checkToken(compiler, NAME))
+        return false;
+    Lexer probe = *compiler->parser->lexer;
+    return getToken(&probe).type == EQUAL;
+}
+
+// Does the argument list starting at `current` contain `*expr` or
+// `**expr` at its top level? Scans a copy of the lexer.
+static bool hasSplatArguments(Compiler *compiler)
+{
+    Lexer probe = *compiler->parser->lexer;
+    Token token = compiler->parser->current;
+    int depth = 0;
+    bool argStart = true;
+    for (;; token = getToken(&probe))
+    {
+        switch (token.type)
+        {
+        case END:
+            return false;
+        case LPAR:
+        case LSQB:
+        case LBRACE:
+            depth++;
+            argStart = false;
+            continue;
+        case RPAR:
+        case RSQB:
+        case RBRACE:
+            if (depth-- == 0)
+                return false;
+            argStart = false;
+            continue;
+        case COMMA:
+            argStart = depth == 0;
+            continue;
+        case NEWLINE:
+            continue;
+        case STAR:
+        case DSTAR:
+            if (depth == 0 && argStart)
+                return true;
+            break;
+        default:
+            break;
+        }
+        argStart = false;
+    }
+}
+
+// f(a, *xs, k=v, **d): builds the positional list and keyword dict that
+// OP_CALLEX spreads into the call. Positional arguments come first.
+static void splatArgumentList(Compiler *compiler)
+{
+    emitBytes(compiler, OP_LIST, 0);
+    bool keywords = false;
     if (!checkToken(compiler, RPAR))
     {
         do
         {
+            skipNewLines(compiler);
+            if (checkToken(compiler, RPAR))
+                break;
+            bool isKeyword = atKeywordArgument(compiler) || checkToken(compiler, DSTAR);
+            if (isKeyword && !keywords)
+            {
+                emitBytes(compiler, OP_DICT, 0);
+                keywords = true;
+            }
+            else if (!isKeyword && keywords)
+                errorAtCurrent(compiler, "Positional argument after keyword argument.");
+            if (matchToken(compiler, STAR))
+            {
+                expression(compiler);
+                emitByte(compiler, OP_LEXTEND);
+            }
+            else if (matchToken(compiler, DSTAR))
+            {
+                expression(compiler);
+                emitByte(compiler, OP_DMERGE);
+            }
+            else if (isKeyword)
+            {
+                advanceToken(compiler);
+                Token name = compiler->parser->previous;
+                advanceToken(compiler); // `=`
+                emitConstant(compiler, AS_OBJECT(newString(compiler->parser->vm, name.token, name.length)));
+                expression(compiler);
+                emitByte(compiler, OP_DADD);
+            }
+            else
+            {
+                expression(compiler);
+                emitByte(compiler, OP_LAPPEND);
+            }
+            skipNewLines(compiler);
+        } while (matchToken(compiler, COMMA));
+    }
+    if (!keywords)
+        emitBytes(compiler, OP_DICT, 0);
+    consumeToken(compiler, RPAR, "Expect ')' after arguments.");
+}
+
+// Does the argument list starting at `current` contain a keyword
+// argument at its top level? Scans a copy of the lexer; consumes nothing.
+static bool hasKeywordArguments(Compiler *compiler)
+{
+    Lexer probe = *compiler->parser->lexer;
+    Token token = compiler->parser->current;
+    int depth = 0;
+    bool argStart = true;
+    for (;;)
+    {
+        switch (token.type)
+        {
+        case END:
+            return false;
+        case LPAR:
+        case LSQB:
+        case LBRACE:
+            depth++;
+            break;
+        case RPAR:
+        case RSQB:
+        case RBRACE:
+            if (depth-- == 0)
+                return false;
+            break;
+        case COMMA:
+            if (depth == 0)
+                argStart = true;
+            token = getToken(&probe);
+            continue;
+        case NEWLINE: // a multi-line call: `f(\n    a,\n    k=v,\n)`
+            token = getToken(&probe);
+            continue;
+        case NAME:
+            if (depth == 0 && argStart)
+            {
+                Token next = getToken(&probe);
+                if (next.type == EQUAL)
+                    return true;
+                argStart = false;
+                token = next;
+                continue;
+            }
+            break;
+        default:
+            break;
+        }
+        argStart = false;
+        token = getToken(&probe);
+    }
+}
+
+// Parses `(args)` after the `(`. Keyword arguments (`name=value`) must
+// follow the positional ones; their name constants go to `kwNames` and
+// their count to *kwCount. Returns the total number of arguments.
+u8 argumentList(Compiler *compiler, u16 *kwNames, u8 *kwCount)
+{
+    uint8_t argCount = 0;
+    *kwCount = 0;
+    if (!checkToken(compiler, RPAR))
+    {
+        do
+        {
+            skipNewLines(compiler);
+            if (checkToken(compiler, RPAR))
+                break; // trailing comma
             if (argCount == 255)
                 error(compiler, "Can't have more than 255 arguments.");
+            if (kwNames && atKeywordArgument(compiler))
+            {
+                advanceToken(compiler);
+                Token name = compiler->parser->previous;
+                for (int i = 0; i < *kwCount; i++)
+                {
+                    MyMoString *seen = AS_STRING(V_AS_OBJ(currentChunk(compiler)->constants.values[kwNames[i]]));
+                    if (seen->length == name.length && memcmp(seen->value, name.token, (size_t)name.length) == 0)
+                        error(compiler, "Keyword argument repeated.");
+                }
+                kwNames[(*kwCount)++] = (u16)identifierConstant(compiler, &name);
+                advanceToken(compiler); // `=`
+            }
+            else if (*kwCount > 0)
+                errorAtCurrent(compiler, "Positional argument after keyword argument.");
             expression(compiler);
+            skipNewLines(compiler);
             argCount++;
         } while (matchToken(compiler, COMMA));
     }
@@ -420,19 +1165,96 @@ u8 argumentList(Compiler *compiler)
 void call(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);
+    Chunk *ch = currentChunk(compiler);
+    // Peephole: when the very last emitted bytes are an OP_GETV (10 bytes:
+    // opcode + name_idx + 8 IC scratch), rewind it and emit a fused
+    // OP_INVOKE_GLOBAL after the args. Saves a dispatch (1 op vs 2) and
+    // ~3 bytes of bytecode for every `print(x)` / `len(s)` style call.
+    int markBeforeArgs = ch->count;
+    if (hasSplatArguments(compiler))
+    {
+        if (compiler->flags.pithru)
+            error(compiler, "Argument unpacking (*xs, **d) can't be used with |>.");
+        compiler->flags.argv++;
+        splatArgumentList(compiler);
+        compiler->flags.argv--;
+        emitByte(compiler, OP_CALLEX);
+        return;
+    }
+    bool keywords = hasKeywordArguments(compiler);
+    // Not when the OP_GETV carries an OP_WIDE prefix: the fused
+    // instruction lands after the arguments, away from its prefix.
+    bool fuseable = (!keywords && markBeforeArgs >= 10
+                     && ch->code[markBeforeArgs - 10] == OP_GETV
+                     && compiler->lastWideTarget != markBeforeArgs - 10);
+    u8 fusedNameIdx = 0;
+    if (fuseable)
+    {
+        fusedNameIdx = ch->code[markBeforeArgs - 10 + 1];
+        ch->count = markBeforeArgs - 10;  // rewind the OP_GETV
+    }
+
     compiler->flags.argv++;
-    u8 argCount = argumentList(compiler);
+    u16 kwNames[255];
+    u8 kwCount = 0;
+    u8 argCount = argumentList(compiler, keywords ? kwNames : NULL, &kwCount);
     if (compiler->flags.pithru)
     {
+        if (kwCount)
+            error(compiler, "Keyword arguments can't be used with |>.");
         argCount++;
     }
-    emitBytes(compiler, OP_CALL, argCount);
+    if (kwCount)
+    {
+        emitByte(compiler, OP_CALLKW);
+        emitByte(compiler, argCount);
+        emitByte(compiler, kwCount);
+        for (int i = 0; i < kwCount; i++)
+        {
+            emitByte(compiler, (u8)(kwNames[i] >> 8));
+            emitByte(compiler, (u8)(kwNames[i] & 0xff));
+        }
+    }
+    else if (fuseable)
+    {
+        // Layout: opcode | name_idx | IC[8] | argc — 11 bytes total.
+        emitByte(compiler, OP_INVOKE_GLOBAL);
+        emitByte(compiler, fusedNameIdx);
+        emitByte(compiler, IC_TAG_COLD);
+        for (int i = 1; i < IC_BYTES; i++) emitByte(compiler, 0);
+        emitByte(compiler, argCount);
+    }
+    else
+    {
+        emitBytes(compiler, OP_CALL, argCount);
+    }
     compiler->flags.argv--;
+}
+
+// The arithmetic opcode for a compound assignment token (`+=` -> OP_ADD),
+// or -1.
+static int compoundAssignOp(TokenType type)
+{
+    switch (type)
+    {
+    case EPLUS: return OP_ADD;
+    case EMINUS: return OP_SUB;
+    case ESTAR: return OP_MUL;
+    case ESLASH: return OP_DIV;
+    case EDSTAR: return OP_POW;
+    case EDSLASH: return OP_IDIV;
+    case EPERCENT: return OP_MOD;
+    case EVBAR: return OP_BOR;
+    case EAMPER: return OP_BAND;
+    case ECAP: return OP_BXOR;
+    case EDLESS: return OP_LSFT;
+    case EDGREATER: return OP_RSFT;
+    default: return -1;
+    }
 }
 
 void subScript(Compiler *compiler, bool canAssign)
 {
-    UNUSED(canAssign);
     compiler->flags.dontSetVar++;
     if (matchToken(compiler, COLON))
     {
@@ -482,9 +1304,19 @@ void subScript(Compiler *compiler, bool canAssign)
         expression(compiler);
         if (matchToken(compiler, RSQB))
         {
+            int op = compoundAssignOp(compiler->parser->current.type);
             if (matchToken(compiler, EQUAL))
             {
                 expression(compiler);
+                emitByte(compiler, OP_SETSUBSCR);
+            }
+            else if (op >= 0 && canAssign)
+            {
+                // obj[key] op= value
+                advanceToken(compiler);
+                emitByte(compiler, OP_SUBSCRK);
+                expression(compiler);
+                emitBytes(compiler, (u8)op, 1);
                 emitByte(compiler, OP_SETSUBSCR);
             }
             else
@@ -518,35 +1350,275 @@ endSS:
     return;
 }
 
+// Comprehensions (defined below): [x for ...] and {k: v for ...}.
+typedef struct
+{
+    bool isDict;
+    bool isSet;
+    const char *keyText; // dict only
+    int keyLen;
+    const char *valueText;
+    int valueLen;
+    u32 result; // hidden local holding the list/dict being built
+} Comprehension;
+// Where a token starts in the source. STRING tokens point past their
+// opening quote (and FSTRING past `f"`), so step back over it.
+static const char *tokenSource(Token *t)
+{
+    if (t->type == STRING)
+        return t->token - 1;
+    if (t->type == FSTRING)
+        return t->token - 2;
+    return t->token;
+}
+
+static void comprehension(Compiler *compiler, Comprehension *comp, TokenType closer);
+
 void list(Compiler *compiler, bool canAssign)
 {
     UNUSED(canAssign);
     compiler->flags.dontSetVar++;
     u32 count = 0;
+    int pieces = 0; // full 255-element pieces already emitted
     compiler->flags.list++;
+    // Same position tracking as grouping() — list patterns `[a, b, c]`
+    // also bind by index in case-arm context.
+    bool trackPos = (compiler->flags.casePattern > 0);
+    if (trackPos)
+    {
+        compiler->flags.casePatternDepth++;
+        if (compiler->flags.casePatternDepth <= 4)
+            compiler->flags.casePatternStackPos[compiler->flags.casePatternDepth - 1] = 0;
+    }
     if (!checkToken(compiler, RSQB))
     {
-        do
+        skipNewLines(compiler);
+        // Capture the source text of the first expression so we can
+        // re-emit it inside the comprehension's loop body. Token
+        // pointers reference lexer->src directly; the slice is
+        // (start, end_of_last_token).
+        const char *exprStart = tokenSource(&compiler->parser->current);
+        int savedChunkCount = compiler->function->chunk->count;
+        expression(compiler);
+        // Use the START of the NEXT token as the end-of-expr cursor.
+        // Going through parser->previous.token + length would
+        // truncate when the expression ends in a string token —
+        // STRING tokens point at the content (between quotes), so
+        // token+length lands AT the closing quote, not after it,
+        // and we'd lose the closing `"`.
+        const char *exprEnd = tokenSource(&compiler->parser->current);
+        skipNewLines(compiler);
+        if (checkToken(compiler, FOR))
+        {
+            // Discard the bytecode we just emitted for the first
+            // expression — it'll be re-emitted inside the loop body
+            // via a sub-parser. The constants it added remain in
+            // the pool but they're harmless (just unreachable).
+            compiler->function->chunk->count = savedChunkCount;
+            Comprehension comp = {.isDict = false, .valueText = exprStart, .valueLen = (int)(exprEnd - exprStart)};
+            comprehension(compiler, &comp, RSQB);
+            if (trackPos) compiler->flags.casePatternDepth--;
+            compiler->flags.list--;
+            compiler->flags.dontSetVar--;
+            return;
+        }
+        count++;
+        if (trackPos && compiler->flags.casePatternDepth >= 1
+            && compiler->flags.casePatternDepth <= 4)
+            compiler->flags.casePatternStackPos[compiler->flags.casePatternDepth - 1]++;
+        while (matchToken(compiler, COMMA))
         {
             skipNewLines(compiler);
             if (checkToken(compiler, RSQB))
             {
                 break;
             }
+            if (count == 255)
+            {
+                // OP_LIST takes a byte count: build long literals in
+                // 255-element pieces joined with +.
+                emitBytes(compiler, OP_LIST, 255);
+                if (pieces++)
+                    emitBytes(compiler, OP_ADD, 0);
+                count = 0;
+            }
             expression(compiler);
             skipNewLines(compiler);
             count++;
-        } while (matchToken(compiler, COMMA));
+            if (trackPos && compiler->flags.casePatternDepth >= 1
+                && compiler->flags.casePatternDepth <= 4)
+                compiler->flags.casePatternStackPos[compiler->flags.casePatternDepth - 1]++;
+        }
     }
     consumeToken(compiler, RSQB, "Expected closing ']'");
-    // if (matchToken(compiler, EQUAL)) {
-    //   expression(compiler);
-    //   emitBytes(compiler, OP_UNPACK, count);
-    // } else {
     emitBytes(compiler, OP_LIST, count);
-    // }
+    if (pieces)
+        emitBytes(compiler, OP_ADD, 0);
+    if (trackPos) compiler->flags.casePatternDepth--;
     compiler->flags.list--;
     compiler->flags.dontSetVar--;
+}
+
+// Compile a snippet of source text (a comprehension's element
+// expression) as an expression at the current position, by swapping in
+// a lexer over it, like f-string interpolation does.
+static void compileSnippet(Compiler *compiler, const char *text, int len)
+{
+    MVM *vm = compiler->parser->vm;
+    char *buf = New(char, len + 2);
+    memcpy(buf, text, len);
+    buf[len] = '\n';
+    buf[len + 1] = '\0';
+    Lexer *outerLexer = compiler->parser->lexer;
+    Token outerCurrent = compiler->parser->current;
+    Token outerPrevious = compiler->parser->previous;
+    Lexer *innerLexer = initLexer(buf);
+    compiler->parser->lexer = innerLexer;
+    compiler->parser->current = getToken(innerLexer);
+    expression(compiler);
+    freeLexer(innerLexer);
+    Free(vm, char, buf);
+    compiler->parser->lexer = outerLexer;
+    compiler->parser->current = outerCurrent;
+    compiler->parser->previous = outerPrevious;
+}
+
+// Add one element to the result: result.append(value) or
+// result[key] = value.
+static void comprehensionBody(Compiler *compiler, Comprehension *comp)
+{
+    emitGetV(compiler, comp->result);
+    if (comp->isDict)
+    {
+        compileSnippet(compiler, comp->keyText, comp->keyLen);
+        compileSnippet(compiler, comp->valueText, comp->valueLen);
+        emitByte(compiler, OP_SETSUBSCR);
+        emitByte(compiler, OP_POP);
+        return;
+    }
+    Token appendTok = comp->isSet ? (Token){.token = "add", .length = 3} : (Token){.token = "append", .length = 6};
+    emitConstOp(compiler, OP_GETP, identifierConstant(compiler, &appendTok));
+    compileSnippet(compiler, comp->valueText, comp->valueLen);
+    emitBytes(compiler, OP_CALL, 1);
+    emitByte(compiler, OP_POP); // append's return value
+}
+
+// One `for NAMES in ITER (if COND)*` clause, then either the next clause
+// or the body. Loops nest like the equivalent for statements.
+static void comprehensionClause(Compiler *compiler, Comprehension *comp)
+{
+    consumeToken(compiler, FOR, "expected 'for' in comprehension");
+    Token names[16];
+    int n = parseNameList(compiler, names, 16);
+    consumeToken(compiler, IN, "expected 'in' after the loop variable");
+    // Parse above the ternary so a trailing `if COND` stays a filter.
+    parsePrecedence(compiler, PREC_OR);
+    emitByte(compiler, OP_GETI);
+    Loop loop;
+    startLoop(compiler, &loop);
+    loop.isFor = true;
+    compiler->loop->loopJump = emitJump(compiler, OP_ITER);
+    if (n == 1)
+    {
+        emitStoreName(compiler, &names[0]);
+        emitByte(compiler, OP_POP);
+    }
+    else
+    {
+        emitBytes(compiler, OP_UNPACK, (u8)n);
+        storeUnpacked(compiler, names, n);
+    }
+
+    // Filters: each false condition skips to the next iteration.
+    int condJumps[16];
+    int conds = 0;
+    while (matchToken(compiler, IF))
+    {
+        parsePrecedence(compiler, PREC_OR);
+        if (conds == 16)
+        {
+            error(compiler, "too many 'if' filters in one comprehension clause.");
+            break;
+        }
+        condJumps[conds++] = emitJump(compiler, OP_JIF);
+        emitByte(compiler, OP_POP); // the true condition
+    }
+
+    if (checkToken(compiler, FOR))
+        comprehensionClause(compiler, comp);
+    else
+        comprehensionBody(compiler, comp);
+
+    if (conds)
+    {
+        int next = emitJump(compiler, OP_JMP);
+        for (int i = 0; i < conds; i++)
+            patchJump(compiler, condJumps[i]);
+        emitByte(compiler, OP_POP); // the false condition
+        patchJump(compiler, next);
+    }
+    emitLoop(compiler, compiler->loop->loopStart);
+    compiler->loop = loop.enclosing;
+    patchJump(compiler, loop.loopJump);
+    emitByte(compiler, OP_POP); // the iterator
+    if (loop.breaksCapacity)
+        FreeArray(compiler->parser->vm, int, loop.breakJumps, loop.breaksCapacity);
+}
+
+// [EXPR for ... ] / {KEY: VALUE for ...}. We're at the first `for`; the
+// caller captured the element's source text and discarded its code.
+// Builds:
+//     <result> = [] / {}
+//     for ...: (if ...:) <result>.append(EXPR) / <result>[KEY] = VALUE
+//     <result>                       (left on the stack; the name is deleted)
+// The hidden name starts with `<`, so it can't collide with user names.
+static void comprehension(Compiler *compiler, Comprehension *comp, TokenType closer)
+{
+    static int counter = 0;
+    char nameBuf[32];
+    Token nameTok = {.token = nameBuf};
+    nameTok.length = snprintf(nameBuf, sizeof(nameBuf), "<comp_%d>", counter++);
+    comp->result = identifierConstant(compiler, &nameTok);
+
+    emitBytes(compiler, comp->isDict ? OP_DICT : comp->isSet ? OP_SET : OP_LIST, 0);
+    emitSetV(compiler, comp->result);
+    emitByte(compiler, OP_POP);
+    comprehensionClause(compiler, comp);
+    emitGetV(compiler, comp->result);
+    emitConstOp(compiler, OP_DELV, comp->result);
+    skipNewLines(compiler);
+    consumeToken(compiler, closer, closer == RSQB ? "Expected closing ']' after comprehension"
+                                                  : "Expected closing '}' after comprehension");
+}
+
+// {a, b, c} or {EXPR for ...}, after the first element was parsed.
+static void setLiteral(Compiler *compiler, const char *firstStart, const char *firstEnd, int beforeFirst)
+{
+    if (checkToken(compiler, FOR))
+    {
+        compiler->function->chunk->count = beforeFirst;
+        Comprehension comp = {.isSet = true, .valueText = firstStart, .valueLen = (int)(firstEnd - firstStart)};
+        comprehension(compiler, &comp, RBRACE);
+        return;
+    }
+    u32 count = 1;
+    compiler->flags.dict++;
+    while (matchToken(compiler, COMMA))
+    {
+        skipNewLines(compiler);
+        if (checkToken(compiler, RBRACE))
+            break;
+        expression(compiler);
+        skipNewLines(compiler);
+        if (++count > 255)
+        {
+            error(compiler, "Too many elements in one set literal (at most 255); build it in steps.");
+            count = 255;
+        }
+    }
+    compiler->flags.dict--;
+    consumeToken(compiler, RBRACE, "Expected closing '}'");
+    emitBytes(compiler, OP_SET, count);
 }
 
 void dictionary(Compiler *compiler, bool canAssign)
@@ -563,15 +1635,44 @@ void dictionary(Compiler *compiler, bool canAssign)
             {
                 break;
             }
+            const char *keyStart = tokenSource(&compiler->parser->current);
+            int savedChunkCount = compiler->function->chunk->count;
+            compiler->flags.dict++; // a comma ends the element here
             expression(compiler);
+            compiler->flags.dict--;
+            const char *keyEnd = tokenSource(&compiler->parser->current);
             skipNewLines(compiler);
+            if (count == 0 && !checkToken(compiler, COLON))
+            {
+                setLiteral(compiler, keyStart, keyEnd, savedChunkCount);
+                compiler->flags.dontSetVar--;
+                return;
+            }
             consumeToken(compiler, COLON, "Expected ':'");
             skipNewLines(compiler);
+            const char *valueStart = tokenSource(&compiler->parser->current);
             compiler->flags.dict++;
             expression(compiler);
             compiler->flags.dict--;
+            const char *valueEnd = tokenSource(&compiler->parser->current);
             skipNewLines(compiler);
+            if (count == 0 && checkToken(compiler, FOR))
+            {
+                // {KEY: VALUE for ...}: recompiled inside the loop.
+                compiler->function->chunk->count = savedChunkCount;
+                Comprehension comp = {.isDict = true,
+                                      .keyText = keyStart, .keyLen = (int)(keyEnd - keyStart),
+                                      .valueText = valueStart, .valueLen = (int)(valueEnd - valueStart)};
+                comprehension(compiler, &comp, RBRACE);
+                compiler->flags.dontSetVar--;
+                return;
+            }
             count++;
+            if (count > 255)
+            {
+                error(compiler, "Too many entries in one dict literal (at most 255); build it in steps.");
+                count = 255;
+            }
         } while (matchToken(compiler, COMMA));
     }
     consumeToken(compiler, RBRACE, "Expected closing '}'");
@@ -586,12 +1687,12 @@ void pipeThrough(Compiler *compiler, bool canAssign)
     if (matchToken(compiler, NAME))
     {
         u32 name = identifierConstant(compiler, &compiler->parser->previous);
-        emitBytes(compiler, OP_GETV, name);
+        emitGetV(compiler, name);
         if (matchToken(compiler, DOT))
         {
             consumeToken(compiler, NAME, "Expected property name after '.'.");
             u32 name = identifierConstant(compiler, &compiler->parser->previous);
-            emitBytes(compiler, OP_GETP, name);
+            emitConstOp(compiler, OP_GETP, name);
         }
         emitByte(compiler, OP_PITHRU);
         if (matchToken(compiler, LPAR))
@@ -616,7 +1717,7 @@ void yeild(Compiler *compiler, bool canAssign)
     UNUSED(canAssign);
     if (compiler->flags.compileType == COMPILE_FUNCTION)
     {
-        emitBytes(compiler, OP_GETV, identifierConstant(compiler, &compiler->parser->previous));
+        emitGetV(compiler, identifierConstant(compiler, &compiler->parser->previous));
         compiler->function->type = (compiler->function->type == FN_METHOD ? FN_GEN_METHOD : FN_GENERATOR);
     }
     else

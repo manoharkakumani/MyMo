@@ -1,0 +1,12 @@
+/* The big card on the Today page. */
+.hero {
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 45%, #312e81));
+  color: #fff;
+  border: 0;
+}
+.hero .m-muted, .hero .m-text { color: rgba(255, 255, 255, .92); }
+.hero .m-icon { color: #fff; opacity: .95; }
+.hero .m-btn.m-ghost { color: #fff; }
+.hero .m-btn.m-ghost:hover { background: rgba(255, 255, 255, .15); }
+.hour { padding: 8px 0; border-radius: 12px; }
+.hour:hover { background: var(--surface-2); }

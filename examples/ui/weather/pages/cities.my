@@ -1,0 +1,29 @@
+from "ui" use *
+from "components/layout" use layout
+from "components/bits" use deg, weather_icon
+use "store"
+
+fn city_row(name):
+    row:
+        text name, bold=True
+        spacer()
+        if name in store.city_temps:
+            t, code, is_day = store.city_temps[name]
+            weather_icon code, is_day, size=20
+            text deg(t)
+        else:
+            spinner()
+        button "Show" small: open_city(name)
+        button icon="trash" ghost small: store.forget(name)
+
+fn open_city(name):
+    store.load(name)
+    go "/"
+
+page "/cities":
+    layout "Cities":
+        card subtitle="Your saved places. Search a city and press Save city to add it.":
+            for c in store.cities:
+                city_row(c)
+            if len(store.cities) == 0:
+                empty "No saved cities", "Save one from the Today page.", icon="map-pin"

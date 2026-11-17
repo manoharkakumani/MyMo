@@ -21,61 +21,27 @@ void printBool(MyMoBool *boolean)
 
 void boolean(MVM *vm)
 {
+    if (TrueBool != NULL) // process-wide singletons; see nil()
+        return;
     FalseBool = AllocateObject(vm, MyMoBool, OBJ_BOOL);
     FalseBool->value = false;
     TrueBool = AllocateObject(vm, MyMoBool, OBJ_BOOL);
     TrueBool->value = true;
 }
 
-MyMoObject *newBoolMethod(MVM *vm, uint argc, MyMoObject *args[])
+Value newBoolMethod(MVM *vm, uint argc, Value args[])
 {
+    // bool(x): x's truthiness (Nil, False, 0, 0.0 and "" are false).
     if (argc > 1)
     {
-        runtimeError(vm, "bool() takes  1 argument (%d given)", argc);
-        return NEW_EMPTY;
+        runtimeError(vm, "TypeError: bool() takes 1 argument (%d given)", argc);
+        return V_EMPTY_VAL;
     }
-    else if (argc == 0)
-    {
-        return NEW_BOOL(0);
-    }
-    else
-    {
-        if (IS_INT(args[0]))
-        {
-            long value = INT_VAL(pop(vm));
-            if (value)
-            {
-                return NEW_BOOL(1);
-            }
-            return NEW_BOOL(0);
-        }
-        else if (IS_DOUBLE(args[0]))
-        {
-            double value = DOUBLE_VAL(pop(vm));
-            if (value)
-            {
-                return NEW_BOOL(1);
-            }
-            return NEW_BOOL(0);
-        }
-        else if (IS_STRING(args[0]))
-        {
-            MyMoString *string = (MyMoString *)pop(vm);
-            if (string->length)
-            {
-                return NEW_BOOL(1);
-            }
-            return NEW_BOOL(0);
-        }
-        else if (IS_BOOL(args[0]))
-        {
-            return pop(vm);
-        }
-        else
-        {
-            return NEW_BOOL(1);
-        }
-    }
+    if (argc == 0)
+        return V_FALSE_VAL;
+    Value v = args[0];
+    popV(vm);
+    return V_BOOL_VAL(!valueIsFalsey(v));
 }
 
 void defineBoolMethods(MVM *vm)

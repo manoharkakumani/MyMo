@@ -1,0 +1,19 @@
+6 0
+a: {} b:x-y {} c:x {} d: {} e:p {"id": 1, "cls": "k"}
+{} {"a": 1, "b": 2}
+[info] hello world {"user": "bo"} [warn]  {}
+12
+TypeError: tag() missing required argument 'name'
+TypeError: kw_only() takes 0 positional arguments but 1 were given
+TypeError: total() got an unexpected keyword argument 'x'
+(1, 2)
+a=1 b=2 rest=(3,) kw={} a=1 b=2 rest=(3,) kw={"x": 10} a=0 b=5 rest=() kw={"y": 2, "x": 10} a=7 b=8 rest=() kw={}
+a|b
+9 Nil {"k": 1, "z": 2}
+calling <function add> with (1, 2) {}
+calling <function add> with (1, 2) {"scale": 10}
+3 30
+1 2 3 4
+TypeError: got multiple values for keyword argument 'a'
+TypeError: argument after ** must be a dict, not <object 'list'>
+TypeError: argument after * must be an iterable, not <object 'int'>

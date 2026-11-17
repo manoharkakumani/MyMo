@@ -1,0 +1,15 @@
+Hello, Ann! Hello, Bo? Hi, Cy! Yo, Di.
+1 15 3
+6 12 10
+[3, 2, 1] ["a", "bb", "ccc"] ["bb", "a"]
+[9, 5, 2] b -5 none
+a-b-c
+no newline <- same line
+1, 2 END
+[(1, "a"), (2, "b")] {"a": 1, "b": 2} {"x": 1, "y": 2}
+TypeError: greet() got an unexpected keyword argument 'nope'
+TypeError: greet() missing required argument 'name'
+TypeError: greet() got multiple values for argument 'name'
+TypeError: len() got an unexpected keyword argument 'x'
+1
+TypeError: print() got an unexpected keyword argument 'bogus'

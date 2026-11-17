@@ -32,7 +32,12 @@ typedef enum
     OBJ_INSTANCE,
     OBJ_MODULE,
     OBJ_CODE,
-    OBJ_ITER
+    OBJ_ITER,
+    OBJ_SUPER,     // super() proxy: (self, parent class); see superfn
+    OBJ_WILDCARD,  // singleton sentinel for `_` in case patterns; matches anything in isEqual()
+    OBJ_RANGE,     // range(start, stop, step); datatypes/range.c
+    OBJ_SET,       // set; datatypes/set.c
+    OBJ_TYPE_COUNT // not a type: array bound for per-type tables
 } MyMoObjectType;
 
 typedef struct MyMoObject

@@ -4,6 +4,7 @@
 #include "object.h"
 #include "function.h"
 #include "dict.h"
+#include "../value.h"
 
 #define AS_FIBER(object) ((MyMoFiber *)object)
 #define IS_FIBER(object) (object->type == OBJ_FIBER)
@@ -30,16 +31,48 @@ typedef enum
     FIBER_CHILD
 } FiberType;
 
+// One entry on the try/catch handler stack. Recorded by OP_TRY when
+// a `try:` block starts executing, consulted by runtimeError when an
+// exception fires so it can unwind to the matching `catch:` arm.
+typedef struct {
+    u8 *handlerIp;       // bytecode address of the catch arm
+    uint frameCount;     // value to restore vm->fiber->frameCount to
+    int  stackCount;     // value to restore vm->fiber->stack.count to
+} TryHandler;
+
+// Operand-stack slots per fiber. The stack never grows, so calls check
+// for exhaustion (STACK_EXHAUSTED) and raise RecursionError. Child fibers
+// (one per mono request, generators, ...) get a smaller stack.
+#define FIBER_ROOT_STACK  65536
+#define FIBER_CHILD_STACK 8192
+// Headroom for one frame's temporaries and up to 255 arguments.
+#define STACK_EXHAUSTED(used) ((used) + 512 >= vm->fiber->stack.capacity)
+
 typedef struct fiber
 {
     MyMoObject object;
     FiberState state;
     FiberType type;
-    MyMoObjectArray stack;
+    ValueArray stack;
     CallFrame **callFrames;
     uint frameCount;
     uint frameCapacity;
     struct fiber *parent;
+    // Free-list of recyclable CallFrame allocations. callFunction picks
+    // from here when non-empty, falling back to malloc; OP_FRET pushes
+    // the frame back instead of free()ing. Saves a malloc + free per call
+    // pair — ~30 ns each on common allocators.
+    CallFrame *freeFramesHead;
+    // Try/catch handler stack. `handlers[handlerCount-1]` is the
+    // innermost active handler. OP_TRY pushes, OP_ENDTRY pops,
+    // runtimeError consults to unwind. Bounded depth to keep the
+    // fiber struct compact — most programs nest <8 deep.
+    TryHandler handlers[32];
+    int handlerCount;
+    // The currently-in-flight exception value (NULL when no error
+    // is being propagated). Set by raise / runtimeError, read by
+    // the catch arm via OP_GETV on the bound name.
+    MyMoObject *exception;
 } MyMoFiber;
 
 MyMoFiber *newFiber(MVM *vm, MyMoFunction *function);

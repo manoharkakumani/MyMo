@@ -1,0 +1,24 @@
+# nodes: parallel cooperating MyMo processes via secure AF_UNIX IPC.
+# The coordinator spawns 3 workers, fans out a job to each, collects
+# their squared results, then signals shutdown.
+from "nodes" use spawn, send, recv, kill, is_coordinator, self_id, children
+print("coordinator id =", self_id(), "(is_coord=", is_coordinator(), ")")
+w1 = spawn("examples/modules/nodes_worker.my")
+w2 = spawn("examples/modules/nodes_worker.my")
+w3 = spawn("examples/modules/nodes_worker.my")
+print("spawned workers:", w1, w2, w3)
+send(w1, "4")
+send(w2, "7")
+send(w3, "9")
+got = 0
+while got < 3:
+    m = recv(2000)
+    if m == Nil:
+        print("timed out waiting for replies")
+        got = 3
+    else:
+        print("from worker", m["from"], "->", m["payload"])
+        got = got + 1
+send(w1, "-1")
+send(w2, "-1")
+send(w3, "-1")

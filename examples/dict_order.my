@@ -1,0 +1,23 @@
+# Dicts keep insertion order; a for loop over a dict may change it.
+d = {"z": 1, "a": 2, "m": 3}
+print(d, d.keys(), d.values())
+d["b"] = 4
+d.delete("a")
+d["a"] = 5
+print(d)
+for k in d:
+    if k == "z":
+        d.delete("m")
+        d["new"] = 9
+    print(k)
+print(d)
+big = {}
+i = 0
+while i < 1000:
+    big[i] = i
+    i += 1
+i = 0
+while i < 990:
+    big.delete(i)
+    i += 1
+print(big)

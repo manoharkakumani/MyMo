@@ -1,0 +1,13 @@
+2.5
+2
+9.223372036854776e+18
+2.5
+9.223372036854776e+18 -9.223372036854776e+18 1.8446744073709552e+19 2147483648
+TypeError: can't perform + between <object 'string'> and <object 'int'>
+42 -17 255 255 31 5 511 1000000 35 3 -3 1 2.5 1000.0 inf
+ValueError: invalid literal for int() with base 10: '12a'
+ValueError: invalid literal for int() with base 10: ''
+ValueError: invalid literal for int() with base 10: ' '
+ValueError: invalid literal for int() with base 10: '0x'
+ValueError: invalid literal for int() with base 10: '1__0'
+ValueError: invalid literal for int() with base 8: '9'

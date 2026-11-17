@@ -1,0 +1,171 @@
+#include "value.h"
+#include "datatypes/datatypes.h"
+#include "memory.h"
+#include "datatypes/object.h"
+#include "datatypes/int.h"
+#include "datatypes/double.h"
+#include "datatypes/nil.h"
+#include "datatypes/bool.h"
+#include "datatypes/string.h"
+
+MyMoObject *valueToBoxedObject(MVM *vm, Value v) {
+    if (V_IS_OBJ(v))    return V_AS_OBJ(v);
+    if (V_IS_INT(v))    return AS_OBJECT(newInt(vm, V_AS_INT(v)));
+    if (V_IS_DOUBLE(v)) return AS_OBJECT(newDouble(vm, V_AS_DOUBLE(v)));
+    // Map the singleton tags back to the heap singletons the rest of
+    // the VM already keeps around (NilObject / TrueBool / FalseBool).
+    // Producers push inline V_*_VAL; legacy consumers that go through
+    // pop(vm) → MyMoObject* get the singleton pointer here.
+    if (V_IS_NIL(v))    return (MyMoObject *)NilObject;
+    if (V_IS_TRUE(v))   return (MyMoObject *)TrueBool;
+    if (V_IS_FALSE(v))  return (MyMoObject *)FalseBool;
+    return V_AS_OBJ(v);
+}
+
+Value objectToValue(MyMoObject *o) {
+    if (o == NULL) return V_OBJ_VAL(NULL);
+    switch (o->type) {
+    case OBJ_NIL:    return V_NIL_VAL;
+    case OBJ_BOOL:   return V_BOOL_VAL(((MyMoBool *)o)->value);
+    case OBJ_OBJECT: return V_EMPTY_VAL;  // EmptyObject (see IS_EMPTY)
+    default:         return V_OBJ_VAL(o);
+    }
+}
+
+void initValueArray(MVM *vm, ValueArray *arr) {
+    UNUSED(vm);
+    arr->capacity = 0;
+    arr->count = 0;
+    arr->values = NULL;
+}
+
+void writeValueArray(MVM *vm, ValueArray *arr, Value v) {
+    if (arr->capacity < arr->count + 1) {
+        int oldCap = arr->capacity;
+        arr->capacity = ResizeCapacity(oldCap);
+        arr->values = ResizeArray(vm, Value, arr->values, oldCap, arr->capacity);
+    }
+    arr->values[arr->count++] = v;
+}
+
+void freeValueArray(MVM *vm, ValueArray *arr) {
+    FreeArray(vm, Value, arr->values, arr->capacity);
+    initValueArray(vm, arr);
+}
+
+// True iff `v` represents the language-level Nil — either the inline
+// V_NIL_VAL bit pattern or a heap NilObject reached via V_AS_OBJ.
+static inline bool valueIsNilAny(Value v) {
+    if (V_IS_NIL(v)) return true;
+    if (V_IS_OBJ(v)) {
+        MyMoObject *o = V_AS_OBJ(v);
+        return o && o->type == OBJ_NIL;
+    }
+    return false;
+}
+
+// Same idea for True/False — inline tag OR boxed singleton.
+static inline bool valueIsBoolAny(Value v) {
+    if (V_IS_BOOL(v)) return true;
+    if (V_IS_OBJ(v)) {
+        MyMoObject *o = V_AS_OBJ(v);
+        return o && o->type == OBJ_BOOL;
+    }
+    return false;
+}
+
+static inline bool valueAsBoolBit(Value v) {
+    if (V_IS_TRUE(v))  return true;
+    if (V_IS_FALSE(v)) return false;
+    return ((MyMoBool *)V_AS_OBJ(v))->value;
+}
+
+bool valueIsNil(Value v)  { return valueIsNilAny(v); }
+bool valueIsBool(Value v) { return valueIsBoolAny(v); }
+bool valueAsBool(Value v) { return valueAsBoolBit(v); }
+
+// Falsy: Nil, False, 0, 0.0, and empty strings, lists, tuples, dicts,
+// sets and ranges. Everything else (instances included) is truthy.
+bool valueIsFalsey(Value v) {
+    if (valueIsNil(v)) return true;
+    if (valueIsBool(v)) return !valueAsBool(v);
+    if (valueLooksLikeNumber(v)) return valueAsNumber(v) == 0;
+    if (!V_IS_OBJ(v)) return false;
+    MyMoObject *o = V_AS_OBJ(v);
+    switch (o->type) {
+    case OBJ_STRING: return ((MyMoString *)o)->length == 0;
+    case OBJ_LIST:   return ((MyMoList *)o)->values.count == 0;
+    case OBJ_TUPLE:  return ((MyMoTuple *)o)->values.count == 0;
+    case OBJ_DICT:   return ((MyMoDict *)o)->count == 0;
+    case OBJ_SET:    return ((MyMoSet *)o)->items.count == 0;
+    case OBJ_RANGE:  return rangeLength((MyMoRange *)o) == 0;
+    default:         return false;
+    }
+}
+
+Value valueFromLong(MVM *vm, long n) {
+    if (n >= INT32_MIN && n <= INT32_MAX) return V_INT_VAL((int32_t)n);
+    return V_OBJ_VAL(AS_OBJECT(newInt(vm, n)));
+}
+
+static bool isWildcard(Value v) {
+    return V_IS_OBJ(v) && V_AS_OBJ(v)->type == OBJ_WILDCARD;
+}
+
+bool valuesEqual(Value a, Value b) {
+    // `_` in a case pattern matches anything, inline values included.
+    if (isWildcard(a) || isWildcard(b)) return true;
+    // Fast path: identical bit patterns (covers nil, bool, same-tagged-int,
+    // same heap pointer, +0.0 == +0.0). Has the IEEE-required quirk that
+    // NaN != NaN, which we explicitly preserve.
+    if (a == b) {
+        if (V_IS_DOUBLE(a) && V_AS_DOUBLE(a) != V_AS_DOUBLE(a)) return false;
+        return true;
+    }
+    if (V_IS_NUMBER(a) && V_IS_NUMBER(b)) {
+        return V_AS_NUMBER(a) == V_AS_NUMBER(b);
+    }
+    // Mixed inline/heap numbers (heap ints/doubles still come from dicts,
+    // modules and a few arithmetic paths). Ints compare exactly as longs;
+    // any int/double mix compares numerically, so 0 == 0.0 like Python.
+    if (valueLooksLikeInt(a) && valueLooksLikeInt(b)) {
+        return valueToLong(a) == valueToLong(b);
+    }
+    if (valueLooksLikeNumber(a) && valueLooksLikeNumber(b)) {
+        return valueAsNumber(a) == valueAsNumber(b);
+    }
+    // Same migration story for nil/bool: one side may be the inline
+    // V_*_VAL tag, the other may be a NilObject / TrueBool / FalseBool
+    // pointer that came from a dict or built-in. After step 1.7
+    // collapses both forms these branches become dead too.
+    if (valueIsNilAny(a) && valueIsNilAny(b)) return true;
+    if (valueIsBoolAny(a) && valueIsBoolAny(b)) {
+        return valueAsBoolBit(a) == valueAsBoolBit(b);
+    }
+    if (V_IS_OBJ(a) && V_IS_OBJ(b)) {
+        return isEqual(V_AS_OBJ(a), V_AS_OBJ(b));
+    }
+    return false;
+}
+
+// Same spelling as print(): Nil/True/False, doubles with 16 significant
+// digits (like printDouble).
+void printValue(Value v) {
+    if (V_IS_NIL(v))    { printf("Nil"); return; }
+    if (V_IS_TRUE(v))   { printf("True"); return; }
+    if (V_IS_FALSE(v))  { printf("False"); return; }
+    if (V_IS_INT(v))    { printf("%d", V_AS_INT(v)); return; }
+    if (V_IS_DOUBLE(v)) { printf("%.16g", V_AS_DOUBLE(v)); return; }
+    if (V_IS_OBJ(v))    { printObject(V_AS_OBJ(v)); return; }
+    printf("<unknown value 0x%016llx>", (unsigned long long)v);
+}
+
+const char *valueTypeName(Value v) {
+    // Same spelling as type() / getType().
+    if (V_IS_NIL(v))    return "<object 'nil'>";
+    if (V_IS_BOOL(v))   return "<object 'bool'>";
+    if (V_IS_INT(v))    return "<object 'int'>";
+    if (V_IS_DOUBLE(v)) return "<object 'double'>";
+    if (V_IS_OBJ(v))    return getType(V_AS_OBJ(v));
+    return "unknown";
+}

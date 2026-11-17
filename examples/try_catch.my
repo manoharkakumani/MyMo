@@ -1,0 +1,67 @@
+# try / catch examples — exception handling in MyMo.
+#
+# Catches both implicit runtime errors (undefined names, missing
+# dict keys, type mismatches, …) and explicit `raise`s. The catch
+# variable receives the error message as a string.
+
+print("--- 1. catch an implicit error ---")
+try:
+    x = undefined_name
+    print("never reached")
+catch e:
+    print("caught:", e)
+
+print("--- 2. catch a missing dict key ---")
+d = {"a": 1, "b": 2}
+try:
+    v = d["nope"]
+catch err:
+    print("missing key:", err)
+
+print("--- 3. explicit raise with a custom message ---")
+try:
+    raise "balance must be positive"
+catch e:
+    print("rejected:", e)
+
+print("--- 4. catch across a function call ---")
+fn divide(a, b):
+    if b == 0:
+        raise "division by zero"
+    return a / b
+
+try:
+    print("4 / 2 =", divide(4, 2))
+    print("4 / 0 =", divide(4, 0))
+    print("never")
+catch e:
+    print("math went wrong:", e)
+
+print("--- 5. nested try, inner catches first ---")
+try:
+    try:
+        raise "inner"
+    catch e:
+        print("inner caught:", e)
+        raise "outer"
+catch e:
+    print("outer caught:", e)
+
+print("--- 6. catch lets the program survive ---")
+i = 0
+while i < 4:
+    try:
+        if i == 2:
+            raise "boom on 2"
+        print("step", i, "ok")
+    catch e:
+        print("step", i, "skipped:", e)
+    i = i + 1
+
+print("--- 7. anonymous catch (drop the exception) ---")
+try:
+    raise "silently ignored"
+catch:
+    print("ignored it")
+
+print("done")

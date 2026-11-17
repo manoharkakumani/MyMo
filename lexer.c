@@ -1,17 +1,60 @@
 #include "lexer.h"
 
-void lexerAdvance(Lexer *lexer)
+// Branchless ASCII classifiers used in the lexer's per-character
+// tight loops. Each compiles to a few register ops with no function
+// call, no locale lookup, and no global state (vs. <ctype.h>'s
+// `isalpha`/`isdigit`/etc. which go through a locale-keyed table).
+// The lexer only cares about ASCII anyway — non-ASCII bytes inside
+// identifiers / numbers are an error.
+static inline int ascii_isdigit(int c)  { return (unsigned)(c - '0') < 10; }
+static inline int ascii_isupper(int c)  { return (unsigned)(c - 'A') < 26; }
+static inline int ascii_islower(int c)  { return (unsigned)(c - 'a') < 26; }
+static inline int ascii_isalpha(int c)  { return ascii_isupper(c) || ascii_islower(c); }
+static inline int ascii_isalnum(int c)  { return ascii_isdigit(c) || ascii_isalpha(c); }
+static inline int ascii_isxdigit(int c) {
+    return ascii_isdigit(c)
+        || (unsigned)(c - 'a') < 6
+        || (unsigned)(c - 'A') < 6;
+}
+// MyMo treats `\n` and `\r` as statement-terminator newlines (handled
+// in their own branches before this is queried), so the "is whitespace
+// to skip" predicate here is just space/tab — keeps the hot loop a
+// 2-byte compare instead of <ctype.h>'s 6-class lookup.
+static inline int ascii_iswhite(int c)  { return c == ' ' || c == '\t'; }
+
+#define isspace(c)  ascii_iswhite(c)
+#define isdigit(c)  ascii_isdigit(c)
+#define isalpha(c)  ascii_isalpha(c)
+#define isalnum(c)  ascii_isalnum(c)
+#define isxdigit(c) ascii_isxdigit(c)
+
+// Hot path — called once per source byte. Force-inline so getToken's
+// tight loops (digits, identifiers, strings, whitespace runs) don't
+// pay a function-call hop per character.
+static inline void lexerAdvanceFast(Lexer *lexer)
 {
     lexer->currentChar = lexer->src[lexer->srcLen++];
     lexer->col++;
     lexer->len++;
 }
 
-Token lexerAdvanceToken(Lexer *lexer, Token token)
+void lexerAdvance(Lexer *lexer) { lexerAdvanceFast(lexer); }
+
+static inline Token lexerAdvanceTokenFast(Lexer *lexer, Token token)
 {
-    lexerAdvance(lexer);
+    lexerAdvanceFast(lexer);
     return token;
 }
+
+Token lexerAdvanceToken(Lexer *lexer, Token token)
+{
+    return lexerAdvanceTokenFast(lexer, token);
+}
+
+// In the rest of this file, switch the heavily-used identifiers over
+// to the inlined variants without rewriting every call site.
+#define lexerAdvance(L)              lexerAdvanceFast(L)
+#define lexerAdvanceToken(L, T)      lexerAdvanceTokenFast((L), (T))
 
 Token getToken(Lexer *lexer)
 {
@@ -45,11 +88,20 @@ Token getToken(Lexer *lexer)
             lexer->indent = 0;
             lexerAdvance(lexer);
         newline:
-            while (lexer->currentChar == '\n')
+            // Skip any run of bare `\r` and `\n`. Files with CRLF
+            // endings have `\r\n` between every line; a blank line is
+            // `\r\n\r\n`, so we need to absorb the `\r` here too or
+            // the second `\n` survives as a stray NEWLINE token and
+            // breaks function-body termination. (Used to be hidden
+            // by the catch-all `isspace`-based skip below.)
+            while (lexer->currentChar == '\n' || lexer->currentChar == 13)
             {
-                lexer->line++;
-                lexer->col = 0;
-                lexer->indent = 0;
+                if (lexer->currentChar == '\n')
+                {
+                    lexer->line++;
+                    lexer->col = 0;
+                    lexer->indent = 0;
+                }
                 lexerAdvance(lexer);
             }
             while (lexer->currentChar == '\t')
@@ -79,6 +131,10 @@ Token getToken(Lexer *lexer)
         }
         else if (lexer->currentChar == '#')
         {
+            // Snapshot whether the opener sits at line-start (only
+            // leading whitespace before it). col here points at the
+            // first '#' (no advance yet for it).
+            int openFullLine = ((int)lexer->col - (int)lexer->indent) <= 1;
             lexerAdvance(lexer);
             if (lexer->currentChar == '#')
             {
@@ -104,14 +160,68 @@ Token getToken(Lexer *lexer)
                     else
                         goto comment;
                 }
+                // Block comment closed. If both the opening `##` was
+                // at line-start AND the closing `##` is at end-of-line
+                // (currentChar == '\n' with nothing else on its line
+                // after the close), eat that trailing `\n` so the
+                // parser doesn't see a stray Newline. Same reason as
+                // the single-line case below. Inline `## ... ##` (e.g.
+                // `y = ##foo## 5`) is left untouched.
+                if (openFullLine && lexer->currentChar == '\n')
+                {
+                    while (lexer->currentChar == '\n')
+                    {
+                        lexer->line++;
+                        lexer->col = 0;
+                        lexer->indent = 0;
+                        lexerAdvance(lexer);
+                    }
+                    while (lexer->currentChar == '\t')
+                    {
+                        lexer->indent += 4;
+                        lexer->col += 3;
+                        lexerAdvance(lexer);
+                    }
+                    while (lexer->currentChar == ' ')
+                    {
+                        lexer->indent++;
+                        lexerAdvance(lexer);
+                    }
+                }
             }
             else
             {
+                // Single-line `# ...`. If it sits at the start of its
+                // line, swallow the trailing `\n` so the parser
+                // doesn't see a stray Newline between two statements.
+                // Inline `code # foo` leaves the `\n` for the outer
+                // loop to emit a normal statement-terminator.
                 while (lexer->currentChar != '\n')
                 {
                     if (lexer->currentChar == '\0')
                         break;
                     lexerAdvance(lexer);
+                }
+                if (openFullLine && lexer->currentChar == '\n')
+                {
+                    while (lexer->currentChar == '\n')
+                    {
+                        lexer->line++;
+                        lexer->col = 0;
+                        lexer->indent = 0;
+                        lexerAdvance(lexer);
+                    }
+                    while (lexer->currentChar == '\t')
+                    {
+                        lexer->indent += 4;
+                        lexer->col += 3;
+                        lexerAdvance(lexer);
+                    }
+                    while (lexer->currentChar == ' ')
+                    {
+                        lexer->indent++;
+                        lexerAdvance(lexer);
+                    }
                 }
             }
         }
@@ -125,37 +235,27 @@ Token getToken(Lexer *lexer)
                 {
                     goto fraction;
                 }
-                else if (lexer->currentChar == 'x' || lexer->currentChar == 'X')
+                else if (lexer->currentChar == 'x' || lexer->currentChar == 'X' ||
+                         lexer->currentChar == 'o' || lexer->currentChar == 'O' ||
+                         lexer->currentChar == 'b' || lexer->currentChar == 'B')
                 {
+                    // 0x1F, 0o17, 0b1010 (the compiler converts; _ separates digits)
+                    int radix = (lexer->currentChar | 32) == 'x' ? 16 : (lexer->currentChar | 32) == 'o' ? 8 : 2;
                     lexerAdvance(lexer);
-                    if (!(isxdigit(lexer->currentChar)))
+                    int digits = 0;
+                    for (;; lexerAdvance(lexer))
                     {
-                        return newToken("Invalid Hex literal", ERROR, lexer->len, start, lexer->indent, lexer->line);
+                        int c = lexer->currentChar;
+                        int v = isdigit(c) ? c - '0' : isxdigit(c) ? (c | 32) - 'a' + 10 : c == '_' ? -2 : -1;
+                        if (v == -2)
+                            continue;
+                        if (v < 0 || v >= radix)
+                            break;
+                        digits++;
                     }
-                    while (isxdigit(lexer->currentChar))
-                    {
-                        lexerAdvance(lexer);
-                        if (lexer->currentChar == '.')
-                        {
-                            return newToken("Invalid Hex literal", ERROR, lexer->len, start, lexer->indent, lexer->line);
-                        }
-                    }
-                }
-                else if (lexer->currentChar == 'o' || lexer->currentChar == 'O')
-                {
-                    lexerAdvance(lexer);
-                    if (!(isxdigit(lexer->currentChar)))
-                    {
-                        return newToken("Invalid Octal literal", ERROR, lexer->len, start, lexer->indent, lexer->line);
-                    }
-                    while (isxdigit(lexer->currentChar))
-                    {
-                        lexerAdvance(lexer);
-                        if (lexer->currentChar == '.')
-                        {
-                            return newToken("Invalid Octal literal", ERROR, lexer->len, start, lexer->indent, lexer->line);
-                        }
-                    }
+                    if (digits == 0 || isalnum(lexer->currentChar) || lexer->currentChar == '.')
+                        return newToken(radix == 16 ? "Invalid hex literal" : radix == 8 ? "Invalid octal literal" : "Invalid binary literal",
+                                        ERROR, lexer->len, start, lexer->indent, lexer->line);
                 }
                 else
                     goto ints;
@@ -163,7 +263,7 @@ Token getToken(Lexer *lexer)
             else
             {
             ints:
-                while (isdigit(lexer->currentChar))
+                while (isdigit(lexer->currentChar) || (lexer->currentChar == '_' && isdigit(lexer->src[lexer->srcLen])))
                 {
                     lexerAdvance(lexer);
                     if (lexer->currentChar == 'e' || lexer->currentChar == 'E')
@@ -182,7 +282,7 @@ Token getToken(Lexer *lexer)
                         {
                             return newToken("Invalid Number", ERROR, lexer->len, start, lexer->indent, lexer->line);
                         }
-                    } while (isdigit(lexer->currentChar));
+                    } while (isdigit(lexer->currentChar) || (lexer->currentChar == '_' && isdigit(lexer->src[lexer->srcLen])));
                 }
             exponent:
                 if (lexer->currentChar == 'e' || lexer->currentChar == 'E')
@@ -207,6 +307,117 @@ Token getToken(Lexer *lexer)
                 return newToken("Invalid identifier", ERROR, lexer->len, start, lexer->indent, lexer->line);
             return newToken(lexer->token, num_type ? DOUBLE : INT, lexer->len - 1, start, lexer->indent, lexer->line);
         }
+        else if ((lexer->currentChar == 'f' || lexer->currentChar == 'F')
+                 && (lexer->src[lexer->srcLen] == '"'
+                     || lexer->src[lexer->srcLen] == '\''
+                     || lexer->src[lexer->srcLen] == '`'))
+        {
+            // f-string literal. Skip the `f`/`F` prefix and emit an
+            // FSTRING token whose contents (excluding the quotes)
+            // are processed by the compiler's `fstring_` prefix
+            // rule. We re-use the same string-scanning logic as
+            // regular strings below for matching the closing quote
+            // and respecting escape semantics.
+            lexerAdvance(lexer);              // past `f`
+            int s = lexer->currentChar;        // quote char
+            lexerAdvance(lexer);              // past opening quote
+            // `token` must point at the FIRST content byte (the
+            // char after the opening quote). Setting it before the
+            // advance includes the quote and shifts the content.
+            lexer->token = lexer->src + lexer->srcLen - 1;
+            // Track content length explicitly: lexer->len includes
+            // the `f` + opening quote prefix, so we can't use it
+            // directly when the regular STRING branch subtracts 2.
+            int content_len = 0;
+            int brace_depth = 0;
+            // Same-quote nested f-strings like `f"{f"x={x}"}"` need
+            // the lexer to treat the closing quote as content while
+            // inside a `{...}` interpolation. We track brace depth
+            // and, when inside a brace, also skip past any string
+            // literal so its `}` (or matching quote) doesn't fool
+            // the depth counter. Brace-aware scanning is purely
+            // lexical here — the compiler's fstring_ does the
+            // semantic split.
+            while (lexer->currentChar != s || brace_depth > 0)
+            {
+                if (lexer->currentChar == '\0' || (lexer->currentChar == '\n' && s != '`'))
+                {
+                    return newToken("Unexpected EOL or EOF in f-string", ERROR, lexer->len, start, lexer->indent, lexer->line);
+                }
+                if (lexer->currentChar == '\n')
+                {
+                    lexer->line++;
+                    lexer->col = 0;
+                }
+                if (lexer->currentChar == 13)
+                {
+                    lexerAdvance(lexer);
+                    continue;
+                }
+                if (lexer->currentChar == '\t')
+                {
+                    lexer->col += 3;
+                }
+                // Escape pair outside an interpolation (`\"`, `\{`, ...):
+                // consume both bytes so they neither close the string nor
+                // open a `{...}`; fstring_ decodes them.
+                if (brace_depth == 0 && lexer->currentChar == '\\'
+                    && lexer->src[lexer->srcLen] != '\0')
+                {
+                    lexerAdvance(lexer);
+                    content_len++;
+                    lexerAdvance(lexer);
+                    content_len++;
+                    continue;
+                }
+                if (lexer->currentChar == '{')
+                {
+                    brace_depth++;
+                }
+                else if (lexer->currentChar == '}')
+                {
+                    if (brace_depth > 0) brace_depth--;
+                }
+                else if (brace_depth > 0
+                         && (lexer->currentChar == '"'
+                             || lexer->currentChar == '\''
+                             || lexer->currentChar == '`'))
+                {
+                    // Skip the embedded string literal so its
+                    // contents can't perturb brace depth — handles
+                    // both `f"{ "}" }"` (literal `}` inside a
+                    // string) and same-quote nested f-strings.
+                    int inner_q = lexer->currentChar;
+                    lexerAdvance(lexer);
+                    content_len++;
+                    while (lexer->currentChar != '\0'
+                           && lexer->currentChar != inner_q)
+                    {
+                        if (lexer->currentChar == '\\'
+                            && lexer->src[lexer->srcLen] != '\0')
+                        {
+                            lexerAdvance(lexer);
+                            content_len++;
+                        }
+                        if (lexer->currentChar == '\n' && inner_q != '`')
+                        {
+                            return newToken("Unexpected EOL in embedded string", ERROR, lexer->len, start, lexer->indent, lexer->line);
+                        }
+                        lexerAdvance(lexer);
+                        content_len++;
+                    }
+                    if (lexer->currentChar == inner_q)
+                    {
+                        lexerAdvance(lexer);
+                        content_len++;
+                    }
+                    continue;
+                }
+                lexerAdvance(lexer);
+                content_len++;
+            }
+            return lexerAdvanceToken(lexer, newToken(lexer->token, FSTRING, content_len, start, lexer->indent, lexer->line));
+        }
         else if (lexer->currentChar == 39 || lexer->currentChar == '"' || lexer->currentChar == '`')
         {
             int s = lexer->currentChar;
@@ -214,6 +425,20 @@ Token getToken(Lexer *lexer)
             lexerAdvance(lexer);
             while (lexer->currentChar != s)
             {
+                // Escape pair: keep both bytes in the token (the compiler
+                // decodes them in string_) but never let the escaped char
+                // close the string.
+                if (lexer->currentChar == '\\' && lexer->src[lexer->srcLen] != '\0')
+                {
+                    lexerAdvance(lexer);
+                    if (lexer->currentChar == '\n')
+                    {
+                        lexer->line++;
+                        lexer->col = 0;
+                    }
+                    lexerAdvance(lexer);
+                    continue;
+                }
                 if (lexer->currentChar == '\0' || (lexer->currentChar == '\n' && s != '`'))
                 {
                     return newToken("Unexpected EOL or EOF", ERROR, lexer->len, start, lexer->indent, lexer->line);
@@ -483,7 +708,15 @@ Token getToken(Lexer *lexer)
         }
         else if (lexer->currentChar == '?')
         {
-            return lexerAdvanceToken(lexer, newToken(lexer->token, QMARK, lexer->len, start, lexer->indent, lexer->line));
+            // `?.` (no space) is optional chaining; emit QDOT and
+            // consume both characters. Bare `?` stays as the ternary
+            // operator QMARK.
+            lexerAdvance(lexer);
+            if (lexer->currentChar == '.')
+            {
+                return lexerAdvanceToken(lexer, newToken(lexer->token, QDOT, lexer->len, start, lexer->indent, lexer->line));
+            }
+            return newToken(lexer->token, QMARK, lexer->len - 1, start, lexer->indent, lexer->line);
         }
         else if (lexer->currentChar == '.')
         {

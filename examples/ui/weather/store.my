@@ -1,0 +1,78 @@
+# The app's data and the actions that change it. Pages read it as
+# store.name (`use "store"`), which always shows the current value.
+
+from "ui" use state, toast, spawn
+from "api/weather" use find_city, forecast
+
+units = state("°C")      # the Settings page edits these
+wind = state("km/h")
+auto_refresh = state(True)
+
+place = Nil              # {name, country, region, lat, lon}
+now = Nil                # current conditions
+hours = []
+days = []
+loading = False
+problem = Nil
+cities = ["London", "Tokyo", "New York", "Sydney"]
+city_temps = {}          # name -> (temp, code) for the Cities page
+
+# Look up a city and load its forecast.
+fn load(name):
+    global place, loading, problem
+    if name.strip() == "":
+        return
+    loading = True
+    problem = Nil
+    found, err = find_city(name.strip())
+    if err != Nil:
+        problem = err
+        loading = False
+        return
+    place = found
+    fetch()
+
+# Reload the forecast for the current place (e.g. after changing units).
+fn fetch():
+    global now, hours, days, loading, problem
+    if place == Nil:
+        return
+    loading = True
+    data, err = forecast(place, units.value, wind.value)
+    loading = False
+    if err != Nil:
+        problem = err
+        return
+    problem = Nil
+    now = data["now"]
+    hours = data["hours"]
+    days = data["days"]
+
+fn refresh():
+    if auto_refresh.value:
+        fetch()
+        refresh_cities()
+
+fn save_current():
+    if place != Nil and place["name"] not in cities:
+        cities.append(place["name"])
+        toast(place["name"] + " saved", "success")
+        spawn((peek, place["name"]))
+
+fn forget(name):
+    cities.remove(name)
+    city_temps.delete(name) if name in city_temps else Nil
+
+# The current temperature of a saved city (runs in the background).
+fn peek(name):
+    found, err = find_city(name)
+    if err != Nil:
+        return
+    data, err = forecast(found, units.value, wind.value)
+    if err == Nil:
+        city_temps[name] = (data["now"]["temp"], data["now"]["code"], data["now"]["is_day"])
+
+# One background task per city, so they load in parallel.
+fn refresh_cities():
+    for c in cities:
+        spawn((peek, c))

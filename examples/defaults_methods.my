@@ -1,0 +1,138 @@
+# Default parameter values (evaluated when the fn statement runs, like
+# Python) and decorators on class methods, including wrappers.
+fn greet(name, greeting="hello", punct="!"):
+    return greeting + ", " + name + punct
+
+print(greet("ana"), greet("bo", "hi"), greet("cy", "hey", "?"))
+
+base = 10
+fn add(x, y=base * 2):
+    return x + y
+
+base = 99
+print(add(1), add(1, 1))
+
+fn make(n):
+    fn inner(x, step=n):
+        return x + step
+    return inner
+
+a = make(1)
+b = make(100)
+print(a(5), b(5), a(5, 0))
+
+class Counter:
+    fn __init__(self, start=0, step=1):
+        self.value = start
+        self.step = step
+    fn tick(self, times=1):
+        self.value = self.value + self.step * times
+        return self.value
+
+c = Counter()
+d = Counter(100, 5)
+print(c.tick(), c.tick(3), d.tick(), Counter(7).tick())
+
+fn deco(tag, f):
+    return f
+
+@deco("x")
+fn decorated(a, b=2):
+    return a * b
+
+print(decorated(4), decorated(4, 10))
+
+fn gen(limit=3):
+    i = 0
+    while i < limit:
+        yield(i)
+        i = i + 1
+
+fb = fiber(gen)
+print(fb.run(), fb.resume(), fb.resume())
+
+fn listy(xs=[]):
+    xs.append(1)
+    return len(xs)
+
+print(listy(), listy(), listy([5]))
+
+try:
+    greet()
+catch e:
+    print(e)
+try:
+    greet("a", "b", "c", "d")
+catch e:
+    print(e)
+try:
+    add()
+catch e:
+    print(e)
+
+registry = []
+
+fn register(label, f):
+    registry.append(label)
+    return f
+
+fn shout(f):
+    return (self, x) => f(self, x) + "!"
+
+fn twice(f):
+    fn wrapper(self, n):
+        return f(self, f(self, n))
+    return wrapper
+
+class Base:
+    fn __init__(self, name):
+        self.name = name
+    fn hello(self, x):
+        return "base hello " + x
+
+class Greeter(Base):
+    @register("init")
+    fn __init__(self, name, suffix="?"):
+        super().__init__(name)
+        self.suffix = suffix
+
+    @register("greet")
+    @shout
+    fn greet(self, x):
+        return self.name + " greets " + x + self.suffix
+
+    @twice
+    fn inc(self, n):
+        return n + 1
+
+    @shout
+    fn hello(self, x):
+        return super().hello(x)
+
+g = Greeter("ana")
+h = Greeter("bo", ".")
+print(g.greet("you"), h.greet("me"), g.inc(5), g.hello("hi"))
+print(registry)
+total = 0
+i = 0
+while i < 2000:
+    total = total + g.inc(i)
+    i = i + 1
+print("stack ok", total)
+f = g.greet
+print(f("bound later"))
+
+class V:
+    fn __init__(self, x):
+        self.x = x
+    fn +(self, o):
+        return V(self.x + o.x)
+    fn <(self, o):
+        return self.x < o.x
+
+acc = V(0)
+i = 0
+while i < 50000:
+    acc = acc + V(1)
+    i = i + 1
+print(acc.x, V(1) < V(2), [V(3) + V(4)][0].x)

@@ -2,6 +2,7 @@
 #define __ITER_H__
 
 #include "object.h"
+#include "../value.h"
 
 #define AS_ITER(object) ((MyMoIter *)object)
 #define IS_ITER(object) object->type == OBJ_ITER
@@ -11,11 +12,14 @@ typedef struct MyMoIter
 {
     MyMoObject object;
     MyMoObject *iterator;
-    int index;
+    long index;
+    // Iterating a fiber: true while the fiber runs to its next yield
+    // (the loop's OP_ITER then receives the value). See OP_ITER.
+    bool waiting;
 } MyMoIter;
 
 MyMoIter *newIter(MVM *vm, MyMoObject *object);
-MyMoObject *nextIter(MVM *vm, MyMoIter *object);
+Value nextIter(MVM *vm, MyMoIter *object);
 
 void printIter(MyMoIter *object);
 #endif

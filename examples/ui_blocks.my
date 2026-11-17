@@ -1,0 +1,42 @@
+# ui's block syntax without a server: pages built from indented blocks,
+# handlers as blocks, loop variables captured per item.
+from "ui" use *
+
+count = 0
+items = ["apples", "pears", "plums"]
+name = state("Ada")
+agree = state(False)
+log = []
+
+page "/":
+    card "Shop":
+        text "Hello {name}, count is {count}"
+        row:
+            button "-": count -= 1
+            button "+" primary: count += 1
+        input name, label="Name": log.append("submitted " + name.value)
+        checkbox "I agree", agree
+        for it in items:
+            row:
+                text it
+                spacer()
+                button "remove" small: items.remove(it)
+        bullets ["one", "two"]
+        text "nested calls still work:", bold=True
+        row(badge("new", color="green"), badge("sale"))
+
+print(render_text("/", width=50))
+
+# Handler ids follow render order: 0 "-", 1 "+", 2 input submit,
+# the checkbox has none, then 3-5 are the "remove" buttons.
+html = render("/")
+print("handlers:", len(__ui["handlers"]))
+__handle("/", "1", Nil)
+__handle("/", "1", Nil)
+__handle("/", "0", Nil)
+print("count:", count)
+__handle("/", "4", Nil)          # the second "remove": pears
+print("items:", items)
+__handle("/", "2", {name.id: "Grace", agree.id: True})
+print(log, name.value, agree.value)
+print(render_text("/", width=50).split("\n")[1])

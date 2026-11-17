@@ -1,0 +1,58 @@
+# *rest / **kw parameters and f(*xs, **d) argument unpacking.
+fn total(*nums):
+    s = 0
+    for n in nums:
+        s += n
+    return s
+print(total(1, 2, 3), total())
+fn tag(name, sep="-", *parts, **attrs):
+    return f"{name}:{sep.join(parts)} {attrs}"
+print(tag("a"), tag("b", "-", "x", "y"), tag("c", "+", "x"), tag("d", sep="/"), tag("e", "-", "p", id=1, cls="k"))
+fn kw_only(**opts):
+    return opts
+print(kw_only(), kw_only(a=1, b=2))
+class Logger:
+    fn log(self, level, *msgs, **ctx):
+        return f"[{level}] {" ".join(msgs)} {ctx}"
+l = Logger()
+print(l.log("info", "hello", "world", user="bo"), l.log("warn"))
+fn many(a, b, c, d, e, f, g, h, i, *rest):
+    return a + i + len(rest)
+print(many(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11))
+for bad in [() => tag(), () => kw_only(1), () => total(x=1)]:
+    try:
+        bad()
+    catch TypeError as e:
+        print(e)
+fn outer(*args):
+    fn inner():
+        return args
+    return inner()
+print(outer(1, 2))
+fn show(a, b=0, *rest, **kw):
+    return f"a={a} b={b} rest={rest} kw={kw}"
+args = [1, 2, 3]
+opts = {"x": 10}
+print(show(*args), show(*args, **opts), show(0, *[5], y=2, **opts), show(**{"a": 7, "b": 8}))
+print(max(*[3, 9, 2]), print(*["a", "b"], sep="|"), dict(**{"k": 1}, z=2))
+fn logged(fn_):
+    fn wrapper(*args, **kwargs):
+        print("calling", fn_, "with", args, kwargs)
+        return fn_(*args, **kwargs)
+    return wrapper
+@logged
+fn add(a, b, scale=1):
+    return (a + b) * scale
+print(add(1, 2), add(1, 2, scale=10))
+class P:
+    fn __init__(self, x, y):
+        self.x = x
+        self.y = y
+p = P(*[1, 2])
+q = P(**{"x": 3, "y": 4})
+print(p.x, p.y, q.x, q.y)
+for bad in [() => show(**{"a": 1}, a=2), () => show(**[1]), () => show(*5)]:
+    try:
+        bad()
+    catch TypeError as e:
+        print(e)

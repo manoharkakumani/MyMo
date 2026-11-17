@@ -1,0 +1,23 @@
+[0, 1, 4, 9, 16]
+[5, 7, 9]
+[(0, "a"), (0, "b"), (2, "a"), (2, "b")]
+["a=1", "b=2"]
+{0: 0, 1: 1, 2: 4, 3: 9}
+{"b": 2}
+{1: "x", 2: "y"}
+[[], [0], [0, 1], [0, 1, 2]]
+{0: 0, 1: 1, 2: 4}
+[0, 1, 2, 3]
+{"the": 3, "cat": 1, "dog": 1}
+{"a": 12} [11, 8, 2]
+{"k": [101, 2]}
+[8, 2] {"k": [101]}
+{}
+gone: AttributeError: undefined property 'a'
+2
+AssertionError
+AssertionError: 1 is not > 2
+KeyError: "nope"
+IndexError: list assignment index out of range
+AssertionError: plain
+600 0 254 255 599 179700

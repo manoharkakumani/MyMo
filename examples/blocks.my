@@ -1,0 +1,55 @@
+# Command calls (no parentheses), flags, and trailing blocks: a block is
+# passed as body=, assigns to the enclosing scope and pins loop variables.
+
+fn show(*args, body=Nil, **kw):
+    print("show", args, kw, "block" if body else "")
+    if body:
+        body()
+
+name = "Ada"
+count = 0
+show "hi {name}", 2, sep="-"
+show "flags" primary big
+show "a", size=3 muted
+show:
+    print("in block")
+show "inline": print("inline block")
+show(1, x=2):
+    print("paren form")
+
+fn repeat(n, body):
+    for i in range(n):
+        body()
+repeat 3: count += 1
+print("count", count)
+
+handlers = []
+fn keep(label, body):
+    handlers.append(body)
+for i in range(3):
+    keep "h": print("i was", i)
+for h in handlers:
+    h()
+
+fn outer():
+    total = 0
+    items = ["x", "y"]
+    for it in items:
+        keep "k": print("item", it)
+    repeat 2: total += 10
+    return total
+print("outer total", outer())
+handlers[-1]()
+
+fn greet():
+    print("bare call works")
+greet
+xs = [1, 2]
+print xs
+print "no parens", "ok"
+nested = []
+show "outer":
+    for j in range(2):
+        show "inner {j}":
+            nested.append(j)
+print(nested)

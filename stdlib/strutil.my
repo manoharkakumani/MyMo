@@ -1,0 +1,60 @@
+# strutil: handy string helpers that the language doesn't ship in
+# its built-in C string class. Pure MyMo; no dependencies.
+
+# Length of a string. Mirror of MyMo's `s.__len__()` but as a free
+# function so users can write `slen(s)` instead.
+slen = s => s.__len__()
+
+# Return True iff `s` starts with `prefix`.
+fn starts_with(s, prefix):
+    n = prefix.__len__()
+    if s.__len__() < n:
+        return False
+    i = 0
+    while i < n:
+        if s[i] != prefix[i]:
+            return False
+        i = i + 1
+    return True
+
+# Return True iff `s` ends with `suffix`.
+fn ends_with(s, suffix):
+    n = suffix.__len__()
+    m = s.__len__()
+    if m < n:
+        return False
+    i = 0
+    while i < n:
+        if s[m - n + i] != suffix[i]:
+            return False
+        i = i + 1
+    return True
+
+# Split a string on a single-character separator. Returns a list of
+# substrings. Empty separator returns the input unsplit as a 1-list.
+fn split(s, sep):
+    out = []
+    cur = ""
+    i = 0
+    n = s.__len__()
+    while i < n:
+        if s[i] == sep:
+            out.append(cur)
+            cur = ""
+        else:
+            cur = cur + s[i]
+        i = i + 1
+    out.append(cur)
+    return out
+
+# Join a list of strings with a single-character separator.
+fn join(parts, sep):
+    out = ""
+    n = parts.__len__()
+    i = 0
+    while i < n:
+        if i > 0:
+            out = out + sep
+        out = out + parts[i]
+        i = i + 1
+    return out

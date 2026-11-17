@@ -5,49 +5,70 @@
 MyMoIter *newIter(MVM *vm, MyMoObject *object)
 {
   MyMoIter *iter = AllocateObject(vm, MyMoIter, OBJ_ITER);
-  iter->iterator = object;
   iter->index = 0;
+  iter->waiting = false;
+  if (object->type == OBJ_DICT || object->type == OBJ_SET)
+  {
+    // Iterate a snapshot of the keys (in insertion order), so the loop
+    // body may add or delete keys safely.
+    MyMoDict *dict = object->type == OBJ_SET ? &AS_SET(object)->items : AS_DICT(object);
+    MyMoTuple *keys = newTuple(vm);
+    iter->iterator = AS_OBJECT(keys);
+    Entry *e;
+    DICT_FOREACH(dict, e)
+      writeValueArray(vm, &keys->values, objectToValue(e->key));
+    return iter;
+  }
+  iter->iterator = object;
   return iter;
 }
 
-MyMoObject *nextIter(MVM *vm, MyMoIter *object)
+// Next element as a Value (inline for ints/nil/bool/...), or V_EMPTY_VAL
+// when the iteration is done.
+Value nextIter(MVM *vm, MyMoIter *object)
 {
   MyMoObject *iterator = object->iterator;
   switch (iterator->type)
   {
   case OBJ_STRING:
   {
+    // index is a byte offset; each step yields one code point.
     MyMoString *string = AS_STRING(iterator);
     if (object->index >= string->length)
     {
-      return NEW_EMPTY;
+      return V_EMPTY_VAL;
     }
-    return NEW_STRING(vm, string->value + object->index++, 1);
+    int n = stringCharBytes(string, (int)object->index);
+    object->index += n;
+    return V_OBJ_VAL(NEW_STRING(vm, string->value + object->index - n, n));
   }
   case OBJ_LIST:
   {
     MyMoList *list = AS_LIST(iterator);
     if (object->index >= list->values.count)
     {
-      return NEW_EMPTY;
+      return V_EMPTY_VAL;
     }
-    return list->values.objects[object->index++];
+    return list->values.values[object->index++];
   }
   case OBJ_TUPLE:
   {
     MyMoTuple *tuple = AS_TUPLE(iterator);
     if (object->index >= tuple->values.count)
     {
-      return NEW_EMPTY;
+      return V_EMPTY_VAL;
     }
-    return tuple->values.objects[object->index++];
+    return tuple->values.values[object->index++];
   }
-  case OBJ_DICT:
+  case OBJ_RANGE:
   {
-    return NEW_EMPTY;
+    MyMoRange *range = AS_RANGE(iterator);
+    if (object->index >= rangeLength(range))
+      return V_EMPTY_VAL;
+    return valueFromLong(vm, rangeAt(range, object->index++));
   }
   default:
-    return NEW_EMPTY;
+    return V_EMPTY_VAL;
   }
 }
 

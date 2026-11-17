@@ -19,7 +19,8 @@ void initChunk(MVM *vm, Chunk *chunk)
     chunk->code = NULL;
     chunk->lines = NULL;
     chunk->cols = NULL;
-    initMyMoObjectArray(vm, &chunk->constants);
+    chunk->source = NULL;
+    initValueArray(vm, &chunk->constants);
 }
 
 void writeChunk(MVM *vm, Chunk *chunk, u8 byte, u32 line, u32 col)
@@ -43,13 +44,25 @@ void freeChunk(MVM *vm, Chunk *chunk)
     FreeArray(vm, u8, chunk->code, chunk->capacity);
     FreeArray(vm, u32, chunk->lines, chunk->capacity);
     FreeArray(vm, u32, chunk->cols, chunk->capacity);
-    freeMyMoObjectArray(vm, &chunk->constants);
+    freeValueArray(vm, &chunk->constants);
+    free(chunk->source);
     free(chunk);
 }
 
 int addConstant(MVM *vm, Chunk *chunk, MyMoObject *object)
 {
-    writeMyMoObjectArray(vm, &chunk->constants, object);
+    return addConstantV(vm, chunk, V_OBJ_VAL(object));
+}
+
+// Reuse an identical constant when one exists. Strings are interned, so a
+// name referenced N times occupies one slot instead of N — this matters
+// because constant operands are a single byte (256 slots per chunk).
+int addConstantV(MVM *vm, Chunk *chunk, Value v)
+{
+    for (int i = 0; i < chunk->constants.count; i++)
+        if (chunk->constants.values[i] == v)
+            return i;
+    writeValueArray(vm, &chunk->constants, v);
     return chunk->constants.count - 1;
 }
 

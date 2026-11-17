@@ -51,6 +51,10 @@ typedef struct MyMoModule
     MyMoString *name;
     MyMoString *path;
     MyMoDict *variables;
+    // The frame that ran the module's body, once it finished: its locals
+    // are the module's live variables (its functions assign them through
+    // `global`), so `mod.name` reads and writes go there.
+    struct CallFrame *frame;
     struct MyMoModule *parent;
 } MyMoModule;
 

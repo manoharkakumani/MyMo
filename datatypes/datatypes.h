@@ -16,6 +16,8 @@
 #include "code.h"
 #include "fiber.h"
 #include "iter.h"
+#include "range.h"
+#include "set.h"
 
 void defineBuiltInClasses(MVM *vm);
 

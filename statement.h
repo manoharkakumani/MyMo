@@ -20,12 +20,22 @@ void block(Compiler *compiler, size_t indent);
 void ifStatement(Compiler *compiler);
 void elseStatement(Compiler *compiler);
 void loopStatement(Compiler *compiler);
+void startLoop(Compiler *compiler, Loop *loop);
+void tryStatement(Compiler *compiler);
+void raiseStatement(Compiler *compiler);
 
 void breakStatement(Compiler *compiler);
 void continueStatement(Compiler *compiler);
 void deleteStatement(Compiler *compiler);
+void assertStatement(Compiler *compiler);
+
+// `NAME (, NAME)*` target lists (for loops, comprehensions, a, b = ...):
+// parse up to `max` names; after OP_UNPACK n, store them (pops all n).
+int parseNameList(Compiler *compiler, Token *names, int max);
+void storeUnpacked(Compiler *compiler, Token *names, int n);
 
 void functionStatement(Compiler *compiler);
+void decoratedStatement(Compiler *compiler);
 void arrowFunctionStatement(Compiler *compiler);
 
 void ClassStatement(Compiler *compiler);

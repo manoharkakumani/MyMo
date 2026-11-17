@@ -1,0 +1,45 @@
+# Builtins that take an iterable (list, sorted, sum, join, zip, f(*xs) ...)
+# also consume fibers, running them to completion.
+
+fn count():
+    for i in range(5):
+        yield(i * i)
+
+fn letters():
+    yield("c")
+    yield("a")
+    yield("b")
+
+print(list(fiber(count)))
+print(sorted(fiber(letters)))
+print(tuple(fiber(count)))
+print(set(fiber(letters)) == {"a", "b", "c"})
+print(sum(fiber(count)))
+print(max(fiber(count)), min(fiber(count)))
+print(", ".join(fiber(letters)))
+print(list(enumerate(fiber(letters))))
+print(list(zip(fiber(count), fiber(letters))))
+
+fn show(*xs):
+    return len(xs)
+print(show(*fiber(count)))
+
+f = fiber(count)
+f.run()
+print("rest:", list(f))
+print("dead:", list(f))
+
+fn bad():
+    yield(1)
+    raise ValueError("inside fiber")
+
+try:
+    list(fiber(bad))
+catch ValueError as e:
+    print("caught:", e)
+
+fn outer():
+    for x in sorted(fiber(letters)):
+        yield(x.upper())
+print(list(fiber(outer)))
+print("ok")

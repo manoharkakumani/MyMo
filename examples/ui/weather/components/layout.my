@@ -1,0 +1,38 @@
+# The frame around every page: navigation, the search bar and the
+# loading / error states.
+
+from "ui" use *
+use "store"
+
+query = state("")
+
+fn search():
+    store.load(query.value)
+    query.clear()
+    go "/"
+
+fn layout(title, body=Nil):
+    shell:
+        sidebar "Weather":
+            nav "Today", "/", icon="sun"
+            nav "7 days", "/week", icon="calendar"
+            nav "Cities", "/cities", icon="map-pin"
+            nav "Settings", "/settings", icon="settings"
+        row:
+            input query, placeholder="Search a city", icon="search", grow=True: search()
+            button "Search" primary: search()
+        row:
+            h1 title
+            spacer()
+            if store.loading:
+                spinner "Updating…"
+        if store.problem != Nil:
+            alert store.problem error
+        if store.now == Nil:
+            if not store.loading and store.problem == Nil:
+                empty "No city yet", "Search for a city above.", icon="search"
+            elif store.loading:
+                center:
+                    spinner "Loading the forecast…"
+        elif body:
+            body()

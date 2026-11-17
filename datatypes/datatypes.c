@@ -10,8 +10,10 @@ void defineBuiltInClasses(MVM *vm)
     defineStringClass(vm);
     defineListClass(vm);
     defineFiberClass(vm);
-    // defineTupleClass(vm);
-    // defineDictClass(vm);
+    defineTupleClass(vm);
+    defineDictClass(vm);
+    defineRangeClass(vm);
+    defineSetClass(vm);
     // defineFunctionClass(vm);
     // defineClassClass(vm);
     // defineModuleClass(vm);

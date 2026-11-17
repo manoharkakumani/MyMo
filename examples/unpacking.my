@@ -1,0 +1,23 @@
+# Multiple assignment and unpacking in for loops.
+a, b = 1, 2
+print(a, b)
+a, b = b, a
+print(a, b)
+x, y, z = [10, 20, 30]
+print(x + y + z)
+p, q = "hi"
+print(p, q)
+for k, v in [(1, "one"), (2, "two")]:
+    print(k, v)
+fn f(t):
+    m, n = t
+    return m * n
+print(f((6, 7)))
+fn g(a, b):
+    a, b = b, a
+    return a - b
+print(g(1, 10))
+try:
+    a, b = [1, 2, 3]
+catch e:
+    print(e)

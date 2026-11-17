@@ -1,0 +1,9 @@
+1 2
+2 1
+60
+h i
+1 one
+2 two
+42
+9
+ValueError: expected 2 values to unpack, got 3

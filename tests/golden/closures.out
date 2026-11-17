@@ -1,0 +1,9 @@
+adders 3 11 7
+counters 3 1
+nested 113
+recursive 120
+loop 1 2 3
+method hi bob!
+factory /x:home
+after catch 3
+fiber 101 102

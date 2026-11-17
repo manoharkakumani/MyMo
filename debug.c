@@ -1,5 +1,6 @@
 #include "common.h"
 #include "debug.h"
+#include "value.h"
 
 static int constantInstruction(const char *name, Chunk *chunk, int offset)
 {
@@ -55,6 +56,48 @@ int disassembleInstruction(Chunk *chunk, int offset)
         return byteInstruction("OP_SUBSCR", chunk, offset);
     case OP_SETSUBSCR:
         return byteInstruction("OP_SETSUBSCR", chunk, offset);
+    case OP_CALLKW:
+    {
+        u8 argc = chunk->code[offset + 1], kwc = chunk->code[offset + 2];
+        printf("%-16s %4d (%d keyword)\n", "OP_CALLKW", argc, kwc);
+        return offset + 3 + 2 * kwc;
+    }
+    case OP_SUBSCRK:
+        return simpleInstruction("OP_SUBSCRK", offset);
+    case OP_DELSUBSCR:
+        return simpleInstruction("OP_DELSUBSCR", offset);
+    case OP_DUPUNDER:
+        return simpleInstruction("OP_DUPUNDER", offset);
+    case OP_NIP:
+        return simpleInstruction("OP_NIP", offset);
+    case OP_GETG:
+        return constantInstruction("OP_GETG", chunk, offset);
+    case OP_SETG:
+        return constantInstruction("OP_SETG", chunk, offset);
+    case OP_SETNL:
+        return constantInstruction("OP_SETNL", chunk, offset);
+    case OP_SETB:
+        return constantInstruction("OP_SETB", chunk, offset);
+    case OP_CALLIF:
+        return simpleInstruction("OP_CALLIF", offset);
+    case OP_BLOCKVAR:
+        return constantInstruction("OP_BLOCKVAR", chunk, offset);
+    case OP_LEXTEND:
+        return simpleInstruction("OP_LEXTEND", offset);
+    case OP_DADD:
+        return simpleInstruction("OP_DADD", offset);
+    case OP_DMERGE:
+        return simpleInstruction("OP_DMERGE", offset);
+    case OP_CALLEX:
+        return simpleInstruction("OP_CALLEX", offset);
+    case OP_EXCMATCH:
+        return simpleInstruction("OP_EXCMATCH", offset);
+    case OP_RERAISE:
+        return simpleInstruction("OP_RERAISE", offset);
+    case OP_FORMAT:
+        return byteInstruction("OP_FORMAT", chunk, offset);
+    case OP_SET:
+        return byteInstruction("OP_SET", chunk, offset);
     case OP_UNPACK:
         return byteInstruction("OP_UNPACK", chunk, offset);
     case OP_SLICE:
@@ -64,9 +107,13 @@ int disassembleInstruction(Chunk *chunk, int offset)
     case OP_POP:
         return simpleInstruction("OP_POP", offset);
     case OP_GETV:
-        return constantInstruction("OP_GETV", chunk, offset);
     case OP_SETV:
-        return constantInstruction("OP_SETV", chunk, offset);
+    {
+        // OP + name_idx + 8 IC scratch bytes = 10 bytes total.
+        u8 constant = chunk->code[offset + 1];
+        printf("%-16s %4d\n", instruction == OP_GETV ? "OP_GETV" : "OP_SETV", constant);
+        return offset + 2 + 8;
+    }
     case OP_DELV:
         return constantInstruction("OP_DELV", chunk, offset);
     case OP_GETP:
@@ -92,37 +139,37 @@ int disassembleInstruction(Chunk *chunk, int offset)
     case OP_GETI:
         return simpleInstruction("OP_GETI", offset);
     case OP_EQUAL:
-        return simpleInstruction("OP_EQUAL", offset);
+        return byteInstruction("OP_EQUAL", chunk, offset); // operand: in-place flag
     case OP_GREATER:
-        return simpleInstruction("OP_GREATER", offset);
+        return byteInstruction("OP_GREATER", chunk, offset); // operand: in-place flag
     case OP_LESS:
-        return simpleInstruction("OP_LESS", offset);
+        return byteInstruction("OP_LESS", chunk, offset); // operand: in-place flag
     case OP_NOT:
         return simpleInstruction("OP_NOT", offset);
     case OP_ADD:
-        return simpleInstruction("OP_ADD", offset);
+        return byteInstruction("OP_ADD", chunk, offset); // operand: in-place flag
     case OP_SUB:
-        return simpleInstruction("OP_SUB", offset);
+        return byteInstruction("OP_SUB", chunk, offset); // operand: in-place flag
     case OP_MUL:
-        return simpleInstruction("OP_MUL", offset);
+        return byteInstruction("OP_MUL", chunk, offset); // operand: in-place flag
     case OP_DIV:
-        return simpleInstruction("OP_DIV", offset);
+        return byteInstruction("OP_DIV", chunk, offset); // operand: in-place flag
     case OP_IDIV:
-        return simpleInstruction("OP_IDIV", offset);
+        return byteInstruction("OP_IDIV", chunk, offset); // operand: in-place flag
     case OP_POW:
-        return simpleInstruction("OP_POW", offset);
+        return byteInstruction("OP_POW", chunk, offset); // operand: in-place flag
     case OP_MOD:
-        return simpleInstruction("OP_MOD", offset);
+        return byteInstruction("OP_MOD", chunk, offset); // operand: in-place flag
     case OP_LSFT:
-        return simpleInstruction("OP_LSFT", offset);
+        return byteInstruction("OP_LSFT", chunk, offset); // operand: in-place flag
     case OP_RSFT:
-        return simpleInstruction("OP_RSFT", offset);
+        return byteInstruction("OP_RSFT", chunk, offset); // operand: in-place flag
     case OP_BAND:
-        return simpleInstruction("OP_BAND", offset);
+        return byteInstruction("OP_BAND", chunk, offset); // operand: in-place flag
     case OP_BOR:
-        return simpleInstruction("OP_BOR", offset);
+        return byteInstruction("OP_BOR", chunk, offset); // operand: in-place flag
     case OP_BXOR:
-        return simpleInstruction("OP_BXOR", offset);
+        return byteInstruction("OP_BXOR", chunk, offset); // operand: in-place flag
     case OP_NEG:
         return simpleInstruction("OP_NEG", offset);
     case OP_POS:
@@ -132,7 +179,7 @@ int disassembleInstruction(Chunk *chunk, int offset)
         offset++;
         u8 constant = chunk->code[offset++];
         printf("%-16s %4d ", "OP_FN", constant);
-        printObject(chunk->constants.objects[constant]);
+        printValue(chunk->constants.values[constant]);
         printf("\n");
         return offset;
     }
@@ -160,6 +207,54 @@ int disassembleInstruction(Chunk *chunk, int offset)
         return simpleInstruction("OP_SETM", offset);
     case OP_COPY:
         return simpleInstruction("OP_COPY", offset);
+    case OP_INCR_VAR:
+    {
+        u8 nameIdx = chunk->code[offset + 1];
+        int32_t delta = (int32_t)((u32)chunk->code[offset + 10]
+                       | ((u32)chunk->code[offset + 11] << 8)
+                       | ((u32)chunk->code[offset + 12] << 16)
+                       | ((u32)chunk->code[offset + 13] << 24));
+        printf("%-16s %4d %+d\n", "OP_INCR_VAR", nameIdx, delta);
+        return offset + 14;  // op + name + 8 IC + 4 delta
+    }
+    case OP_WILDCARD:
+        return simpleInstruction("OP_WILDCARD", offset);
+    case OP_GETARG:
+        return byteInstruction("OP_GETARG", chunk, offset);
+    case OP_SETARG:
+        return byteInstruction("OP_SETARG", chunk, offset);
+    case OP_INVOKE_GLOBAL:
+    {
+        u8 nameIdx = chunk->code[offset + 1];
+        u8 argc = chunk->code[offset + 10];
+        printf("%-16s %4d argc=%d\n", "OP_INVOKE_GLOBAL", nameIdx, argc);
+        return offset + 11;  // op + name + 8 IC + argc
+    }
+    case OP_OGETP:
+        return constantInstruction("OP_OGETP", chunk, offset);
+    case OP_IS:
+        return byteInstruction("OP_IS", chunk, offset);
+    case OP_TOSTRING:
+        return simpleInstruction("OP_TOSTRING", offset);
+    case OP_LAPPEND:
+        return simpleInstruction("OP_LAPPEND", offset);
+    case OP_TRY:
+        return jumpInstruction("OP_TRY", 1, chunk, offset);
+    case OP_ENDTRY:
+        return simpleInstruction("OP_ENDTRY", offset);
+    case OP_RAISE:
+        return simpleInstruction("OP_RAISE", offset);
+    case OP_WIDE:
+        // High bytes for the next instruction's constant operands; its
+        // printed operand shows only the low byte.
+        printf("%-16s hi=%d,%d\n", "OP_WIDE", chunk->code[offset + 1], chunk->code[offset + 2]);
+        return offset + 3;
+    case OP_DEFAULTS:
+        return byteInstruction("OP_DEFAULTS", chunk, offset);
+    case OP_METV:
+        return constantInstruction("OP_METV", chunk, offset);
+    case OP_IN:
+        return simpleInstruction("OP_IN", offset);
     default:
         printf("Unknown opcode %d\n", instruction);
         return offset + 1;
@@ -168,14 +263,15 @@ int disassembleInstruction(Chunk *chunk, int offset)
 
 void debugChunk(MyMoFunction *function)
 {
-    MyMoObjectArray constants = function->chunk->constants;
+    ValueArray constants = function->chunk->constants;
     for (int i = 0; i < constants.count; i++)
     {
-        if (!(IS_FUNCTION(constants.objects[i])))
+        Value v = constants.values[i];
+        if (!V_IS_OBJ(v) || !IS_FUNCTION(V_AS_OBJ(v)))
         {
             continue;
         }
-        debugChunk(AS_FUNCTION(constants.objects[i]));
+        debugChunk(AS_FUNCTION(V_AS_OBJ(v)));
     }
     printf("======== %s =========\n", function->name->value);
     printChunk(function->chunk);

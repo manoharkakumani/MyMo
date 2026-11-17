@@ -1,0 +1,395 @@
+# mono: a tiny Hono.js-style web framework in pure MyMo, built on
+# the `server` and `json` built-in modules.
+#
+# Drop this file next to your script and `from "mono" use ...`.
+# (MyMo's pathResolver looks for module files relative to the
+# running script, so colocation works without any install step.)
+#
+# Quick start (decorator style):
+#   from "mono" use get, post, start
+#
+#   @get("/")
+#   fn home(req):
+#       return "hello"                        # string -> text/plain 200
+#
+#   @get("/todos/:id")
+#   fn show(req):
+#       return {"id": req["params"]["id"]}    # dict/list -> JSON 200
+#
+#   @post("/todos")
+#   fn create(req):
+#       return (201, req["json"])             # (status, body) tuple
+#
+#   start("127.0.0.1", 8080)
+#
+# `@get("/x")` above `fn h` is compiler sugar for `h = get("/x", h)`,
+# so the plain call form `get("/x", handler)` works too.
+#
+# Handler return values (Hono-style):
+#   - string            -> 200 text/plain
+#   - dict / list / ... -> 200 JSON
+#   - (status, body)    -> that status; body encoded as above
+#   - Nil               -> nothing, if the handler already called
+#                          text()/json(); otherwise 204 No Content
+#
+# - Any `:name` segment binds the matching request segment into
+#   `req["params"][name]`.
+# - JSON request bodies are auto-decoded into `req["json"]`
+#   (Nil if the body doesn't look like JSON).
+# - Multi-statement handlers should be written with `fn name(req):`
+#   blocks and registered by name — multi-line arrow-functions
+#   don't parse inside a function-call argument in MyMo today.
+from "server" use listen, accept_nb, read_request, respond, respond_json, close
+from "runloop" use nonblock, ready
+from "time" use monotonic
+from "json" use encode, decode
+from "_http" use hosting as __hosting
+
+# Mutable state goes in a dict so handlers (closures) can mutate it
+# without shadowing the outer binding.
+__state = {"routes": [], "not_found": Nil}
+
+# --- internal helpers -------------------------------------------------
+__slen = s => s.__len__()
+
+# Map of valid JSON-body first-characters. Used as a cheap pre-filter
+# so we don't hand obviously-non-JSON bytes to json.decode (which
+# raises a runtime error on garbage and would tear down the server).
+__json_starts = {"{":1, "[":1, '"':1, "t":1, "f":1, "n":1, "-":1,
+                 "0":1, "1":1, "2":1, "3":1, "4":1,
+                 "5":1, "6":1, "7":1, "8":1, "9":1}
+
+__has_key = (d, k) =>
+    for kk in d:
+        if kk == k:
+            return True
+    return False
+
+__is_jsonish = body =>
+    if body == Nil:
+        return False
+    if __slen(body) < 1:
+        return False
+    return __has_key(__json_starts, body[0])
+
+# Split "/a/b/:c" → ["a", "b", ":c"]. Bare "/" → [].
+fn __split_path(path):
+    out = []
+    n = __slen(path)
+    if n == 0:
+        return out
+    cur = ""
+    i = 0
+    if path[0] == "/":
+        i = 1
+    while i < n:
+        c = path[i]
+        if c == "/":
+            if __slen(cur) > 0:
+                out.append(cur)
+                cur = ""
+        else:
+            cur = cur + c
+        i = i + 1
+    if __slen(cur) > 0:
+        out.append(cur)
+    return out
+
+# Match route segments against request segments. Returns a dict of
+# `:name` bindings on success, Nil on mismatch.
+fn __match(route_segs, req_segs):
+    if route_segs.__len__() != req_segs.__len__():
+        return Nil
+    bindings = {}
+    n = route_segs.__len__()
+    i = 0
+    while i < n:
+        rseg = route_segs[i]
+        if rseg.__len__() > 0 and rseg[0] == ":":
+            # Strip the leading ":" to get the param name.
+            name = ""
+            j = 1
+            m = rseg.__len__()
+            while j < m:
+                name = name + rseg[j]
+                j = j + 1
+            bindings[name] = req_segs[i]
+        else:
+            if rseg != req_segs[i]:
+                return Nil
+        i = i + 1
+    return bindings
+
+# --- public route registration ---------------------------------------
+# Returns `handler` so the decorator form (`@get(path)` rebinds the
+# fn name to the route helper's result) leaves the fn callable.
+fn route(method, path, handler):
+    segs = __split_path(path)
+    __state["routes"].append({"method": method, "segs": segs, "handler": handler})
+    return handler
+
+get    = (path, handler) => route("GET",    path, handler)
+post   = (path, handler) => route("POST",   path, handler)
+put    = (path, handler) => route("PUT",    path, handler)
+delete = (path, handler) => route("DELETE", path, handler)
+patch  = (path, handler) => route("PATCH",  path, handler)
+
+# Override the 404 handler. `handler` receives the request dict.
+# Also usable as a bare decorator: `@not_found`.
+fn not_found(handler):
+    __state["not_found"] = handler
+    return handler
+
+# --- response helpers (call from inside a handler) -------------------
+# Both mark the request as answered so the return-value auto-response
+# in __dispatch_handler doesn't send a second reply.
+# respond() returns True when the connection stays open (keep-alive); the
+# event loop then watches it for the client's next request.
+fn text(req, status, body):
+    req["__sent"] = True
+    req["__keep"] = respond(req["client_fd"], status, body)
+    return req["__keep"]
+
+fn json(req, status, value):
+    req["__sent"] = True
+    req["__keep"] = respond_json(req["client_fd"], status, encode(value))
+    return req["__keep"]
+
+# Turn a handler's return value into a response (see header).
+fn __auto_respond(req, result):
+    if result == Nil:
+        text(req, 204, "")
+        return Nil
+    status = 200
+    body = result
+    if type(result) == type(()):
+        status = result[0]
+        body = result[1]
+    if type(body) == type(""):
+        text(req, status, body)
+    else:
+        json(req, status, body)
+
+# --- main loop --------------------------------------------------------
+# Body decoding now uses try/catch instead of the __is_jsonish
+# heuristic — anything json.decode chokes on becomes Nil cleanly.
+fn __decode_body(body):
+    if body == Nil:
+        return Nil
+    if body.__len__() == 0:
+        return Nil
+    try:
+        return decode(body)
+    catch:
+        return Nil
+
+# Per-handler error trap. Any runtime error raised inside the
+# user-supplied handler turns into a 500 response. Without this
+# every untreated KeyError / NameError / explicit raise would
+# tear down the whole server.
+fn __dispatch_handler(handler, req):
+    try:
+        result = handler(req)
+        if req.get("__sent") != True:
+            __auto_respond(req, result)
+    catch e:
+        try:
+            body = encode({"error": "internal server error", "detail": e})
+            req["__sent"] = True
+            req["__keep"] = respond_json(req["client_fd"], 500, body)
+        catch:
+            print("mono: could not deliver 500:", e)
+
+fn __handle(req):
+    req_segs = __split_path(req["path"])
+    req["json"] = __decode_body(req["body"])
+    routes = __state["routes"]
+    n = routes.__len__()
+    i = 0
+    while i < n:
+        r = routes[i]
+        if r["method"] == req["method"]:
+            bindings = __match(r["segs"], req_segs)
+            if bindings != Nil:
+                req["params"] = bindings
+                __dispatch_handler(r["handler"], req)
+                return Nil
+        i = i + 1
+    nf = __state["not_found"]
+    if nf != Nil:
+        __dispatch_handler(nf, req)
+    else:
+        body = encode({"error": "not found", "path": req["path"]})
+        respond_json(req["client_fd"], 404, body)
+    return Nil
+
+# --- event loop ---------------------------------------------------------
+# start() serves many connections at once on a single thread:
+#   - the listen socket and slow clients are polled with runloop.ready,
+#     and requests are read incrementally (server.read_request), so a
+#     client that trickles its request in doesn't block anyone;
+#   - every request runs its handler in its own fiber, so a handler can
+#     call sleep(ms) or wait_readable(fd) and other requests keep being
+#     served while it waits.
+
+__loop = {
+    "sleepers": [],   # {"at": time, "task": task} for sleep(ms)
+    "waiting": {},    # fd -> task, for wait_readable(fd)
+    "pending": {},    # client fd -> last activity time (request not complete yet)
+    "reuse": [],      # kept-alive fds whose response just went out
+}
+
+# Close a connection that sends nothing for this long (keep-alive idle
+# time, and a guard against clients that never finish a request).
+__idle_timeout = 5
+
+# Pause the current handler for `ms` milliseconds without blocking the
+# server. Only meaningful inside a request handler.
+fn sleep(ms):
+    yield({"sleep": ms})
+
+# Suspend the current handler until `fd` is readable (for handlers that
+# talk to their own sockets), letting other requests run meanwhile.
+fn wait_readable(fd):
+    yield({"fd": fd})
+
+fn __task(req):
+    try:
+        __handle(req)
+    catch e:
+        print("mono: request failed:", e)
+    if req.get("__keep") == True:
+        __loop["reuse"].append(req["client_fd"])
+    elif req.get("__sent") != True:
+        close(req["client_fd"])   # never answered: don't leak the socket
+    return Nil
+
+# Run a request's fiber until it yields or finishes, then park it
+# according to what it asked for.
+fn __step(task, value):
+    fb = task["fiber"]
+    # While this loop steps a handler, `http` calls in it suspend the
+    # handler (yield {"fd": ...}) instead of blocking the server.
+    __hosting(True)
+    try:
+        if task["started"]:
+            signal = fb.resume(value)
+        else:
+            task["started"] = True
+            signal = fb.run(task["req"])
+    final:
+        __hosting(False)
+    if fb.alive() == False:
+        return Nil
+    if type(signal) == type({}):
+        if signal.has("sleep"):
+            __loop["sleepers"].append({"at": monotonic() + signal["sleep"] / 1000, "task": task})
+            return Nil
+        if signal.has("fd"):
+            __loop["waiting"][signal["fd"]] = task
+            return Nil
+    # Any other yield: just run it again on the next turn.
+    __loop["sleepers"].append({"at": 0, "task": task})
+    return Nil
+
+fn __spawn(req):
+    __step({"fiber": fiber(__task), "req": req, "started": False}, Nil)
+
+# Resume sleepers whose time has come.
+fn __wake_sleepers():
+    if __loop["sleepers"].__len__() == 0:
+        return Nil
+    now = monotonic()
+    due = []
+    later = []
+    for s in __loop["sleepers"]:
+        if s["at"] <= now:
+            due.append(s)
+        else:
+            later.append(s)
+    __loop["sleepers"] = later
+    for s in due:
+        __step(s["task"], Nil)
+    return Nil
+
+# ms until the next sleeper is due (-1 = none, wait for I/O only).
+fn __next_sleeper_ms():
+    if __loop["sleepers"].__len__() == 0:
+        return -1
+    next_at = __loop["sleepers"][0]["at"]
+    for s in __loop["sleepers"]:
+        if s["at"] < next_at:
+            next_at = s["at"]
+    wait = int((next_at - monotonic()) * 1000) + 1
+    return wait if wait > 0 else 0
+
+# Read what a client has sent; spawn its handler once the request is
+# complete. Returns True while the request is still arriving.
+fn __read(fd):
+    req = read_request(fd)
+    if req == False:
+        return True
+    if req != Nil:
+        __spawn(req)
+    return False
+
+# Start (or resume, after a keep-alive response) watching `fd` for its
+# next request. Handles requests already buffered (pipelining) at once.
+fn __watch(fd):
+    if __read(fd):
+        __loop["pending"][fd] = monotonic()
+
+# Close connections idle for __idle_timeout seconds; return the ms until
+# the next one would expire (-1 = none).
+fn __expire_idle():
+    now = monotonic()
+    next_ms = -1
+    for fd in __loop["pending"].keys():
+        age = now - __loop["pending"][fd]
+        if age >= __idle_timeout:
+            __loop["pending"].delete(fd)
+            close(fd)
+        else:
+            left = int((__idle_timeout - age) * 1000) + 1
+            if next_ms == -1 or left < next_ms:
+                next_ms = left
+    return next_ms
+
+fn __min_timeout(a, b):
+    if a == -1:
+        return b
+    if b == -1:
+        return a
+    return a if a < b else b
+
+fn start(host, port):
+    srv = listen(host, port, 128)
+    nonblock(srv)
+    print("mono listening on http://" + host + ":" + str(port))
+    pending = __loop["pending"]
+    while True:
+        # Run everything that is ready without I/O first; any of it can add
+        # sleepers or kept-alive connections (with pipelined requests
+        # already buffered), so compute the poll timeout only afterwards.
+        __wake_sleepers()
+        while __loop["reuse"].__len__() > 0:
+            __watch(__loop["reuse"].pop(0))
+        if __loop["reuse"].__len__() > 0 or __next_sleeper_ms() == 0:
+            continue
+        timeout = __min_timeout(__next_sleeper_ms(), __expire_idle())
+        fds = [srv] + pending.keys() + __loop["waiting"].keys()
+        for fd in ready(fds, timeout):
+            if fd == srv:
+                client = accept_nb(srv)
+                while client != Nil:
+                    __watch(client)
+                    client = accept_nb(srv)
+            elif __loop["waiting"].has(fd):
+                task = __loop["waiting"][fd]
+                __loop["waiting"].delete(fd)
+                __step(task, Nil)
+            elif pending.has(fd):
+                if __read(fd):
+                    pending[fd] = monotonic()
+                else:
+                    pending.delete(fd)

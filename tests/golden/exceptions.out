@@ -1,0 +1,28 @@
+key -> KeyError, message: "missing"
+index -> index/zero: IndexError: list index out of range IndexError
+zero -> index/zero: ZeroDivisionError: division by zero. ZeroDivisionError
+value -> some ValueError
+custom -> custom: InsufficientFunds: need 50 more 50
+string -> other: plain string
+class -> other: NotImplementedError
+none -> ok
+outer caught by base class: ZeroDivisionError: division by zero. True True
+  body ok
+  cleanup ok
+  after ok
+  body fail
+  caught ValueError: fail
+  cleanup fail
+  after fail
+  body unhandled
+  cleanup unhandled
+propagated: TypeError: nobody catches me
+final runs even when a catch clause raises
+then: KeyError: raised in catch
+NameError: Undefined variable 'undefined_thing'.
+TypeError: can't perform + between <object 'string'> and <object 'int'>
+attr: AttributeError
+int str list dict InsufficientFunds Nil double bool
+ValueError: x ValueError: x Exception r
+recursion caught
+-2 Nil

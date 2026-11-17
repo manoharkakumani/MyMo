@@ -1,0 +1,25 @@
+tick 3
+tick 2
+tick 1
+[0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+alive after break: True
+resumed 1
+total 14
+nested 3 3
+nested 2 3
+nested 1 3
+[4, 3, 2, 1]
+bag a
+bag b
+error from __next__: ValueError: oops
+TypeError: <object 'int'> is not iterable
+[0, 1, 2]
+got 1
+caught from fiber: KeyError: "k"
+after
+caught via resume: KeyError: "k"
+end
+[3, 2, 1] [1, 2, 3, 4] 10 5 ("x", "y") {"x", "y"} x,y
+{"x": 2, "y": 1} [4, 2] [(0, 2), (1, 1)]
+caught: KeyError: in next
+[]

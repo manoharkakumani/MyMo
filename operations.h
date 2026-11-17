@@ -2,10 +2,24 @@
 #define __OPERATIONS_H__
 
 #include "datatypes/object.h"
+#include "datatypes/string.h"
+#include "value.h"
 
-MyMoObject *addition(MVM *vm, MyMoObject *a, MyMoObject *b);
-MyMoObject *subtraction(MVM *vm, MyMoObject *a, MyMoObject *b);
-MyMoObject *multiplication(MVM *vm, MyMoObject *a, MyMoObject *b);
-MyMoObject *division(MVM *vm, MyMoObject *a, MyMoObject *b);
+int compareStrings(MyMoString *a, MyMoString *b);
+
+// Slow paths of + - * / on Values; V_EMPTY_VAL after raising an error.
+Value addValues(MVM *vm, Value a, Value b);
+Value subValues(MVM *vm, Value a, Value b);
+Value mulValues(MVM *vm, Value a, Value b);
+Value divValues(MVM *vm, Value a, Value b);
+
+// `item in container` for built-in containers: V_TRUE_VAL/V_FALSE_VAL,
+// or V_EMPTY_VAL after raising (container type not supported).
+Value containsValue(MVM *vm, Value container, Value item);
+
+// a < b for ordering (sorted, min, max, and < on lists/tuples): numbers,
+// strings, lists/tuples lexicographically, instances through their "<"
+// method. False after raising a TypeError (or if "<" raised).
+bool lessThan(MVM *vm, Value a, Value b, bool *out);
 
 #endif

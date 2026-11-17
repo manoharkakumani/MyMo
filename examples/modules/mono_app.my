@@ -1,0 +1,80 @@
+# mono_app: the /todos REST API written with decorators, Hono-style.
+# Compare with mono_demo.my (same API, explicit registration calls).
+#
+# `@get("/todos/:id")` above `fn show` means `show = get("/todos/:id", show)`.
+# A handler's return value becomes the response:
+#   string -> text 200, dict/list -> JSON 200, (status, body) -> that status.
+#
+# Try it:
+#   ./mymo examples/modules/mono_app.my
+#   curl -s -X POST -d '{"title":"buy milk"}' http://127.0.0.1:8080/todos
+#   curl -s http://127.0.0.1:8080/todos
+#   curl -s http://127.0.0.1:8080/todos/1
+#   curl -s -X PUT -d '{"done":true}' http://127.0.0.1:8080/todos/1
+#   curl -s -X DELETE http://127.0.0.1:8080/todos/1
+from "mono" use get, post, put, delete, not_found, start
+
+# All app state lives in a dict so handlers can mutate it without
+# shadowing the outer binding.
+db = {"todos": {}, "next_id": 1}
+
+@get("/")
+fn home(req):
+    return "MyMo + mono. Try /todos\n"
+
+@get("/todos")
+fn list_todos(req):
+    items = []
+    for k in db["todos"]:
+        items.append(db["todos"][k])
+    return items
+
+@post("/todos")
+fn create_todo(req):
+    body = req["json"]
+    if body == Nil:
+        return (400, {"error": "invalid JSON body"})
+    id = db["next_id"]
+    db["next_id"] = id + 1
+    body["id"] = id
+    db["todos"][str(id)] = body
+    return (201, body)
+
+@get("/todos/:id")
+fn show_todo(req):
+    todo = db["todos"].get(req["params"]["id"])
+    if todo == Nil:
+        return (404, {"error": "todo not found"})
+    return todo
+
+@put("/todos/:id")
+fn update_todo(req):
+    id = req["params"]["id"]
+    todo = db["todos"].get(id)
+    if todo == Nil:
+        return (404, {"error": "todo not found"})
+    patch = req["json"]
+    if patch == Nil:
+        return (400, {"error": "invalid JSON body"})
+    for k in patch:
+        todo[k] = patch[k]
+    return todo
+
+@delete("/todos/:id")
+fn delete_todo(req):
+    id = req["params"]["id"]
+    if db["todos"].has(id) == False:
+        return (404, {"error": "todo not found"})
+    db["todos"].delete(id)
+    return (204, "")
+
+# Handler errors become a 500 response instead of crashing the server.
+@get("/boom")
+fn boom(req):
+    raise "intentional handler error"
+
+@not_found
+fn nf(req):
+    return (404, {"error": "route not found", "path": req["path"]})
+
+start("127.0.0.1", 8080)

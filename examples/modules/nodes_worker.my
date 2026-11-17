@@ -1,0 +1,17 @@
+# nodes_worker: child of nodes_demo.my. Receives a number from the
+# coordinator, returns its square. Exits on -1.
+from "nodes" use self_id, send, recv
+print("[worker", self_id(), "] started")
+done = False
+while done == False:
+    m = recv(5000)
+    if m == Nil:
+        print("[worker", self_id(), "] timeout, exiting")
+        done = True
+    else:
+        n = int(m["payload"])
+        if n == -1:
+            print("[worker", self_id(), "] received shutdown")
+            done = True
+        else:
+            send(0, str(n * n))

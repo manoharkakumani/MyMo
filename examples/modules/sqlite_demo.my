@@ -1,0 +1,20 @@
+# sqlite — in-memory CRUD
+from "sqlite" use open, run, query, close
+
+h = open(":memory:")
+
+run(h, "CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT, score REAL)")
+run(h, "INSERT INTO users(name, score) VALUES ('alice', 91.5), ('bob', 78.0), ('carol', 88.25)")
+
+print("all users:")
+for r in query(h, "SELECT id, name, score FROM users ORDER BY score DESC"):
+    print(" ", r["id"], r["name"], r["score"])
+
+n = run(h, "UPDATE users SET score = score + 5 WHERE name = 'bob'")
+print("rows updated:", n)
+
+print("after update, top scorer:")
+top = query(h, "SELECT name, score FROM users ORDER BY score DESC LIMIT 1")
+print(" ", top[0])
+
+close(h)

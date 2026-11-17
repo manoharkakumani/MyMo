@@ -31,7 +31,12 @@ void *reallocate(MVM *vm, void *pointer, size_t oldSize, size_t newSize)
 MyMoObject *allocateObject(MVM *vm, size_t size, MyMoObjectType type)
 {
     MyMoObject *object = (MyMoObject *)reallocate(vm, NULL, 0, size);
+    // Zero the whole object: the GC traces every pointer field, so a
+    // constructor that forgets one must leave NULL, not heap garbage.
+    // This also clears the header's refCount, used as the GC mark bit.
+    memset(object, 0, size);
     object->type = type;
+    vm->objectCount++;
     object->next = vm->objects;
     vm->objects = object;
     return object;
@@ -78,10 +83,42 @@ void freeObject(MVM *vm, MyMoObject *object)
         Free(vm, MyMoString, object);
         break;
     }
+    case OBJ_TUPLE:
+    {
+        freeValueArray(vm, &AS_TUPLE(object)->values);
+        Free(vm, MyMoTuple, object);
+        break;
+    }
+    case OBJ_ITER:
+    {
+        Free(vm, MyMoIter, object);
+        break;
+    }
+    case OBJ_RANGE:
+    {
+        Free(vm, MyMoRange, object);
+        break;
+    }
+    case OBJ_SET:
+    {
+        freeDict(vm, &AS_SET(object)->items);
+        Free(vm, MyMoSet, object);
+        break;
+    }
+    case OBJ_CLOUSER:
+    {
+        Free(vm, MyMoClouser, object);
+        break;
+    }
+    case OBJ_WILDCARD:
+    {
+        Free(vm, MyMoObject, object);
+        break;
+    }
     case OBJ_LIST:
     {
         MyMoList *list = AS_LIST(object);
-        freeMyMoObjectArray(vm, &list->values);
+        freeValueArray(vm, &list->values);
         Free(vm, MyMoList, object);
         break;
     }
@@ -98,8 +135,18 @@ void freeObject(MVM *vm, MyMoObject *object)
     case OBJ_FUNCTION:
     {
         MyMoFunction *function = AS_FUNCTION(object);
-        freeChunk(vm, function->chunk);
+        free(function->defaults);
+        if (!function->proto) // closure copies share the prototype's chunk/argv
+        {
+            freeChunk(vm, function->chunk);
+            free(function->argv);
+        }
         Free(vm, MyMoFunction, object);
+        break;
+    }
+    case OBJ_SUPER:
+    {
+        Free(vm, MyMoSuper, object);
         break;
     }
     case OBJ_BOUND_METHOD:
@@ -119,6 +166,7 @@ void freeObject(MVM *vm, MyMoObject *object)
     }
     case OBJ_CLASS:
     {
+        freeMyMoObjectArray(vm, &AS_CLASS(object)->superClasses);
         Free(vm, MyMoClass, AS_CLASS(object));
         break;
     }
